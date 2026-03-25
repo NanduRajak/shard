@@ -1,14 +1,4 @@
 services:
-  steel:
-    image: ghcr.io/steel-dev/steel-browser:latest
-    container_name: shard-steel
-    ports:
-      - "3001:3000"
-      - "9223:9223"
-    volumes:
-      - ./.docker/steel-cache:/app/.cache
-    restart: unless-stopped
-
   inngest:
     image: inngest/inngest:v1.17.5
     container_name: shard-inngest
