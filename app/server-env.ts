@@ -7,6 +7,8 @@ export const serverEnv = createEnv({
     INNGEST_DEV: z.union([z.literal("0"), z.literal("1")]).default("0"),
     INNGEST_EVENT_KEY: z.string().min(1).optional(),
     INNGEST_SIGNING_KEY: z.string().min(1).optional(),
+    OPENAI_API_KEY: z.string().min(1),
+    OPENAI_MODEL: z.string().min(1).optional(),
     STEEL_API_KEY: z.string().min(1),
     VITE_CONVEX_URL: z.url(),
   },

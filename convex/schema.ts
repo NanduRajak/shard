@@ -51,7 +51,9 @@ export default defineSchema({
     url: v.string(),
     status: runStatus,
     currentStep: v.optional(v.string()),
+    currentUrl: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
+    stopRequestedAt: v.optional(v.number()),
     startedAt: v.number(),
     updatedAt: v.number(),
     finishedAt: v.optional(v.number()),
@@ -68,6 +70,9 @@ export default defineSchema({
     description: v.string(),
     severity: findingSeverity,
     confidence: v.number(),
+    impact: v.number(),
+    score: v.number(),
+    stepIndex: v.optional(v.number()),
     pageOrFlow: v.optional(v.string()),
     artifactId: v.optional(v.id("artifacts")),
     screenshotUrl: v.optional(v.string()),
@@ -84,6 +89,8 @@ export default defineSchema({
     type: artifactType,
     fileLocation: v.string(),
     storageId: v.optional(v.id("_storage")),
+    title: v.optional(v.string()),
+    pageUrl: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_run", ["runId"])
@@ -110,6 +117,7 @@ export default defineSchema({
     provider: v.literal("steel"),
     externalSessionId: v.string(),
     status: sessionStatus,
+    debugUrl: v.optional(v.string()),
     replayUrl: v.optional(v.string()),
     startedAt: v.number(),
     updatedAt: v.number(),
@@ -118,4 +126,17 @@ export default defineSchema({
     .index("by_run", ["runId"])
     .index("by_external_session_id", ["externalSessionId"])
     .index("by_run_and_started_at", ["runId", "startedAt"]),
+
+  performanceAudits: defineTable({
+    runId: v.id("runs"),
+    pageUrl: v.string(),
+    performanceScore: v.number(),
+    accessibilityScore: v.number(),
+    bestPracticesScore: v.number(),
+    seoScore: v.number(),
+    reportArtifactId: v.optional(v.id("artifacts")),
+    createdAt: v.number(),
+  })
+    .index("by_run", ["runId"])
+    .index("by_run_and_created_at", ["runId", "createdAt"]),
 })

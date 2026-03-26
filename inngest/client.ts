@@ -1,4 +1,4 @@
-import { smokeRun } from "./smoke-run"
+import { qaRun } from "./qa-run"
 
-export const functions = [smokeRun]
+export const functions = [qaRun]
 export { inngest } from "./core"
