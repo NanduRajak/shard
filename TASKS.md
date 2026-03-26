@@ -115,28 +115,52 @@
 
 ## 10. GitHub PR review foundation
 
-- Build a Probot app that receives PR webhooks.
-- Store PR metadata in Convex.
-- For each PR, save:
-  - repo
-  - PR number
-  - changed files
-  - diff summary
-  - review status
-- Use `probot` and `octokit`.
-- Start this after the standalone scan engine works, because PR browser QA will reuse that same system.
+Build a Probot app that receives PR webhooks.
+Store PR metadata in Convex.
+For each PR, save:
+
+repo
+PR number
+changed files
+diff summary
+nearby code (surrounding context around changed lines, not just the diff hunks themselves)
+file summaries (short per-file descriptions of what each changed file does in the codebase)
+review status
+
+
+Use probot and octokit.
+The nearby code and file summaries are critical — they are what the LLM uses to understand impact and give accurate review comments. Store them at PR intake time, not lazily later.
+Start this after the standalone scan engine works, because PR browser QA will reuse that same system.
 
 ## 11. Hygiene checks for PRs
 
-- Run automated code checks on PRs:
-  - `semgrep`
-  - `eslint`
-  - `tsc --noEmit`
-  - project test command if present
-- Normalize all results into the same shared finding schema.
-- Do not use the LLM to detect raw code issues here.
-- Use the LLM only to summarize, group, and rewrite the output into reviewer-friendly language.
-- This should come before PR browser QA because it is deterministic and easier to debug.
+Run automated code checks on PRs:
+
+semgrep
+eslint
+tsc --noEmit
+project test command if present
+
+
+Normalize all results into the shared finding schema, and explicitly tag each finding with one of these four categories:
+
+Security
+Maintainability
+Test hygiene
+Performance smell
+
+
+Do not use the LLM to detect raw code issues. Use the LLM only after deterministic checks are done.
+Once hygiene checks finish, pass the full context pack (changed files, diffs, nearby code, file summaries) plus the normalized findings to the LLM and ask it to produce:
+
+a PR summary (what this PR does, in plain language)
+a risk summary (what could go wrong or deserves scrutiny)
+test suggestions (what scenarios are not covered or worth adding)
+a small set of high-confidence inline comments (specific line-level feedback, only where the LLM is confident)
+
+
+Store all four LLM outputs in Convex on the prReviews table alongside the raw findings.
+This should come before PR browser QA because it is deterministic and easier to debug. The LLM summarization step runs after hygiene checks complete within the same Inngest workflow step.
 
 ## 12. Browser QA for frontend PRs
 
