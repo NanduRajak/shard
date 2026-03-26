@@ -4,6 +4,7 @@ import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Link, useRouterState } from "@tanstack/react-router"
 import {
+  IconKey,
   IconHistory,
   IconHome2,
   IconLayoutDashboard,
@@ -718,6 +719,11 @@ const appNavigation = [
     icon: IconMessage2Bolt,
   },
   {
+    title: "Credentials",
+    to: "/credentials" as const,
+    icon: IconKey,
+  },
+  {
     title: "History",
     to: "/history" as const,
     icon: IconHistory,
@@ -776,8 +782,8 @@ function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="p-3">
         <div className="rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-3 text-xs leading-5 text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden">
-          Run creation lives on Home. The other sections are staged placeholders
-          for the next product loops.
+          Home launches scans. Credentials are stored separately and injected
+          only inside the browser runtime when a matching site needs auth.
         </div>
       </SidebarFooter>
       <SidebarRail />

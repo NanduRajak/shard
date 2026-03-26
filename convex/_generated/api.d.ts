@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as credentials from "../credentials.js";
 import type * as runs from "../runs.js";
 import type * as runtime from "../runtime.js";
 
@@ -18,6 +19,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  credentials: typeof credentials;
   runs: typeof runs;
   runtime: typeof runtime;
 }>;

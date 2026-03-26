@@ -4,12 +4,14 @@ import { mutation, query } from "./_generated/server"
 export const createRun = mutation({
   args: {
     url: v.string(),
+    credentialNamespace: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now()
 
     return await ctx.db.insert("runs", {
       url: args.url,
+      credentialNamespace: args.credentialNamespace,
       status: "queued",
       currentStep: "Queued for scan",
       startedAt: now,

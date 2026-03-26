@@ -1,15 +1,13 @@
 import { createServerFn } from "@tanstack/react-start"
 import { api } from "../../convex/_generated/api"
-import { validateRunUrl } from "./run-url"
+import { prepareCreateRunPayload } from "./run-request"
 
 export const createRun = createServerFn({ method: "POST" })
-  .inputValidator((data: { url: string }) => data)
+  .inputValidator(
+    (data: { credentialNamespace?: string | null; url: string }) => data,
+  )
   .handler(async ({ data }) => {
-    const url = validateRunUrl(data.url)
-
-    if (!url) {
-      throw new Error("Enter a full URL starting with http:// or https://.")
-    }
+    const payload = prepareCreateRunPayload(data)
 
     const [{ createConvexServerClient }, { inngest }] = await Promise.all([
       import("~/server/convex"),
@@ -17,12 +15,12 @@ export const createRun = createServerFn({ method: "POST" })
     ])
 
     const convex = createConvexServerClient()
-    const runId = await convex.mutation(api.runs.createRun, { url })
+    const runId = await convex.mutation(api.runs.createRun, payload)
 
     try {
       await inngest.send({
         name: "app/run.requested",
-        data: { runId, url },
+        data: { runId, ...payload },
       })
     } catch (error) {
       await convex.mutation(api.runtime.updateRun, {

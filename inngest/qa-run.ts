@@ -13,6 +13,7 @@ import { serverEnv } from "~/server-env"
 import { inngest } from "./core"
 import { isTransientWorkflowError } from "@/lib/workflow-errors"
 import { scoreLighthouseFinding } from "@/lib/lighthouse-audits"
+import { getDecryptedCredentialForOrigin } from "@/lib/credentials-server"
 import {
   buildActionSignature,
   isSameHostname,
@@ -21,6 +22,7 @@ import {
   shouldStopForRepeatActions,
   wouldExceedPageLimit,
 } from "@/lib/qa-guards"
+import { generateTotpCode } from "@/lib/totp"
 import {
   buildScoreSummary,
   computeFindingScore,
@@ -34,6 +36,7 @@ const DEFAULT_MODEL = serverEnv.OPENAI_MODEL ?? "gpt-4.1-mini"
 
 type RunRequestedEvent = {
   data: {
+    credentialNamespace?: string
     runId: Id<"runs">
     url: string
   }
@@ -128,7 +131,7 @@ export const qaRun = inngest.createFunction(
   },
   async ({ event }: { event: RunRequestedEvent }) => {
     const convex = createConvexServerClient()
-    const { runId, url } = event.data
+    const { credentialNamespace, runId, url } = event.data
 
     let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | null = null
     let chrome: Awaited<ReturnType<typeof launch>> | null = null
@@ -255,6 +258,7 @@ export const qaRun = inngest.createFunction(
 
       await runAgentLoop({
         convex,
+        credentialNamespace,
         findingSignatures,
         bufferedFindings,
         page,
@@ -513,6 +517,7 @@ export const qaRun = inngest.createFunction(
 
 async function runAgentLoop({
   convex,
+  credentialNamespace,
   findingSignatures,
   bufferedFindings,
   page,
@@ -522,6 +527,7 @@ async function runAgentLoop({
   startUrl,
 }: {
   convex: ReturnType<typeof createConvexServerClient>
+  credentialNamespace?: string
   findingSignatures: Set<string>
   bufferedFindings: BufferedFinding[]
   page: Page
@@ -570,6 +576,7 @@ async function runAgentLoop({
     const result = await generateText({
       model: openai(DEFAULT_MODEL),
       prompt: buildAgentPrompt({
+        credentialNamespace,
         snapshot,
         stepIndex,
         visitedPages: [...visitedPages],
@@ -580,6 +587,7 @@ async function runAgentLoop({
       stopWhen: stepCountIs(4),
       tools: buildAgentTools({
         bufferedFindings,
+        credentialNamespace,
         convex,
         page,
         runId,
@@ -591,21 +599,17 @@ async function runAgentLoop({
     const toolResults = result.steps.flatMap((step) => step.toolResults)
     const latestToolResult = [...toolResults]
       .reverse()
-      .find(
-        (toolResult) =>
-          !toolResult.dynamic &&
-          isToolOutcome(toolResult.output),
-      )
+      .find((toolResult) => Boolean(toolResult))
 
     if (!latestToolResult) {
       break
     }
 
-    const outcome = latestToolResult.output
-
-    if (!isToolOutcome(outcome)) {
+    if (latestToolResult.dynamic || !isToolOutcome(latestToolResult.output)) {
       break
     }
+
+    const outcome = latestToolResult.output
 
     actionHistory.push(
       buildActionSignature({
@@ -805,6 +809,7 @@ async function runSnapshotStage({
 
 function buildAgentTools({
   bufferedFindings,
+  credentialNamespace,
   convex,
   page,
   runId,
@@ -812,6 +817,7 @@ function buildAgentTools({
   visitedPages,
 }: {
   bufferedFindings: BufferedFinding[]
+  credentialNamespace?: string
   convex: ReturnType<typeof createConvexServerClient>
   page: Page
   runId: Id<"runs">
@@ -1104,15 +1110,75 @@ function buildAgentTools({
         } satisfies ToolOutcome
       },
     }),
+    ...(credentialNamespace
+      ? {
+          useStoredLogin: tool({
+            description:
+              "Use the stored login credential for the current website when an auth wall blocks useful exploration.",
+            inputSchema: z.object({}),
+            execute: async () => {
+              const credential = await getDecryptedCredentialForOrigin({
+                convex,
+                namespace: credentialNamespace,
+                pageUrl: page.url(),
+              })
+
+              if (!credential) {
+                return {
+                  toolName: "useStoredLogin",
+                  changed: false,
+                  currentUrl: page.url(),
+                  note: "No stored credential is available for this website.",
+                  target: new URL(page.url()).origin,
+                } satisfies ToolOutcome
+              }
+
+              try {
+                const didApply = await applyCredentialToPage(page, credential)
+                const after = await inspectCurrentPage(page)
+
+                return {
+                  toolName: "useStoredLogin",
+                  changed: didApply,
+                  currentUrl: after.url,
+                  note: didApply
+                    ? "Attempted sign-in with the stored website credential."
+                    : "Could not find a compatible login form on this page.",
+                  target: credential.origin,
+                } satisfies ToolOutcome
+              } catch (error) {
+                bufferedFindings.push(
+                  createActionFailureFinding({
+                    action: "login",
+                    error,
+                    pageUrl: page.url(),
+                    target: new URL(page.url()).origin,
+                  }),
+                )
+
+                return {
+                  toolName: "useStoredLogin",
+                  changed: false,
+                  currentUrl: page.url(),
+                  note: "Stored login failed on this page.",
+                  target: new URL(page.url()).origin,
+                } satisfies ToolOutcome
+              }
+            },
+          }),
+        }
+      : {}),
   }
 }
 
 function buildAgentPrompt({
+  credentialNamespace,
   snapshot,
   stepIndex,
   visitedPages,
   recentActions,
 }: {
+  credentialNamespace?: string
   snapshot: PageSnapshot
   stepIndex: number
   visitedPages: string[]
@@ -1122,7 +1188,9 @@ function buildAgentPrompt({
     "You are a bounded autonomous QA agent exploring a public website.",
     "Rules:",
     "- Stay on the starting hostname only.",
-    "- Do not attempt login, signup, checkout, payment, account deletion, or destructive submission flows.",
+    credentialNamespace
+      ? "- Do not attempt signup, checkout, payment, account deletion, or destructive submission flows. If login is required, use the stored login tool instead of typing credentials yourself."
+      : "- Do not attempt login, signup, checkout, payment, account deletion, or destructive submission flows.",
     "- Prefer high-signal public pages like pricing, docs, product, help, and navigation destinations.",
     "- Call at most one tool for the next best action. If no useful action remains, answer with a short stop reason instead of calling a tool.",
     "- You do not need to capture screenshots on every step because the system already captures them after meaningful changes.",
@@ -1606,7 +1674,7 @@ function createActionFailureFinding({
   pageUrl,
   target,
 }: {
-  action: "click" | "fill" | "navigate"
+  action: "click" | "fill" | "login" | "navigate"
   error: unknown
   pageUrl: string
   target: string
@@ -1645,6 +1713,97 @@ function isInteractiveTool(toolName: ToolOutcome["toolName"]) {
   return (
     toolName === "clickElement" ||
     toolName === "fillInput" ||
-    toolName === "navigateToUrl"
+    toolName === "navigateToUrl" ||
+    toolName === "useStoredLogin"
   )
+}
+
+async function applyCredentialToPage(
+  page: Page,
+  credential: {
+    origin: string
+    password: string
+    totpSecret?: string
+    username: string
+  },
+) {
+  const usernameField = await findFirstVisibleLocator(page, [
+    'input[autocomplete="username"]',
+    'input[autocomplete="email"]',
+    'input[type="email"]',
+    'input[name*="email" i]',
+    'input[id*="email" i]',
+    'input[name*="user" i]',
+    'input[id*="user" i]',
+    'input[name*="login" i]',
+    'input[id*="login" i]',
+    'input[type="text"]',
+  ])
+  const passwordField = await findFirstVisibleLocator(page, [
+    'input[type="password"]',
+    'input[autocomplete="current-password"]',
+    'input[name*="password" i]',
+    'input[id*="password" i]',
+  ])
+
+  if (!usernameField || !passwordField) {
+    return false
+  }
+
+  await usernameField.fill(credential.username, { timeout: 5_000 })
+  await passwordField.fill(credential.password, { timeout: 5_000 })
+
+  if (credential.totpSecret) {
+    const totpField = await findFirstVisibleLocator(page, [
+      'input[autocomplete="one-time-code"]',
+      'input[name*="otp" i]',
+      'input[id*="otp" i]',
+      'input[name*="totp" i]',
+      'input[id*="totp" i]',
+      'input[name*="auth" i]',
+      'input[id*="auth" i]',
+      'input[inputmode="numeric"]',
+    ])
+
+    if (totpField) {
+      await totpField.fill(generateTotpCode(credential.totpSecret), {
+        timeout: 5_000,
+      })
+    }
+  }
+
+  const submitButton = await findFirstVisibleLocator(page, [
+    'button[type="submit"]',
+    'input[type="submit"]',
+    'button:has-text("Sign in")',
+    'button:has-text("Log in")',
+    'button:has-text("Continue")',
+    'button:has-text("Verify")',
+  ])
+
+  if (submitButton) {
+    await submitButton.click({ timeout: 5_000 }).catch(() => undefined)
+  }
+
+  await settlePage(page)
+
+  return true
+}
+
+async function findFirstVisibleLocator(page: Page, selectors: string[]) {
+  for (const selector of selectors) {
+    const locator = page.locator(selector)
+    const count = await locator.count()
+
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index)
+      const isVisible = await candidate.isVisible().catch(() => false)
+
+      if (isVisible) {
+        return candidate
+      }
+    }
+  }
+
+  return null
 }

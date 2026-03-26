@@ -1,21 +1,25 @@
-import { createFileRoute } from "@tanstack/react-router"
-import { useMutation } from "@tanstack/react-query"
-import { IconArrowRight, IconWorldWww } from "@tabler/icons-react"
-import { useMemo, useState } from "react"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { createFileRoute, Link } from "@tanstack/react-router"
+import { convexQuery } from "@convex-dev/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  IconArrowRight,
+  IconPlus,
+} from "@tabler/icons-react"
+import { useMemo, useState } from "react"
+import { api } from "../../convex/_generated/api"
+import { Button } from "@/components/ui/button"
 import {
   PromptInput,
   PromptInputActions,
   PromptInputTextarea,
 } from "@/components/ui/prompt-input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { createRun } from "@/lib/create-run"
 import { validateRunUrl } from "@/lib/run-url"
 
@@ -23,16 +27,21 @@ export const Route = createFileRoute("/")({ component: App })
 
 function App() {
   const navigate = Route.useNavigate()
+  const { data: namespaces } = useQuery(convexQuery(api.credentials.listNamespaces, {}))
   const [url, setUrl] = useState("")
+  const [credentialNamespace, setCredentialNamespace] = useState("none")
   const [error, setError] = useState<string | null>(null)
   const { mutateAsync, isPending } = useMutation({
     mutationFn: createRun,
   })
 
   const normalizedUrl = useMemo(() => url.trim(), [url])
+  const selectedNamespace =
+    credentialNamespace !== "none" ? credentialNamespace : undefined
 
   const handleSubmit = async () => {
     const validatedUrl = validateRunUrl(normalizedUrl)
+
     if (!validatedUrl) {
       setError("Enter a full URL starting with http:// or https://.")
       return
@@ -40,109 +49,98 @@ function App() {
 
     setError(null)
 
-    const { runId } = await mutateAsync({ data: { url: validatedUrl } })
+    const { runId } = await mutateAsync({
+      data: {
+        credentialNamespace: selectedNamespace,
+        url: validatedUrl,
+      },
+    })
+
     void navigate({ to: "/runs/$runId", params: { runId } })
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-      <Card className="border border-border/70 bg-card/80">
-        <CardHeader className="gap-4 border-b border-border/70">
-          <Badge variant="outline" className="w-fit tracking-[0.18em] uppercase">
-            Run Creation
-          </Badge>
-          <div className="space-y-3">
-            <CardTitle className="max-w-2xl text-3xl leading-tight">
-              Launch the first browser QA run from a single URL.
-            </CardTitle>
-            <CardDescription className="max-w-2xl text-sm/6">
-              The home screen acts like an operator console: enter a public app
-              URL, create the run record in Convex, and jump straight into the
-              live status view.
-            </CardDescription>
+    <div className="flex min-h-[calc(100svh-10rem)] items-center justify-center">
+      <div className="w-full max-w-4xl">
+        <PromptInput
+          value={url}
+          onValueChange={(value) => {
+            setUrl(value)
+            if (error) {
+              setError(null)
+            }
+          }}
+          onSubmit={() => {
+            void handleSubmit()
+          }}
+          isLoading={isPending}
+          className="rounded-[2rem] border-border/70 bg-card/80 p-4 shadow-[0_18px_50px_-42px_rgba(15,23,42,0.45)]"
+        >
+          <div className="flex flex-wrap items-center gap-2 pb-3">
+            <Button
+              variant="outline"
+              size="icon-lg"
+              className="rounded-full border-border/70"
+              render={<Link to="/credentials" />}
+            >
+              <IconPlus className="size-4" />
+              <span className="sr-only">Add credentials</span>
+            </Button>
+
+            <Select
+              value={credentialNamespace}
+              onValueChange={(value) => {
+                setCredentialNamespace(value ?? "none")
+              }}
+            >
+              <SelectTrigger className="h-11 rounded-full border-border/70 bg-background/70 px-4 shadow-none">
+                <SelectValue placeholder="Credentials" />
+              </SelectTrigger>
+              <SelectContent align="start">
+                <SelectItem value="none">No credentials</SelectItem>
+                {(namespaces ?? []).map((namespace) => (
+                  <SelectItem key={namespace} value={namespace}>
+                    {namespace}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {selectedNamespace ? (
+              <span className="text-sm text-muted-foreground">
+                Using <span className="font-medium text-foreground">{selectedNamespace}</span>
+              </span>
+            ) : null}
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-6">
-          <PromptInput
-            value={url}
-            onValueChange={(value) => {
-              setUrl(value)
-              if (error) {
-                setError(null)
-              }
-            }}
-            onSubmit={() => {
-              void handleSubmit()
-            }}
-            isLoading={isPending}
-            className="bg-background/70 p-3 shadow-none"
-          >
-            <div className="flex items-start gap-3">
-              <div className="mt-2 flex size-10 shrink-0 items-center justify-center rounded-2xl border border-border/70 bg-muted/70 text-muted-foreground">
-                <IconWorldWww className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <PromptInputTextarea
-                  placeholder="https://example.com"
-                  className="min-h-[56px] py-3 text-base"
-                  aria-label="Run URL"
-                />
-              </div>
-            </div>
-            <PromptInputActions className="mt-3 justify-between">
-              <p className="text-sm text-muted-foreground">
-                Enter submits. Only absolute HTTP(S) URLs are accepted.
-              </p>
-              <Button
-                onClick={() => {
-                  void handleSubmit()
-                }}
-                disabled={isPending}
-                className="min-w-32 rounded-2xl"
-              >
-                {isPending ? "Creating..." : "Run Agent"}
-                <IconArrowRight className="size-4" />
-              </Button>
-            </PromptInputActions>
-          </PromptInput>
-          {error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : null}
-        </CardContent>
-      </Card>
 
-      <Card className="border border-border/70 bg-card/80">
-        <CardHeader className="gap-4 border-b border-border/70">
-          <CardTitle className="text-lg">What this proves</CardTitle>
-          <CardDescription>
-            This is the first visible product loop, intentionally small and
-            operational.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-6 text-sm text-muted-foreground">
-          <FeatureLine
-            title="Convex-backed creation"
-            body="Submitting the form persists a queued run record immediately."
+          <PromptInputTextarea
+            placeholder="https://app.example.com"
+            className="min-h-[180px] px-1 py-4 text-2xl leading-9 md:text-[2rem] md:leading-[2.75rem]"
+            aria-label="Run URL"
           />
-          <FeatureLine
-            title="Dedicated live route"
-            body="Each new run redirects to its own status screen at `/runs/$runId`."
-          />
-          <FeatureLine
-            title="Ready for orchestration"
-            body="The status page is already shaped to accept future step, findings, and artifact updates."
-          />
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
 
-function FeatureLine({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
-      <h3 className="text-sm font-medium text-foreground">{title}</h3>
-      <p className="mt-1 leading-6">{body}</p>
+          <PromptInputActions className="justify-between gap-3 border-t border-border/60 pt-3">
+            <p className="text-sm text-muted-foreground">
+              Enter to run.
+            </p>
+            <Button
+              onClick={() => {
+                void handleSubmit()
+              }}
+              disabled={isPending}
+              size="lg"
+              className="rounded-full px-5"
+            >
+              {isPending ? "Creating..." : "Run Agent"}
+              <IconArrowRight className="size-4" />
+            </Button>
+          </PromptInputActions>
+        </PromptInput>
+
+        {error ? (
+          <p className="mt-3 text-center text-sm text-destructive">{error}</p>
+        ) : null}
+      </div>
     </div>
   )
 }

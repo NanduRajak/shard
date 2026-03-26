@@ -49,6 +49,7 @@ const sessionStatus = v.union(
 export default defineSchema({
   runs: defineTable({
     url: v.string(),
+    credentialNamespace: v.optional(v.string()),
     status: runStatus,
     currentStep: v.optional(v.string()),
     currentUrl: v.optional(v.string()),
@@ -139,4 +140,17 @@ export default defineSchema({
   })
     .index("by_run", ["runId"])
     .index("by_run_and_created_at", ["runId", "createdAt"]),
+
+  credentials: defineTable({
+    namespace: v.string(),
+    website: v.string(),
+    origin: v.string(),
+    username: v.string(),
+    passwordEncrypted: v.string(),
+    totpSecretEncrypted: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_namespace", ["namespace"])
+    .index("by_namespace_origin", ["namespace", "origin"]),
 })

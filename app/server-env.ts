@@ -3,6 +3,7 @@ import { z } from "zod"
 
 export const serverEnv = createEnv({
   server: {
+    CREDENTIAL_ENCRYPTION_KEY: z.string().min(1),
     INNGEST_BASE_URL: z.url().optional(),
     INNGEST_DEV: z.union([z.literal("0"), z.literal("1")]).default("0"),
     INNGEST_EVENT_KEY: z.string().min(1).optional(),

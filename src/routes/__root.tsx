@@ -6,6 +6,7 @@ import {
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
 import { TanStackDevtools } from "@tanstack/react-devtools"
 import { AppProviders } from "@/components/app-providers"
+import { Toaster } from "@/components/ui/sonner"
 import { AppSidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeProvider } from "@/components/theme-provider"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -102,6 +103,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                 },
               ]}
             />
+            <Toaster richColors />
             <Scripts />
           </AppProviders>
         </ThemeProvider>
