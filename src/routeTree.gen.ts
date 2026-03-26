@@ -14,6 +14,12 @@ import { Route as HistoryRouteImport } from './routes/history'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
+import { Route as ApiInngestRouteImport } from './routes/api/inngest'
+import { Route as ApiGithubWebhookRouteImport } from './routes/api/github/webhook'
+import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
+import { Route as ApiGithubConnectRouteImport } from './routes/api/github/connect'
+import { Route as ApiGithubCallbackRouteImport } from './routes/api/github/callback'
+import { Route as ApiGithubInstallCallbackRouteImport } from './routes/api/github/install/callback'
 
 const ReviewBotRoute = ReviewBotRouteImport.update({
   id: '/review-bot',
@@ -40,20 +46,63 @@ const RunsRunIdRoute = RunsRunIdRouteImport.update({
   path: '/runs/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInngestRoute = ApiInngestRouteImport.update({
+  id: '/api/inngest',
+  path: '/api/inngest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubWebhookRoute = ApiGithubWebhookRouteImport.update({
+  id: '/api/github/webhook',
+  path: '/api/github/webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubInstallRoute = ApiGithubInstallRouteImport.update({
+  id: '/api/github/install',
+  path: '/api/github/install',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubConnectRoute = ApiGithubConnectRouteImport.update({
+  id: '/api/github/connect',
+  path: '/api/github/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubCallbackRoute = ApiGithubCallbackRouteImport.update({
+  id: '/api/github/callback',
+  path: '/api/github/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubInstallCallbackRoute =
+  ApiGithubInstallCallbackRouteImport.update({
+    id: '/callback',
+    path: '/callback',
+    getParentRoute: () => ApiGithubInstallRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
+  '/api/inngest': typeof ApiInngestRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/api/github/callback': typeof ApiGithubCallbackRoute
+  '/api/github/connect': typeof ApiGithubConnectRoute
+  '/api/github/install': typeof ApiGithubInstallRouteWithChildren
+  '/api/github/webhook': typeof ApiGithubWebhookRoute
+  '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
+  '/api/inngest': typeof ApiInngestRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/api/github/callback': typeof ApiGithubCallbackRoute
+  '/api/github/connect': typeof ApiGithubConnectRoute
+  '/api/github/install': typeof ApiGithubInstallRouteWithChildren
+  '/api/github/webhook': typeof ApiGithubWebhookRoute
+  '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -61,20 +110,54 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
+  '/api/inngest': typeof ApiInngestRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/api/github/callback': typeof ApiGithubCallbackRoute
+  '/api/github/connect': typeof ApiGithubConnectRoute
+  '/api/github/install': typeof ApiGithubInstallRouteWithChildren
+  '/api/github/webhook': typeof ApiGithubWebhookRoute
+  '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard' | '/history' | '/review-bot' | '/runs/$runId'
+  fullPaths:
+    | '/'
+    | '/dashboard'
+    | '/history'
+    | '/review-bot'
+    | '/api/inngest'
+    | '/runs/$runId'
+    | '/api/github/callback'
+    | '/api/github/connect'
+    | '/api/github/install'
+    | '/api/github/webhook'
+    | '/api/github/install/callback'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/history' | '/review-bot' | '/runs/$runId'
+  to:
+    | '/'
+    | '/dashboard'
+    | '/history'
+    | '/review-bot'
+    | '/api/inngest'
+    | '/runs/$runId'
+    | '/api/github/callback'
+    | '/api/github/connect'
+    | '/api/github/install'
+    | '/api/github/webhook'
+    | '/api/github/install/callback'
   id:
     | '__root__'
     | '/'
     | '/dashboard'
     | '/history'
     | '/review-bot'
+    | '/api/inngest'
     | '/runs/$runId'
+    | '/api/github/callback'
+    | '/api/github/connect'
+    | '/api/github/install'
+    | '/api/github/webhook'
+    | '/api/github/install/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -82,7 +165,12 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   HistoryRoute: typeof HistoryRoute
   ReviewBotRoute: typeof ReviewBotRoute
+  ApiInngestRoute: typeof ApiInngestRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
+  ApiGithubCallbackRoute: typeof ApiGithubCallbackRoute
+  ApiGithubConnectRoute: typeof ApiGithubConnectRoute
+  ApiGithubInstallRoute: typeof ApiGithubInstallRouteWithChildren
+  ApiGithubWebhookRoute: typeof ApiGithubWebhookRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -122,15 +210,73 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RunsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/inngest': {
+      id: '/api/inngest'
+      path: '/api/inngest'
+      fullPath: '/api/inngest'
+      preLoaderRoute: typeof ApiInngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/webhook': {
+      id: '/api/github/webhook'
+      path: '/api/github/webhook'
+      fullPath: '/api/github/webhook'
+      preLoaderRoute: typeof ApiGithubWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/install': {
+      id: '/api/github/install'
+      path: '/api/github/install'
+      fullPath: '/api/github/install'
+      preLoaderRoute: typeof ApiGithubInstallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/connect': {
+      id: '/api/github/connect'
+      path: '/api/github/connect'
+      fullPath: '/api/github/connect'
+      preLoaderRoute: typeof ApiGithubConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/callback': {
+      id: '/api/github/callback'
+      path: '/api/github/callback'
+      fullPath: '/api/github/callback'
+      preLoaderRoute: typeof ApiGithubCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/install/callback': {
+      id: '/api/github/install/callback'
+      path: '/callback'
+      fullPath: '/api/github/install/callback'
+      preLoaderRoute: typeof ApiGithubInstallCallbackRouteImport
+      parentRoute: typeof ApiGithubInstallRoute
+    }
   }
 }
+
+interface ApiGithubInstallRouteChildren {
+  ApiGithubInstallCallbackRoute: typeof ApiGithubInstallCallbackRoute
+}
+
+const ApiGithubInstallRouteChildren: ApiGithubInstallRouteChildren = {
+  ApiGithubInstallCallbackRoute: ApiGithubInstallCallbackRoute,
+}
+
+const ApiGithubInstallRouteWithChildren =
+  ApiGithubInstallRoute._addFileChildren(ApiGithubInstallRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
   HistoryRoute: HistoryRoute,
   ReviewBotRoute: ReviewBotRoute,
+  ApiInngestRoute: ApiInngestRoute,
   RunsRunIdRoute: RunsRunIdRoute,
+  ApiGithubCallbackRoute: ApiGithubCallbackRoute,
+  ApiGithubConnectRoute: ApiGithubConnectRoute,
+  ApiGithubInstallRoute: ApiGithubInstallRouteWithChildren,
+  ApiGithubWebhookRoute: ApiGithubWebhookRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

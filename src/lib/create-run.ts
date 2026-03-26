@@ -13,7 +13,7 @@ export const createRun = createServerFn({ method: "POST" })
 
     const [{ createConvexServerClient }, { inngest }] = await Promise.all([
       import("~/server/convex"),
-      import("../../inngest/client"),
+      import("../../inngest/core"),
     ])
 
     const convex = createConvexServerClient()

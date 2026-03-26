@@ -5,6 +5,7 @@ dist-ssr
 *.local
 count.txt
 .env
+*.private-key.pem
 .nitro
 .tanstack
 .wrangler

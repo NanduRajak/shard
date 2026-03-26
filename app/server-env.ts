@@ -3,10 +3,21 @@ import { z } from "zod"
 
 export const serverEnv = createEnv({
   server: {
+    APP_BASE_URL: z.url().optional(),
+    GITHUB_APP_ID: z.string().min(1).optional(),
+    GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
+    GITHUB_APP_SLUG: z.string().min(1).optional(),
+    GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+    GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+    GITHUB_TOKEN: z.string().min(1).optional(),
+    GITHUB_WEBHOOK_SECRET: z.string().min(1).optional(),
     INNGEST_BASE_URL: z.url().optional(),
     INNGEST_DEV: z.union([z.literal("0"), z.literal("1")]).default("0"),
     INNGEST_EVENT_KEY: z.string().min(1).optional(),
     INNGEST_SIGNING_KEY: z.string().min(1).optional(),
+    OPENAI_API_KEY: z.string().min(1).optional(),
+    OPENAI_MODEL: z.string().min(1).optional(),
+    REVIEW_BOT_SECRET: z.string().min(16).optional(),
     STEEL_API_KEY: z.string().min(1),
     VITE_CONVEX_URL: z.url(),
   },
