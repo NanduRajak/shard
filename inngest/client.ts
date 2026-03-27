@@ -1,5 +1,5 @@
 import { prReview } from "./pr-review"
-import { smokeRun } from "./smoke-run"
+import { qaRun } from "./qa-run"
 
-export const functions = [smokeRun, prReview]
+export const functions = [qaRun, prReview]
 export { inngest } from "./core"

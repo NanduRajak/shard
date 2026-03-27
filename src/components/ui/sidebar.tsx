@@ -4,6 +4,7 @@ import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Link, useRouterState } from "@tanstack/react-router"
 import {
+  IconKey,
   IconHistory,
   IconHome2,
   IconLayoutDashboard,
@@ -722,6 +723,11 @@ const appNavigation = [
     icon: IconMessage2Bolt,
   },
   {
+    title: "Credentials",
+    to: "/credentials" as const,
+    icon: IconKey,
+  },
+  {
     title: "History",
     to: "/history" as const,
     icon: IconHistory,
@@ -806,7 +812,6 @@ function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-
       <SidebarRail />
     </Sidebar>
   )

@@ -10,6 +10,25 @@ const runStatus = v.union(
   v.literal("cancelled"),
 )
 
+const runMode = v.union(
+  v.literal("explore"),
+  v.literal("task"),
+)
+
+const runGoalStatus = v.union(
+  v.literal("not_requested"),
+  v.literal("completed"),
+  v.literal("partially_completed"),
+  v.literal("blocked"),
+)
+
+const queueState = v.union(
+  v.literal("pending"),
+  v.literal("waiting_for_worker"),
+  v.literal("worker_unreachable"),
+  v.literal("picked_up"),
+)
+
 const reviewStatus = v.union(
   v.literal("queued"),
   v.literal("running"),
@@ -78,6 +97,17 @@ const sessionStatus = v.union(
   v.literal("failed"),
 )
 
+const runEventKind = v.union(
+  v.literal("status"),
+  v.literal("session"),
+  v.literal("navigation"),
+  v.literal("agent"),
+  v.literal("artifact"),
+  v.literal("finding"),
+  v.literal("audit"),
+  v.literal("system"),
+)
+
 export default defineSchema({
   githubConnections: defineTable({
     avatarUrl: v.optional(v.string()),
@@ -94,9 +124,17 @@ export default defineSchema({
 
   runs: defineTable({
     url: v.string(),
+    mode: v.optional(runMode),
+    credentialNamespace: v.optional(v.string()),
+    instructions: v.optional(v.string()),
     status: runStatus,
+    queueState: v.optional(queueState),
     currentStep: v.optional(v.string()),
+    currentUrl: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
+    goalStatus: v.optional(runGoalStatus),
+    goalSummary: v.optional(v.string()),
+    stopRequestedAt: v.optional(v.number()),
     startedAt: v.number(),
     updatedAt: v.number(),
     finishedAt: v.optional(v.number()),
@@ -117,6 +155,9 @@ export default defineSchema({
     confidence: v.number(),
     filePath: v.optional(v.string()),
     line: v.optional(v.number()),
+    impact: v.optional(v.number()),
+    score: v.optional(v.number()),
+    stepIndex: v.optional(v.number()),
     pageOrFlow: v.optional(v.string()),
     artifactId: v.optional(v.id("artifacts")),
     screenshotUrl: v.optional(v.string()),
@@ -133,6 +174,8 @@ export default defineSchema({
     type: artifactType,
     fileLocation: v.string(),
     storageId: v.optional(v.id("_storage")),
+    title: v.optional(v.string()),
+    pageUrl: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_run", ["runId"])
@@ -210,6 +253,7 @@ export default defineSchema({
     provider: v.literal("steel"),
     externalSessionId: v.string(),
     status: sessionStatus,
+    debugUrl: v.optional(v.string()),
     replayUrl: v.optional(v.string()),
     startedAt: v.number(),
     updatedAt: v.number(),
@@ -251,4 +295,44 @@ export default defineSchema({
   })
     .index("by_tracked_repo", ["trackedRepoId"])
     .index("by_repo_and_pr_number", ["repoFullName", "prNumber"]),
+  runEvents: defineTable({
+    runId: v.id("runs"),
+    kind: runEventKind,
+    title: v.string(),
+    body: v.optional(v.string()),
+    status: v.optional(runStatus),
+    stepIndex: v.optional(v.number()),
+    pageUrl: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
+    artifactId: v.optional(v.id("artifacts")),
+    createdAt: v.number(),
+  })
+    .index("by_run", ["runId"])
+    .index("by_run_and_created_at", ["runId", "createdAt"]),
+
+  performanceAudits: defineTable({
+    runId: v.id("runs"),
+    pageUrl: v.string(),
+    performanceScore: v.number(),
+    accessibilityScore: v.number(),
+    bestPracticesScore: v.number(),
+    seoScore: v.number(),
+    reportArtifactId: v.optional(v.id("artifacts")),
+    createdAt: v.number(),
+  })
+    .index("by_run", ["runId"])
+    .index("by_run_and_created_at", ["runId", "createdAt"]),
+
+  credentials: defineTable({
+    namespace: v.string(),
+    website: v.string(),
+    origin: v.string(),
+    username: v.string(),
+    passwordEncrypted: v.string(),
+    totpSecretEncrypted: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_namespace", ["namespace"])
+    .index("by_namespace_origin", ["namespace", "origin"]),
 })

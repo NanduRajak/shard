@@ -1,14 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router"
 
 async function createInngestHandler() {
-  const [{ serve }, { functions, inngest }] = await Promise.all([
+  const [{ serve }, { functions, inngest }, { serverEnv }] = await Promise.all([
     import("inngest/next"),
-    import("../../../inngest/review-bot-client"),
+    import("../../inngest/client"),
+    import("~/server-env"),
   ])
+
+  const serveOrigin =
+    serverEnv.INNGEST_SERVE_ORIGIN ??
+    (serverEnv.INNGEST_DEV === "1" ? "http://host.docker.internal:3000" : undefined)
 
   return serve({
     client: inngest,
     functions,
+    serveOrigin,
+    servePath: "/api/inngest",
   })
 }
 

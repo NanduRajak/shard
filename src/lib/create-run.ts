@@ -1,29 +1,49 @@
 import { createServerFn } from "@tanstack/react-start"
 import { api } from "../../convex/_generated/api"
-import { validateRunUrl } from "./run-url"
+import { prepareCreateRunPayload } from "./run-request"
 
 export const createRun = createServerFn({ method: "POST" })
-  .inputValidator((data: { url: string }) => data)
+  .inputValidator(
+    (data: { credentialNamespace?: string | null; prompt: string }) => data,
+  )
   .handler(async ({ data }) => {
-    const url = validateRunUrl(data.url)
+    const payload = prepareCreateRunPayload(data)
 
-    if (!url) {
-      throw new Error("Enter a full URL starting with http:// or https://.")
-    }
-
-    const [{ createConvexServerClient }, { inngest }] = await Promise.all([
+    const [{ createConvexServerClient }, { serverEnv }] = await Promise.all([
       import("~/server/convex"),
-      import("../../inngest/core"),
+      import("~/server-env"),
     ])
 
     const convex = createConvexServerClient()
-    const runId = await convex.mutation(api.runs.createRun, { url })
+    const runId = await convex.mutation(api.runs.createRun, payload)
 
     try {
-      await inngest.send({
-        name: "app/run.requested",
-        data: { runId, url },
-      })
+      if (serverEnv.QA_DIRECT_RUN_FALLBACK === "1") {
+        const { runQaWorkflow } = await import("../../inngest/qa-run")
+
+        await convex.mutation(api.runtime.updateRunQueueState, {
+          runId,
+          queueState: "picked_up",
+          title: "Direct run fallback enabled",
+          body: "Running the QA workflow directly in the app server because QA_DIRECT_RUN_FALLBACK=1.",
+        })
+
+        void runQaWorkflow({ runId, ...payload })
+      } else {
+        const { inngest } = await import("../../inngest/client")
+
+        await inngest.send({
+          name: "app/run.requested",
+          data: { runId, ...payload },
+        })
+
+        await convex.mutation(api.runtime.updateRunQueueState, {
+          runId,
+          queueState: "waiting_for_worker",
+          title: "Waiting for background worker",
+          body: "Inngest accepted the run request. Waiting for a worker to start the QA job.",
+        })
+      }
     } catch (error) {
       await convex.mutation(api.runtime.updateRun, {
         runId,

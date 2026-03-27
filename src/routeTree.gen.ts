@@ -12,13 +12,17 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReviewBotRouteImport } from './routes/review-bot'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
-import { Route as ApiInngestRouteImport } from './routes/api/inngest'
+import { Route as HistoryRunIdRouteImport } from './routes/history_.$runId'
+import { Route as ApiInngestRouteImport } from './routes/api.inngest'
 import { Route as ApiGithubWebhookRouteImport } from './routes/api/github/webhook'
 import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
 import { Route as ApiGithubConnectRouteImport } from './routes/api/github/connect'
 import { Route as ApiGithubCallbackRouteImport } from './routes/api/github/callback'
+import { Route as ApiSteelSessionIdMediaRouteImport } from './routes/api.steel.$sessionId.media'
+import { Route as ApiSteelSessionIdHlsRouteImport } from './routes/api.steel.$sessionId.hls'
 import { Route as ApiGithubInstallCallbackRouteImport } from './routes/api/github/install/callback'
 
 const ReviewBotRoute = ReviewBotRouteImport.update({
@@ -36,6 +40,11 @@ const DashboardRoute = DashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CredentialsRoute = CredentialsRouteImport.update({
+  id: '/credentials',
+  path: '/credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -44,6 +53,11 @@ const IndexRoute = IndexRouteImport.update({
 const RunsRunIdRoute = RunsRunIdRouteImport.update({
   id: '/runs/$runId',
   path: '/runs/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoryRunIdRoute = HistoryRunIdRouteImport.update({
+  id: '/history_/$runId',
+  path: '/history/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiInngestRoute = ApiInngestRouteImport.update({
@@ -71,6 +85,16 @@ const ApiGithubCallbackRoute = ApiGithubCallbackRouteImport.update({
   path: '/api/github/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiSteelSessionIdMediaRoute = ApiSteelSessionIdMediaRouteImport.update({
+  id: '/api/steel/$sessionId/media',
+  path: '/api/steel/$sessionId/media',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSteelSessionIdHlsRoute = ApiSteelSessionIdHlsRouteImport.update({
+  id: '/api/steel/$sessionId/hls',
+  path: '/api/steel/$sessionId/hls',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiGithubInstallCallbackRoute =
   ApiGithubInstallCallbackRouteImport.update({
     id: '/callback',
@@ -80,97 +104,125 @@ const ApiGithubInstallCallbackRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
   '/api/inngest': typeof ApiInngestRoute
+  '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/connect': typeof ApiGithubConnectRoute
   '/api/github/install': typeof ApiGithubInstallRouteWithChildren
   '/api/github/webhook': typeof ApiGithubWebhookRoute
   '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
+  '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
+  '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
   '/api/inngest': typeof ApiInngestRoute
+  '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/connect': typeof ApiGithubConnectRoute
   '/api/github/install': typeof ApiGithubInstallRouteWithChildren
   '/api/github/webhook': typeof ApiGithubWebhookRoute
   '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
+  '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
+  '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
   '/api/inngest': typeof ApiInngestRoute
+  '/history_/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/connect': typeof ApiGithubConnectRoute
   '/api/github/install': typeof ApiGithubInstallRouteWithChildren
   '/api/github/webhook': typeof ApiGithubWebhookRoute
   '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
+  '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
+  '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/credentials'
     | '/dashboard'
     | '/history'
     | '/review-bot'
     | '/api/inngest'
+    | '/history/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
     | '/api/github/connect'
     | '/api/github/install'
     | '/api/github/webhook'
     | '/api/github/install/callback'
+    | '/api/steel/$sessionId/hls'
+    | '/api/steel/$sessionId/media'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/credentials'
     | '/dashboard'
     | '/history'
     | '/review-bot'
     | '/api/inngest'
+    | '/history/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
     | '/api/github/connect'
     | '/api/github/install'
     | '/api/github/webhook'
     | '/api/github/install/callback'
+    | '/api/steel/$sessionId/hls'
+    | '/api/steel/$sessionId/media'
   id:
     | '__root__'
     | '/'
+    | '/credentials'
     | '/dashboard'
     | '/history'
     | '/review-bot'
     | '/api/inngest'
+    | '/history_/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
     | '/api/github/connect'
     | '/api/github/install'
     | '/api/github/webhook'
     | '/api/github/install/callback'
+    | '/api/steel/$sessionId/hls'
+    | '/api/steel/$sessionId/media'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CredentialsRoute: typeof CredentialsRoute
   DashboardRoute: typeof DashboardRoute
   HistoryRoute: typeof HistoryRoute
   ReviewBotRoute: typeof ReviewBotRoute
   ApiInngestRoute: typeof ApiInngestRoute
+  HistoryRunIdRoute: typeof HistoryRunIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
   ApiGithubCallbackRoute: typeof ApiGithubCallbackRoute
   ApiGithubConnectRoute: typeof ApiGithubConnectRoute
   ApiGithubInstallRoute: typeof ApiGithubInstallRouteWithChildren
   ApiGithubWebhookRoute: typeof ApiGithubWebhookRoute
+  ApiSteelSessionIdHlsRoute: typeof ApiSteelSessionIdHlsRoute
+  ApiSteelSessionIdMediaRoute: typeof ApiSteelSessionIdMediaRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -196,6 +248,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/credentials': {
+      id: '/credentials'
+      path: '/credentials'
+      fullPath: '/credentials'
+      preLoaderRoute: typeof CredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -208,6 +267,13 @@ declare module '@tanstack/react-router' {
       path: '/runs/$runId'
       fullPath: '/runs/$runId'
       preLoaderRoute: typeof RunsRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/history_/$runId': {
+      id: '/history_/$runId'
+      path: '/history/$runId'
+      fullPath: '/history/$runId'
+      preLoaderRoute: typeof HistoryRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/inngest': {
@@ -245,6 +311,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGithubCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/steel/$sessionId/media': {
+      id: '/api/steel/$sessionId/media'
+      path: '/api/steel/$sessionId/media'
+      fullPath: '/api/steel/$sessionId/media'
+      preLoaderRoute: typeof ApiSteelSessionIdMediaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/steel/$sessionId/hls': {
+      id: '/api/steel/$sessionId/hls'
+      path: '/api/steel/$sessionId/hls'
+      fullPath: '/api/steel/$sessionId/hls'
+      preLoaderRoute: typeof ApiSteelSessionIdHlsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/github/install/callback': {
       id: '/api/github/install/callback'
       path: '/callback'
@@ -268,15 +348,19 @@ const ApiGithubInstallRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CredentialsRoute: CredentialsRoute,
   DashboardRoute: DashboardRoute,
   HistoryRoute: HistoryRoute,
   ReviewBotRoute: ReviewBotRoute,
   ApiInngestRoute: ApiInngestRoute,
+  HistoryRunIdRoute: HistoryRunIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
   ApiGithubCallbackRoute: ApiGithubCallbackRoute,
   ApiGithubConnectRoute: ApiGithubConnectRoute,
   ApiGithubInstallRoute: ApiGithubInstallRouteWithChildren,
   ApiGithubWebhookRoute: ApiGithubWebhookRoute,
+  ApiSteelSessionIdHlsRoute: ApiSteelSessionIdHlsRoute,
+  ApiSteelSessionIdMediaRoute: ApiSteelSessionIdMediaRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

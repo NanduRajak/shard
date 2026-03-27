@@ -4,17 +4,40 @@ import { mutation, query } from "./_generated/server"
 export const createRun = mutation({
   args: {
     url: v.string(),
+    mode: v.union(v.literal("explore"), v.literal("task")),
+    credentialNamespace: v.optional(v.string()),
+    instructions: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now()
 
-    return await ctx.db.insert("runs", {
+    const runId = await ctx.db.insert("runs", {
       url: args.url,
+      mode: args.mode,
+      credentialNamespace: args.credentialNamespace,
+      instructions: args.instructions,
       status: "queued",
+      queueState: "pending",
       currentStep: "Queued for scan",
+      goalStatus: args.mode === "task" ? "not_requested" : undefined,
       startedAt: now,
       updatedAt: now,
     })
+
+    await ctx.db.insert("runEvents", {
+      runId,
+      kind: "status",
+      title: "Run queued",
+      body:
+        args.mode === "task" && args.instructions
+          ? `The autonomous QA workflow has been created and is waiting for the background worker.\nTask: ${args.instructions}`
+          : "The autonomous QA workflow has been created and is waiting for the background worker.",
+      status: "queued",
+      pageUrl: args.url,
+      createdAt: now,
+    })
+
+    return runId
   },
 })
 
