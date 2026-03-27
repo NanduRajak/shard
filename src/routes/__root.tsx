@@ -1,6 +1,7 @@
 import {
   HeadContent,
   Scripts,
+  Link,
   createRootRoute,
 } from "@tanstack/react-router"
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
@@ -10,6 +11,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { AppSidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeProvider } from "@/components/theme-provider"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { Button } from "@/components/ui/button"
 import { env } from "~/env"
 
 import appCss from "../styles.css?url"
@@ -55,6 +57,7 @@ export const Route = createRootRoute({
       },
     ],
   }),
+  notFoundComponent: RootNotFound,
   shellComponent: RootDocument,
 })
 
@@ -109,5 +112,31 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         </ThemeProvider>
       </body>
     </html>
+  )
+}
+
+function RootNotFound() {
+  return (
+    <div className="flex min-h-[calc(100svh-12rem)] items-center justify-center">
+      <div className="max-w-md rounded-[1.75rem] border border-border/70 bg-card/80 p-8 text-center shadow-[0_24px_70px_-50px_rgba(15,23,42,0.55)]">
+        <p className="text-xs font-medium tracking-[0.26em] text-muted-foreground uppercase">
+          Not found
+        </p>
+        <h1 className="mt-3 text-2xl font-medium text-foreground">
+          This route does not exist.
+        </h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Return to the command center or open the run history to inspect archived QA reports.
+        </p>
+        <div className="mt-6 flex items-center justify-center gap-3">
+          <Button render={<Link to="/" />} className="rounded-2xl">
+            Go home
+          </Button>
+          <Button render={<Link to="/history" />} variant="outline" className="rounded-2xl">
+            Open history
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }

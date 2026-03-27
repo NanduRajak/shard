@@ -15,6 +15,8 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
+import { Route as HistoryRunIdRouteImport } from './routes/history_.$runId'
+import { Route as ApiInngestRouteImport } from './routes/api.inngest'
 
 const ReviewBotRoute = ReviewBotRouteImport.update({
   id: '/review-bot',
@@ -46,6 +48,16 @@ const RunsRunIdRoute = RunsRunIdRouteImport.update({
   path: '/runs/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HistoryRunIdRoute = HistoryRunIdRouteImport.update({
+  id: '/history_/$runId',
+  path: '/history/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInngestRoute = ApiInngestRouteImport.update({
+  id: '/api/inngest',
+  path: '/api/inngest',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -53,6 +65,8 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
+  '/api/inngest': typeof ApiInngestRoute
+  '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
 }
 export interface FileRoutesByTo {
@@ -61,6 +75,8 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
+  '/api/inngest': typeof ApiInngestRoute
+  '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
 }
 export interface FileRoutesById {
@@ -70,6 +86,8 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
+  '/api/inngest': typeof ApiInngestRoute
+  '/history_/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
 }
 export interface FileRouteTypes {
@@ -80,6 +98,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/history'
     | '/review-bot'
+    | '/api/inngest'
+    | '/history/$runId'
     | '/runs/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -88,6 +108,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/history'
     | '/review-bot'
+    | '/api/inngest'
+    | '/history/$runId'
     | '/runs/$runId'
   id:
     | '__root__'
@@ -96,6 +118,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/history'
     | '/review-bot'
+    | '/api/inngest'
+    | '/history_/$runId'
     | '/runs/$runId'
   fileRoutesById: FileRoutesById
 }
@@ -105,6 +129,8 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   HistoryRoute: typeof HistoryRoute
   ReviewBotRoute: typeof ReviewBotRoute
+  ApiInngestRoute: typeof ApiInngestRoute
+  HistoryRunIdRoute: typeof HistoryRunIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
 }
 
@@ -152,6 +178,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RunsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/history_/$runId': {
+      id: '/history_/$runId'
+      path: '/history/$runId'
+      fullPath: '/history/$runId'
+      preLoaderRoute: typeof HistoryRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/inngest': {
+      id: '/api/inngest'
+      path: '/api/inngest'
+      fullPath: '/api/inngest'
+      preLoaderRoute: typeof ApiInngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -161,6 +201,8 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   HistoryRoute: HistoryRoute,
   ReviewBotRoute: ReviewBotRoute,
+  ApiInngestRoute: ApiInngestRoute,
+  HistoryRunIdRoute: HistoryRunIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
 }
 export const routeTree = rootRouteImport

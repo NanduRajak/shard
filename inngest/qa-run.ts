@@ -3,7 +3,7 @@ import { chromium, type Page } from "playwright"
 import SteelClient from "steel-sdk"
 import { NonRetriableError } from "inngest"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
-import { openai } from "@ai-sdk/openai"
+import { google } from "@ai-sdk/google"
 import { launch } from "chrome-launcher"
 import { z } from "zod"
 import type { Id } from "../convex/_generated/dataModel"
@@ -13,6 +13,7 @@ import { serverEnv } from "~/server-env"
 import { inngest } from "./core"
 import { isTransientWorkflowError } from "@/lib/workflow-errors"
 import { scoreLighthouseFinding } from "@/lib/lighthouse-audits"
+import { pickQaFallbackAction } from "@/lib/qa-fallback"
 import { getDecryptedCredentialForOrigin } from "@/lib/credentials-server"
 import {
   buildActionSignature,
@@ -32,7 +33,7 @@ import {
 const MAX_AGENT_STEPS = 24
 const MAX_DISCOVERED_PAGES = 12
 const MAX_PAGE_FINDINGS = 2
-const DEFAULT_MODEL = serverEnv.OPENAI_MODEL ?? "gpt-4.1-mini"
+const DEFAULT_MODEL = serverEnv.GEMINI_MODEL ?? "gemini-2.5-flash"
 
 type RunRequestedEvent = {
   data: {
@@ -64,6 +65,7 @@ type ToolOutcome = {
   artifactCreated?: boolean
   changed: boolean
   currentUrl: string
+  fallback?: boolean
   note: string
   target?: string
   toolName: string
@@ -100,11 +102,10 @@ const pageReviewSchema = z.object({
         description: z.string().min(1),
         severity: z.enum(["low", "medium", "high", "critical"]),
         confidence: z.number().min(0).max(1),
-        suggestedFix: z.string().min(1).optional(),
+        suggestedFix: z.string().min(1).nullable(),
       }),
     )
-    .max(MAX_PAGE_FINDINGS)
-    .default([]),
+    .max(MAX_PAGE_FINDINGS),
 })
 
 const steel = new SteelClient({
@@ -118,10 +119,14 @@ export const qaRun = inngest.createFunction(
     triggers: [{ event: "app/run.requested" }],
     onFailure: async ({ event, error }) => {
       const convex = createConvexServerClient()
-      const failedEvent = event as unknown as RunRequestedEvent
+      const runId = extractRunIdFromFailureEvent(event)
+
+      if (!runId) {
+        return
+      }
 
       await convex.mutation(api.runtime.updateRun, {
-        runId: failedEvent.data.runId,
+        runId,
         status: "failed",
         currentStep: "QA run failed",
         errorMessage: error.message,
@@ -130,32 +135,60 @@ export const qaRun = inngest.createFunction(
     },
   },
   async ({ event }: { event: RunRequestedEvent }) => {
-    const convex = createConvexServerClient()
-    const { credentialNamespace, runId, url } = event.data
+    return await runQaWorkflow(event.data)
+  },
+)
 
-    let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | null = null
-    let chrome: Awaited<ReturnType<typeof launch>> | null = null
-    let currentSessionId: string | null = null
-    let sessionDocId: Id<"sessions"> | null = null
-    let finalRunStatus: "cancelled" | "completed" | "failed" = "completed"
-    let workflowError: Error | null = null
+export async function runQaWorkflow({
+  credentialNamespace,
+  runId,
+  url,
+}: RunRequestedEvent["data"]) {
+  const convex = createConvexServerClient()
 
-    const savedFindings: SavedFinding[] = []
-    const findingSignatures = new Set<string>()
-    const bufferedFindings: BufferedFinding[] = []
-    const pageCandidates = new Map<string, PageCandidate>()
+  let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | null = null
+  let chrome: Awaited<ReturnType<typeof launch>> | null = null
+  let currentSessionId: string | null = null
+  let sessionDocId: Id<"sessions"> | null = null
+  let finalRunStatus: "cancelled" | "completed" | "failed" = "completed"
+  let workflowError: Error | null = null
+  let screenshotCount = 0
+  let performanceAuditCount = 0
+  let lastKnownUrl = url
+  let failureStage = "Queued"
 
-    try {
+  const savedFindings: SavedFinding[] = []
+  const findingSignatures = new Set<string>()
+  const bufferedFindings: BufferedFinding[] = []
+  const pageCandidates = new Map<string, PageCandidate>()
+
+  try {
       await convex.mutation(api.runtime.resetRunState, {
         runId,
+      })
+
+      await convex.mutation(api.runtime.updateRunQueueState, {
+        runId,
+        queueState: "picked_up",
+        title: "Background worker picked up run",
+        body: "The Inngest worker accepted the job and started executing the QA workflow.",
       })
 
       await convex.mutation(api.runtime.updateRun, {
         runId,
         status: "starting",
+        queueState: "picked_up",
         currentStep: "Creating Steel session",
         currentUrl: url,
         errorMessage: null,
+      })
+      await emitRunEvent(convex, {
+        runId,
+        kind: "status",
+        title: "Run starting",
+        body: "Initializing the Steel browser session and preparing the worker.",
+        status: "starting",
+        pageUrl: url,
       })
 
       await throwIfStopRequested({
@@ -174,6 +207,15 @@ export const qaRun = inngest.createFunction(
         debugUrl,
         replayUrl: steelSession.sessionViewerUrl,
       })
+      await emitRunEvent(convex, {
+        runId,
+        kind: "session",
+        title: "Steel session created",
+        body: "Browser infrastructure is ready. The live preview will appear once Playwright attaches.",
+        status: "starting",
+        pageUrl: url,
+        sessionId: sessionDocId,
+      })
 
       await throwIfStopRequested({
         convex,
@@ -186,6 +228,16 @@ export const qaRun = inngest.createFunction(
         status: "running",
         currentStep: "Connecting Playwright to Steel",
       })
+      failureStage = "Connecting Playwright to Steel"
+      await emitRunEvent(convex, {
+        runId,
+        kind: "session",
+        title: "Connecting to Steel",
+        body: "Attaching Playwright to the remote browser session.",
+        status: "running",
+        pageUrl: url,
+        sessionId: sessionDocId,
+      })
 
       browser = await chromium.connectOverCDP(
         `wss://connect.steel.dev?apiKey=${serverEnv.STEEL_API_KEY}&sessionId=${steelSession.id}`,
@@ -196,6 +248,15 @@ export const qaRun = inngest.createFunction(
         status: "active",
         debugUrl,
         replayUrl: steelSession.sessionViewerUrl,
+      })
+      await emitRunEvent(convex, {
+        runId,
+        kind: "session",
+        title: "Steel live preview ready",
+        body: "The browser session is active and can be watched live.",
+        status: "running",
+        pageUrl: url,
+        sessionId: sessionDocId,
       })
 
       const context = browser.contexts()[0] ?? (await browser.newContext())
@@ -211,15 +272,45 @@ export const qaRun = inngest.createFunction(
         runId,
         currentStep: "Opening target page",
       })
+      failureStage = "Opening target page"
+      await emitRunEvent(convex, {
+        runId,
+        kind: "navigation",
+        title: "Opening target page",
+        body: "Loading the requested URL in the live browser session.",
+        status: "running",
+        pageUrl: url,
+        sessionId: sessionDocId,
+      })
 
       await safeGoto(page, url)
+      lastKnownUrl = page.url()
       await convex.mutation(api.runtime.updateRun, {
         runId,
         currentUrl: page.url(),
         currentStep: "Booting autonomous QA agent",
       })
+      failureStage = "Booting autonomous QA agent"
+      await emitRunEvent(convex, {
+        runId,
+        kind: "navigation",
+        title: "Target page loaded",
+        body: page.url(),
+        status: "running",
+        pageUrl: page.url(),
+        sessionId: sessionDocId,
+      })
+      await emitRunEvent(convex, {
+        runId,
+        kind: "agent",
+        title: "Autonomous QA agent booted",
+        body: "The run is now exploring the site, capturing screenshots, and collecting findings.",
+        status: "running",
+        pageUrl: page.url(),
+        sessionId: sessionDocId,
+      })
 
-      await throwIfStopRequested({
+      screenshotCount += await throwIfStopRequested({
         convex,
         runId,
         bufferedFindings,
@@ -232,10 +323,11 @@ export const qaRun = inngest.createFunction(
         findingSignatures,
       })
 
-      await runSnapshotStage({
+      screenshotCount += await runSnapshotStage({
         convex,
         findingSignatures,
         bufferedFindings,
+        sessionId: sessionDocId,
         page,
         pageCandidates,
         runId,
@@ -243,10 +335,11 @@ export const qaRun = inngest.createFunction(
         stepIndex: 0,
       })
 
-      await throwIfStopRequested({
+      screenshotCount += await throwIfStopRequested({
         convex,
         runId,
         bufferedFindings,
+        sessionId: sessionDocId,
         currentStep: "QA run stopped during exploration",
         pageCandidates,
         pageUrl: page.url(),
@@ -256,7 +349,7 @@ export const qaRun = inngest.createFunction(
         findingSignatures,
       })
 
-      await runAgentLoop({
+      screenshotCount += await runAgentLoop({
         convex,
         credentialNamespace,
         findingSignatures,
@@ -265,13 +358,15 @@ export const qaRun = inngest.createFunction(
         pageCandidates,
         runId,
         savedFindings,
+        sessionId: sessionDocId,
         startUrl: url,
       })
 
-      await throwIfStopRequested({
+      screenshotCount += await throwIfStopRequested({
         convex,
         runId,
         bufferedFindings,
+        sessionId: sessionDocId,
         currentStep: "QA run stopped before Lighthouse",
         pageCandidates,
         pageUrl: page.url(),
@@ -291,10 +386,13 @@ export const qaRun = inngest.createFunction(
       })
 
       for (const [index, auditUrl] of auditUrls.entries()) {
-        await throwIfStopRequested({
+        failureStage = `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`
+        lastKnownUrl = auditUrl
+        screenshotCount += await throwIfStopRequested({
           convex,
           runId,
           bufferedFindings,
+          sessionId: sessionDocId,
           currentStep: "QA run stopped during Lighthouse",
           pageCandidates,
           pageUrl: auditUrl,
@@ -308,6 +406,15 @@ export const qaRun = inngest.createFunction(
           runId,
           currentStep: `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`,
           currentUrl: auditUrl,
+        })
+        await emitRunEvent(convex, {
+          runId,
+          kind: "audit",
+          title: `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`,
+          body: auditUrl,
+          status: "running",
+          pageUrl: auditUrl,
+          sessionId: sessionDocId,
         })
 
         const auditResult = await lighthouse(auditUrl, {
@@ -337,6 +444,17 @@ export const qaRun = inngest.createFunction(
           runId,
           title: `Lighthouse report for ${auditUrl}`,
           type: "html-report",
+        })
+        performanceAuditCount += 1
+        await emitRunEvent(convex, {
+          runId,
+          kind: "artifact",
+          title: "Lighthouse report saved",
+          body: `Stored HTML report for ${auditUrl}.`,
+          status: "running",
+          pageUrl: auditUrl,
+          sessionId: sessionDocId,
+          artifactId: reportArtifactId,
         })
 
         const categories = auditResult.lhr.categories
@@ -409,13 +527,24 @@ export const qaRun = inngest.createFunction(
             source: "perf",
             score: perfFinding.score,
           })
+          await emitRunEvent(convex, {
+            runId,
+            kind: "finding",
+            title: perfFinding.title,
+            body: perfFinding.description,
+            status: "running",
+            pageUrl: auditUrl,
+            sessionId: sessionDocId,
+            artifactId: reportArtifactId,
+          })
         }
       }
 
-      await throwIfStopRequested({
+      screenshotCount += await throwIfStopRequested({
         convex,
         runId,
         bufferedFindings,
+        sessionId: sessionDocId,
         currentStep: "QA run stopped before final scoring",
         pageCandidates,
         pageUrl: page.url(),
@@ -430,11 +559,12 @@ export const qaRun = inngest.createFunction(
         currentStep: "Computing final quality score",
         currentUrl: url,
       })
+      failureStage = "Computing final quality score"
 
       const scoreSummary = buildScoreSummary({
         findings: savedFindings,
-        performanceAudits: auditUrls.length,
-        screenshots: 0,
+        performanceAudits: performanceAuditCount,
+        screenshots: screenshotCount,
       })
 
       await convex.mutation(api.runtime.updateRun, {
@@ -446,9 +576,23 @@ export const qaRun = inngest.createFunction(
         finishedAt: Date.now(),
         errorMessage: null,
       })
-    } catch (error) {
+      await emitRunEvent(convex, {
+        runId,
+        kind: "status",
+        title: "Run completed",
+        body: `Final quality score: ${scoreSummary.overall}/100.`,
+        status: "completed",
+        pageUrl: url,
+        sessionId: sessionDocId,
+      })
+  } catch (error) {
       if (error instanceof RunCancelledError) {
         finalRunStatus = "cancelled"
+        const finalScore = computeRunFinalScore({
+          findings: savedFindings,
+          performanceAudits: performanceAuditCount,
+          screenshots: screenshotCount,
+        })
 
         await convex.mutation(api.runtime.updateRun, {
           runId,
@@ -456,7 +600,17 @@ export const qaRun = inngest.createFunction(
           currentStep: error.message,
           currentUrl: error.currentUrl ?? url,
           errorMessage: null,
+          finalScore,
           finishedAt: Date.now(),
+        })
+        await emitRunEvent(convex, {
+          runId,
+          kind: "status",
+          title: "Run cancelled",
+          body: `Shutdown completed. Partial quality score: ${finalScore}/100.`,
+          status: "cancelled",
+          pageUrl: error.currentUrl ?? url,
+          sessionId: sessionDocId,
         })
 
         return
@@ -473,6 +627,19 @@ export const qaRun = inngest.createFunction(
           errorMessage: workflowError.message,
           finishedAt: Date.now(),
         })
+        await emitRunEvent(convex, {
+          runId,
+          kind: "status",
+          title: "Run failed",
+          body: [
+            `Stage: ${failureStage}`,
+            `Last URL: ${lastKnownUrl}`,
+            `Error: ${workflowError.message}`,
+          ].join("\n"),
+          status: "failed",
+          pageUrl: lastKnownUrl,
+          sessionId: sessionDocId,
+        })
 
         throw new NonRetriableError(workflowError.message)
       }
@@ -483,9 +650,18 @@ export const qaRun = inngest.createFunction(
         currentStep: "Transient browser failure, retrying",
         errorMessage: workflowError.message,
       })
+      await emitRunEvent(convex, {
+        runId,
+        kind: "system",
+        title: "Transient failure detected",
+        body: `${workflowError.message} Retrying the workflow.`,
+        status: "running",
+        pageUrl: url,
+        sessionId: sessionDocId,
+      })
 
       throw workflowError
-    } finally {
+  } finally {
       if (browser) {
         await browser.close().catch(() => undefined)
       }
@@ -500,6 +676,20 @@ export const qaRun = inngest.createFunction(
 
       if (currentSessionId) {
         await steel.sessions.release(currentSessionId).catch(() => undefined)
+        await emitRunEvent(convex, {
+          runId,
+          kind: "session",
+          title: "Steel session released",
+          body: "The live browser session has been closed and archived.",
+          status:
+            finalRunStatus === "completed"
+              ? "completed"
+              : finalRunStatus === "cancelled"
+                ? "cancelled"
+                : "failed",
+          pageUrl: url,
+          sessionId: sessionDocId,
+        }).catch(() => undefined)
       }
 
       if (sessionDocId) {
@@ -511,9 +701,8 @@ export const qaRun = inngest.createFunction(
           })
           .catch(() => undefined)
       }
-    }
-  },
-)
+  }
+}
 
 async function runAgentLoop({
   convex,
@@ -524,6 +713,7 @@ async function runAgentLoop({
   pageCandidates,
   runId,
   savedFindings,
+  sessionId,
   startUrl,
 }: {
   convex: ReturnType<typeof createConvexServerClient>
@@ -534,12 +724,14 @@ async function runAgentLoop({
   pageCandidates: Map<string, PageCandidate>
   runId: Id<"runs">
   savedFindings: SavedFinding[]
+  sessionId: Id<"sessions"> | null
   startUrl: string
 }) {
   const visitedPages = new Set<string>([page.url()])
   const actionHistory: string[] = []
   const analyzedSnapshots = new Set<string>()
   let noOpCount = 0
+  let screenshotCount = 0
 
   for (let stepIndex = 1; stepIndex <= MAX_AGENT_STEPS; stepIndex += 1) {
     await throwIfStopRequested({
@@ -553,6 +745,7 @@ async function runAgentLoop({
       savedFindings,
       stepIndex,
       findingSignatures,
+      sessionId,
     })
 
     const snapshot = await inspectCurrentPage(page)
@@ -572,9 +765,19 @@ async function runAgentLoop({
       currentUrl: snapshot.url,
       status: "running",
     })
+    await emitRunEvent(convex, {
+      runId,
+      kind: "agent",
+      title: `Exploration step ${stepIndex}`,
+      body: `Reviewing ${snapshot.url}.`,
+      status: "running",
+      pageUrl: snapshot.url,
+      sessionId,
+      stepIndex,
+    })
 
     const result = await generateText({
-      model: openai(DEFAULT_MODEL),
+      model: google(DEFAULT_MODEL),
       prompt: buildAgentPrompt({
         credentialNamespace,
         snapshot,
@@ -591,25 +794,62 @@ async function runAgentLoop({
         convex,
         page,
         runId,
+        sessionId,
         startUrl,
         visitedPages,
       }),
+    }).catch(async (error) => {
+      await emitNonBlockingAiWarning(convex, {
+        runId,
+        sessionId,
+        stepIndex,
+        pageUrl: snapshot.url,
+        title: "Agent planning unavailable",
+        body: `The AI planner failed during exploration step ${stepIndex}. Ending exploration early instead of failing the run.\nError: ${
+          error instanceof Error ? error.message : "Unknown AI planner error"
+        }`,
+      })
+
+      return null
     })
 
+    if (!result) {
+      break
+    }
+
+    const plannerSummary = result.text.trim()
     const toolResults = result.steps.flatMap((step) => step.toolResults)
     const latestToolResult = [...toolResults]
       .reverse()
       .find((toolResult) => Boolean(toolResult))
 
-    if (!latestToolResult) {
-      break
-    }
+    const outcome = latestToolResult && !latestToolResult.dynamic && isToolOutcome(latestToolResult.output)
+      ? latestToolResult.output
+      : await executePlannerFallback({
+          convex,
+          page,
+          runId,
+          sessionId,
+          snapshot,
+          startUrl,
+          stepIndex,
+          visitedPages,
+        })
 
-    if (latestToolResult.dynamic || !isToolOutcome(latestToolResult.output)) {
-      break
+    if (plannerSummary || outcome.fallback) {
+      await emitRunEvent(convex, {
+        runId,
+        kind: "agent",
+        title: outcome.fallback ? "Agent fallback decision" : "Agent decision",
+        body:
+          plannerSummary ||
+          "The planner did not call a tool, so the run used a bounded fallback action to keep exploring.",
+        status: "running",
+        pageUrl: snapshot.url,
+        sessionId,
+        stepIndex,
+      })
     }
-
-    const outcome = latestToolResult.output
 
     actionHistory.push(
       buildActionSignature({
@@ -630,7 +870,22 @@ async function runAgentLoop({
       savedFindings,
       stepIndex,
       findingSignatures,
+      sessionId,
     })
+    await emitRunEvent(convex, {
+      runId,
+      kind: outcome.toolName === "navigateToUrl" ? "navigation" : "agent",
+      title: formatToolOutcomeTitle(outcome),
+      body: outcome.note,
+      status: "running",
+      pageUrl: outcome.currentUrl,
+      sessionId,
+      stepIndex,
+    })
+
+    if (outcome.artifactCreated) {
+      screenshotCount += 1
+    }
 
     if (shouldStopForRepeatActions(actionHistory)) {
       break
@@ -644,6 +899,7 @@ async function runAgentLoop({
       pageCandidates,
       runId,
       savedFindings,
+      sessionId,
       stepIndex,
     })
 
@@ -664,7 +920,7 @@ async function runAgentLoop({
     if (stateChanged) {
       noOpCount = 0
 
-      await runSnapshotStage({
+      screenshotCount += await runSnapshotStage({
         convex,
         findingSignatures,
         bufferedFindings,
@@ -672,6 +928,7 @@ async function runAgentLoop({
         pageCandidates,
         runId,
         savedFindings,
+        sessionId,
         stepIndex,
         analyzedSnapshots,
       })
@@ -689,6 +946,8 @@ async function runAgentLoop({
       break
     }
   }
+
+  return screenshotCount
 }
 
 async function runSnapshotStage({
@@ -699,6 +958,7 @@ async function runSnapshotStage({
   pageCandidates,
   runId,
   savedFindings,
+  sessionId,
   stepIndex,
   analyzedSnapshots = new Set<string>(),
 }: {
@@ -709,6 +969,7 @@ async function runSnapshotStage({
   pageCandidates: Map<string, PageCandidate>
   runId: Id<"runs">
   savedFindings: SavedFinding[]
+  sessionId: Id<"sessions"> | null
   stepIndex: number
   analyzedSnapshots?: Set<string>
 }) {
@@ -727,6 +988,7 @@ async function runSnapshotStage({
     convex,
     page,
     runId,
+    sessionId,
     stepIndex,
     title: stepIndex === 0 ? "Landing page screenshot" : `Step ${stepIndex} screenshot`,
   })
@@ -738,20 +1000,22 @@ async function runSnapshotStage({
     pageCandidates,
     runId,
     savedFindings,
+    sessionId,
     stepIndex,
   })
 
   if (analyzedSnapshots.has(snapshot.signature)) {
-    return
+    return 1
   }
 
   analyzedSnapshots.add(snapshot.signature)
 
   const pageReview = await generateObject({
-    model: openai(DEFAULT_MODEL),
+    model: google(DEFAULT_MODEL),
     schema: pageReviewSchema,
     prompt: [
       "You are reviewing a public webpage during an automated QA run.",
+      "Always return a JSON object with a `findings` array, even when it is empty.",
       "Return at most two concrete browser/UI findings.",
       "Focus on usability, broken states, missing context, dead ends, or obvious copy/content problems visible from text and interactive structure.",
       "Do not invent auth, payment, or backend issues. If the page looks healthy, return an empty list.",
@@ -761,7 +1025,25 @@ async function runSnapshotStage({
       `Visible text excerpt: ${snapshot.textExcerpt}`,
       `Interactive elements: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} (${item.tagName})`).join("; ")}`,
     ].join("\n"),
+  }).catch(async (error) => {
+    await emitNonBlockingAiWarning(convex, {
+      runId,
+      sessionId,
+      stepIndex,
+      pageUrl: snapshot.url,
+      artifactId: screenshotArtifactId,
+      title: "Page review skipped",
+      body: `The AI page-review step failed, but the QA run will continue.\nError: ${
+        error instanceof Error ? error.message : "Unknown AI review error"
+      }`,
+    })
+
+    return null
   })
+
+  if (!pageReview) {
+    return 1
+  }
 
   for (const finding of pageReview.object.findings.slice(0, MAX_PAGE_FINDINGS)) {
     const signature = `browser::${snapshot.url}::${finding.title}`
@@ -791,7 +1073,18 @@ async function runSnapshotStage({
       stepIndex,
       pageOrFlow: snapshot.url,
       artifactId: screenshotArtifactId,
-      suggestedFix: finding.suggestedFix,
+      suggestedFix: finding.suggestedFix ?? undefined,
+    })
+    await emitRunEvent(convex, {
+      runId,
+      kind: "finding",
+      title: finding.title,
+      body: finding.description,
+      status: "running",
+      pageUrl: snapshot.url,
+      sessionId,
+      artifactId: screenshotArtifactId,
+      stepIndex,
     })
 
     savedFindings.push({
@@ -805,6 +1098,8 @@ async function runSnapshotStage({
       candidate.findingCount += 1
     }
   }
+
+  return 1
 }
 
 function buildAgentTools({
@@ -813,6 +1108,7 @@ function buildAgentTools({
   convex,
   page,
   runId,
+  sessionId,
   startUrl,
   visitedPages,
 }: {
@@ -821,6 +1117,7 @@ function buildAgentTools({
   convex: ReturnType<typeof createConvexServerClient>
   page: Page
   runId: Id<"runs">
+  sessionId: Id<"sessions"> | null
   startUrl: string
   visitedPages: Set<string>
 }) {
@@ -1089,13 +1386,14 @@ function buildAgentTools({
     captureScreenshot: tool({
       description: "Capture a full-page screenshot of the current page.",
       inputSchema: z.object({
-        title: z.string().optional(),
+        title: z.string().nullable(),
       }),
       execute: async ({ title }) => {
         await saveScreenshot({
           convex,
           page,
           runId,
+          sessionId,
           stepIndex: -1,
           title: title ?? "Agent requested screenshot",
         })
@@ -1106,7 +1404,7 @@ function buildAgentTools({
           changed: false,
           currentUrl: page.url(),
           note: "Captured screenshot.",
-          target: title,
+          target: title ?? undefined,
         } satisfies ToolOutcome
       },
     }),
@@ -1185,15 +1483,17 @@ function buildAgentPrompt({
   recentActions: string[]
 }) {
   return [
-    "You are a bounded autonomous QA agent exploring a public website.",
+    "You are a balanced autonomous QA engineer exploring a public website.",
     "Rules:",
     "- Stay on the starting hostname only.",
     credentialNamespace
       ? "- Do not attempt signup, checkout, payment, account deletion, or destructive submission flows. If login is required, use the stored login tool instead of typing credentials yourself."
       : "- Do not attempt login, signup, checkout, payment, account deletion, or destructive submission flows.",
-    "- Prefer high-signal public pages like pricing, docs, product, help, and navigation destinations.",
-    "- Call at most one tool for the next best action. If no useful action remains, answer with a short stop reason instead of calling a tool.",
+    "- Prefer high-signal public pages like pricing, product, docs, support, contact, and clear navigation destinations.",
+    "- Continue exploring even if the current page looks healthy when there are fresh public paths available.",
+    "- Call at most one tool for the next best action. Avoid plain-text answers unless the page is truly exhausted and no fresh public navigation or safe interactions remain.",
     "- You do not need to capture screenshots on every step because the system already captures them after meaningful changes.",
+    "- Favor visible navigation and exploratory clicks before giving up on the page.",
     `Step: ${stepIndex}/${MAX_AGENT_STEPS}`,
     `Current URL: ${snapshot.url}`,
     `Title: ${snapshot.title}`,
@@ -1204,6 +1504,77 @@ function buildAgentPrompt({
     `Current interactives: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} [${item.tagName}${item.type ? `:${item.type}` : ""}]`).join("; ")}`,
     "Use conservative values if you fill a field, such as 'test search', 'Shard QA', or 'qa@example.com'.",
   ].join("\n")
+}
+
+async function executePlannerFallback({
+  convex,
+  page,
+  runId,
+  sessionId,
+  snapshot,
+  startUrl,
+  stepIndex,
+  visitedPages,
+}: {
+  convex: ReturnType<typeof createConvexServerClient>
+  page: Page
+  runId: Id<"runs">
+  sessionId: Id<"sessions"> | null
+  snapshot: PageSnapshot
+  startUrl: string
+  stepIndex: number
+  visitedPages: Set<string>
+}): Promise<ToolOutcome> {
+  const fallbackAction = pickQaFallbackAction({
+    currentUrl: snapshot.url,
+    interactives: snapshot.interactives,
+    maxPages: MAX_DISCOVERED_PAGES,
+    startUrl,
+    visitedPages,
+  })
+
+  if (fallbackAction.kind === "navigate") {
+    try {
+      const beforeUrl = page.url()
+      await safeGoto(page, fallbackAction.url)
+
+      return {
+        toolName: "navigateToUrl",
+        changed: page.url() !== beforeUrl,
+        currentUrl: page.url(),
+        fallback: true,
+        note: fallbackAction.reason,
+        target: fallbackAction.targetLabel,
+      }
+    } catch (error) {
+      return {
+        toolName: "navigateToUrl",
+        changed: false,
+        currentUrl: page.url(),
+        fallback: true,
+        note: `${fallbackAction.reason} Navigation failed: ${error instanceof Error ? error.message : "Unknown navigation error"}`,
+        target: fallbackAction.targetLabel,
+      }
+    }
+  }
+
+  await saveScreenshot({
+    convex,
+    page,
+    runId,
+    sessionId,
+    stepIndex,
+    title: `Fallback screenshot for step ${stepIndex}`,
+  })
+
+  return {
+    toolName: "captureScreenshot",
+    artifactCreated: true,
+    changed: false,
+    currentUrl: page.url(),
+    fallback: true,
+    note: fallbackAction.reason,
+  }
 }
 
 async function inspectCurrentPage(page: Page): Promise<PageSnapshot> {
@@ -1405,6 +1776,7 @@ async function flushBufferedFindings({
   pageCandidates,
   runId,
   savedFindings,
+  sessionId,
   stepIndex,
 }: {
   convex: ReturnType<typeof createConvexServerClient>
@@ -1413,6 +1785,7 @@ async function flushBufferedFindings({
   pageCandidates: Map<string, PageCandidate>
   runId: Id<"runs">
   savedFindings: SavedFinding[]
+  sessionId?: Id<"sessions"> | null
   stepIndex: number
 }) {
   let persistedCount = 0
@@ -1446,6 +1819,16 @@ async function flushBufferedFindings({
       pageOrFlow: finding.pageOrFlow,
       suggestedFix: finding.suggestedFix,
     })
+    await emitRunEvent(convex, {
+      runId,
+      kind: "finding",
+      title: finding.title,
+      body: finding.description,
+      status: "running",
+      pageUrl: finding.pageOrFlow,
+      sessionId,
+      stepIndex,
+    })
 
     savedFindings.push({
       source: finding.source,
@@ -1463,6 +1846,98 @@ async function flushBufferedFindings({
   }
 
   return persistedCount
+}
+
+async function emitRunEvent(
+  convex: ReturnType<typeof createConvexServerClient>,
+  event: {
+    runId: Id<"runs">
+    kind: "agent" | "artifact" | "audit" | "finding" | "navigation" | "session" | "status" | "system"
+    title: string
+    body?: string
+    status?: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
+    stepIndex?: number
+    pageUrl?: string
+    sessionId?: Id<"sessions"> | null
+    artifactId?: Id<"artifacts">
+  },
+) {
+  await convex.mutation(api.runtime.createRunEvent, {
+    ...event,
+    sessionId: event.sessionId ?? undefined,
+  })
+}
+
+async function emitNonBlockingAiWarning(
+  convex: ReturnType<typeof createConvexServerClient>,
+  event: {
+    runId: Id<"runs">
+    title: string
+    body: string
+    pageUrl?: string
+    sessionId?: Id<"sessions"> | null
+    artifactId?: Id<"artifacts">
+    stepIndex?: number
+  },
+) {
+  await emitRunEvent(convex, {
+    ...event,
+    kind: "system",
+    status: "running",
+    sessionId: event.sessionId ?? undefined,
+  })
+}
+
+function computeRunFinalScore({
+  findings,
+  performanceAudits,
+  screenshots,
+}: {
+  findings: SavedFinding[]
+  performanceAudits: number
+  screenshots: number
+}) {
+  return buildScoreSummary({
+    findings,
+    performanceAudits,
+    screenshots,
+  }).overall
+}
+
+function formatToolOutcomeTitle(outcome: ToolOutcome) {
+  switch (outcome.toolName) {
+    case "clickElement":
+      return `Clicked ${outcome.target ?? "element"}`
+    case "fillInput":
+      return `Filled ${outcome.target ?? "input"}`
+    case "navigateToUrl":
+      return "Navigated to page"
+    case "captureScreenshot":
+      return "Captured screenshot"
+    case "useStoredLogin":
+      return "Attempted stored login"
+    default:
+      return "Agent action completed"
+  }
+}
+
+function extractRunIdFromFailureEvent(event: unknown): Id<"runs"> | null {
+  if (!event || typeof event !== "object") {
+    return null
+  }
+
+  const payload = event as {
+    data?: {
+      event?: {
+        data?: {
+          runId?: Id<"runs">
+        }
+      }
+      runId?: Id<"runs">
+    }
+  }
+
+  return payload.data?.event?.data?.runId ?? payload.data?.runId ?? null
 }
 
 class RunCancelledError extends Error {
@@ -1484,6 +1959,7 @@ async function throwIfStopRequested({
   pageUrl,
   runIdForFindings,
   savedFindings,
+  sessionId,
   stepIndex,
 }: {
   convex: ReturnType<typeof createConvexServerClient>
@@ -1495,12 +1971,13 @@ async function throwIfStopRequested({
   pageUrl?: string
   runIdForFindings?: Id<"runs">
   savedFindings?: SavedFinding[]
+  sessionId?: Id<"sessions"> | null
   stepIndex?: number
 }) {
   const executionState = await convex.query(api.runtime.getRunExecutionState, { runId })
 
   if (!executionState?.stopRequestedAt) {
-    return
+    return 0
   }
 
   if (
@@ -1518,6 +1995,7 @@ async function throwIfStopRequested({
       pageCandidates,
       runId: runIdForFindings,
       savedFindings,
+      sessionId,
       stepIndex,
     })
   }
@@ -1529,12 +2007,14 @@ async function saveScreenshot({
   convex,
   page,
   runId,
+  sessionId,
   stepIndex,
   title,
 }: {
   convex: ReturnType<typeof createConvexServerClient>
   page: Page
   runId: Id<"runs">
+  sessionId?: Id<"sessions"> | null
   stepIndex: number
   title: string
 }) {
@@ -1543,7 +2023,7 @@ async function saveScreenshot({
     type: "png",
   })
 
-  return await uploadArtifact({
+  const artifactId = await uploadArtifact({
     body: new Uint8Array(screenshot),
     contentType: "image/png",
     convex,
@@ -1552,6 +2032,20 @@ async function saveScreenshot({
     title: stepIndex >= 0 ? `${title}` : title,
     type: "screenshot",
   })
+
+  await emitRunEvent(convex, {
+    runId,
+    kind: "artifact",
+    title,
+    body: `Screenshot captured for ${page.url()}.`,
+    status: "running",
+    pageUrl: page.url(),
+    sessionId,
+    artifactId,
+    stepIndex: stepIndex >= 0 ? stepIndex : undefined,
+  })
+
+  return artifactId
 }
 
 async function uploadArtifact({

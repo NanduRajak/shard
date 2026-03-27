@@ -13,11 +13,29 @@ const runStatus = v.union(
   v.literal("cancelled"),
 )
 
+const queueState = v.union(
+  v.literal("pending"),
+  v.literal("waiting_for_worker"),
+  v.literal("worker_unreachable"),
+  v.literal("picked_up"),
+)
+
 const sessionStatus = v.union(
   v.literal("creating"),
   v.literal("active"),
   v.literal("closed"),
   v.literal("failed"),
+)
+
+const runEventKind = v.union(
+  v.literal("status"),
+  v.literal("session"),
+  v.literal("navigation"),
+  v.literal("agent"),
+  v.literal("artifact"),
+  v.literal("finding"),
+  v.literal("audit"),
+  v.literal("system"),
 )
 
 const artifactType = v.union(
@@ -45,6 +63,7 @@ export const updateRun = mutation({
   args: {
     runId: v.id("runs"),
     status: v.optional(runStatus),
+    queueState: v.optional(queueState),
     currentStep: v.optional(v.string()),
     currentUrl: v.optional(v.union(v.string(), v.null())),
     errorMessage: v.optional(v.union(v.string(), v.null())),
@@ -60,6 +79,7 @@ export const updateRun = mutation({
       finalScore?: number
       finishedAt?: number
       stopRequestedAt?: number | undefined
+      queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
       status?:
         | "cancelled"
         | "completed"
@@ -74,6 +94,10 @@ export const updateRun = mutation({
 
     if (args.status !== undefined) {
       patch.status = args.status
+    }
+
+    if (args.queueState !== undefined) {
+      patch.queueState = args.queueState
     }
 
     if (args.currentStep !== undefined) {
@@ -104,12 +128,18 @@ export const updateRun = mutation({
   },
 })
 
+function normalizeQueueState(
+  queueStateValue?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable",
+) {
+  return queueStateValue ?? "pending"
+}
+
 export const resetRunState = mutation({
   args: {
     runId: v.id("runs"),
   },
   handler: async (ctx, args) => {
-    const [findings, artifacts, performanceAudits, sessions] = await Promise.all([
+    const [findings, artifacts, performanceAudits, sessions, runEvents] = await Promise.all([
       ctx.db
         .query("findings")
         .withIndex("by_run", (q) => q.eq("runId", args.runId))
@@ -124,6 +154,10 @@ export const resetRunState = mutation({
         .collect(),
       ctx.db
         .query("sessions")
+        .withIndex("by_run", (q) => q.eq("runId", args.runId))
+        .collect(),
+      ctx.db
+        .query("runEvents")
         .withIndex("by_run", (q) => q.eq("runId", args.runId))
         .collect(),
     ])
@@ -142,14 +176,55 @@ export const resetRunState = mutation({
         await ctx.db.delete(artifact._id)
       }),
     )
+    await Promise.all(runEvents.map((event) => ctx.db.delete(event._id)))
 
     await ctx.db.patch(args.runId, {
       updatedAt: Date.now(),
+      queueState: "pending",
       currentUrl: undefined,
       errorMessage: undefined,
       finalScore: undefined,
       finishedAt: undefined,
     })
+  },
+})
+
+export const updateRunQueueState = mutation({
+  args: {
+    runId: v.id("runs"),
+    queueState: queueState,
+    title: v.optional(v.string()),
+    body: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId)
+
+    if (!run) {
+      return { ok: false as const, reason: "not_found" as const }
+    }
+
+    if (normalizeQueueState(run.queueState) === args.queueState) {
+      return { ok: true as const, changed: false as const }
+    }
+
+    await ctx.db.patch(args.runId, {
+      queueState: args.queueState,
+      updatedAt: Date.now(),
+    })
+
+    if (args.title) {
+      await ctx.db.insert("runEvents", {
+        runId: args.runId,
+        kind: "system",
+        title: args.title,
+        body: args.body,
+        status: run.status,
+        pageUrl: run.currentUrl ?? run.url,
+        createdAt: Date.now(),
+      })
+    }
+
+    return { ok: true as const, changed: true as const }
   },
 })
 
@@ -180,7 +255,67 @@ export const requestRunStop = mutation({
       updatedAt: Date.now(),
     })
 
+    await ctx.db.insert("runEvents", {
+      runId: args.runId,
+      kind: "status",
+      title: "Stop requested",
+      body: "The run will shut down after the current step settles and cleanup completes.",
+      status: run.status,
+      pageUrl: run.currentUrl,
+      createdAt: Date.now(),
+    })
+
     return { ok: true as const, stopRequestedAt }
+  },
+})
+
+export const clearAllData = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const [runs, findings, artifacts, prReviews, sessions, runEvents, performanceAudits, credentials] =
+      await Promise.all([
+        ctx.db.query("runs").collect(),
+        ctx.db.query("findings").collect(),
+        ctx.db.query("artifacts").collect(),
+        ctx.db.query("prReviews").collect(),
+        ctx.db.query("sessions").collect(),
+        ctx.db.query("runEvents").collect(),
+        ctx.db.query("performanceAudits").collect(),
+        ctx.db.query("credentials").collect(),
+      ])
+
+    await Promise.all(
+      artifacts.map(async (artifact) => {
+        if (artifact.storageId) {
+          await ctx.storage.delete(artifact.storageId).catch(() => undefined)
+        }
+      }),
+    )
+
+    await Promise.all([
+      ...findings.map((doc) => ctx.db.delete(doc._id)),
+      ...artifacts.map((doc) => ctx.db.delete(doc._id)),
+      ...prReviews.map((doc) => ctx.db.delete(doc._id)),
+      ...sessions.map((doc) => ctx.db.delete(doc._id)),
+      ...runEvents.map((doc) => ctx.db.delete(doc._id)),
+      ...performanceAudits.map((doc) => ctx.db.delete(doc._id)),
+      ...credentials.map((doc) => ctx.db.delete(doc._id)),
+      ...runs.map((doc) => ctx.db.delete(doc._id)),
+    ])
+
+    return {
+      ok: true as const,
+      counts: {
+        artifacts: artifacts.length,
+        credentials: credentials.length,
+        findings: findings.length,
+        performanceAudits: performanceAudits.length,
+        prReviews: prReviews.length,
+        runEvents: runEvents.length,
+        runs: runs.length,
+        sessions: sessions.length,
+      },
+    }
   },
 })
 
@@ -197,6 +332,8 @@ export const getRunExecutionState = query({
 
     return {
       status: run.status,
+      queueState: normalizeQueueState(run.queueState),
+      startedAt: run.startedAt,
       stopRequestedAt: run.stopRequestedAt ?? null,
       currentUrl: run.currentUrl ?? null,
     }
@@ -223,6 +360,26 @@ export const createSession = mutation({
       replayUrl: args.replayUrl,
       startedAt: now,
       updatedAt: now,
+    })
+  },
+})
+
+export const createRunEvent = mutation({
+  args: {
+    runId: v.id("runs"),
+    kind: runEventKind,
+    title: v.string(),
+    body: v.optional(v.string()),
+    status: v.optional(runStatus),
+    stepIndex: v.optional(v.number()),
+    pageUrl: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
+    artifactId: v.optional(v.id("artifacts")),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("runEvents", {
+      ...args,
+      createdAt: Date.now(),
     })
   },
 })
@@ -351,7 +508,7 @@ export const getRunReport = query({
 
     const previousRun = await findPreviousRunByUrl(ctx, args.runId, run.url)
 
-    const [session, rawArtifacts, rawFindings, rawPerformanceAudits, previousRunAudits] =
+    const [session, rawArtifacts, rawFindings, rawPerformanceAudits, rawRunEvents, previousRunAudits] =
       await Promise.all([
         ctx.db
           .query("sessions")
@@ -371,6 +528,11 @@ export const getRunReport = query({
           .query("performanceAudits")
           .withIndex("by_run_and_created_at", (q) => q.eq("runId", args.runId))
           .order("desc")
+          .collect(),
+        ctx.db
+          .query("runEvents")
+          .withIndex("by_run_and_created_at", (q) => q.eq("runId", args.runId))
+          .order("asc")
           .collect(),
         previousRun
           ? ctx.db
@@ -409,6 +571,11 @@ export const getRunReport = query({
         : undefined,
     }))
 
+    const runEvents = rawRunEvents.map((event) => ({
+      ...event,
+      artifactUrl: event.artifactId ? artifactById.get(event.artifactId)?.url : undefined,
+    }))
+
     const latestReportArtifact =
       artifacts.find((artifact) => artifact.type === "html-report") ??
       artifacts.find((artifact) => artifact.type === "trace") ??
@@ -424,9 +591,17 @@ export const getRunReport = query({
     })
 
     return {
-      run,
+      run: {
+        ...run,
+        queueState: normalizeQueueState(run.queueState),
+      },
       session,
+      executionState: buildExecutionState({
+        run,
+        session,
+      }),
       artifacts,
+      runEvents,
       findings,
       performanceAudits,
       latestReportArtifact,
@@ -566,4 +741,46 @@ async function findPreviousRunByUrl(
       ),
     )
     .first()
+}
+
+function buildExecutionState({
+  run,
+  session,
+}: {
+  run: {
+    queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
+    status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
+  }
+  session:
+    | {
+        replayUrl?: string
+        status: "active" | "closed" | "creating" | "failed"
+      }
+    | null
+}) {
+  if (run.status === "completed" || run.status === "cancelled" || run.status === "failed") {
+    return "terminal" as const
+  }
+
+  if (session?.status === "active") {
+    return "preview_active" as const
+  }
+
+  if (session?.status === "creating") {
+    return "session_creating" as const
+  }
+
+  if (normalizeQueueState(run.queueState) === "worker_unreachable") {
+    return "worker_unreachable" as const
+  }
+
+  if (normalizeQueueState(run.queueState) === "waiting_for_worker") {
+    return "waiting_for_worker" as const
+  }
+
+  if (normalizeQueueState(run.queueState) === "picked_up") {
+    return "worker_picked_up" as const
+  }
+
+  return "queued" as const
 }

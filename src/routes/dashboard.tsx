@@ -83,17 +83,31 @@ function DashboardPage() {
                   </div>
                   <p className="break-all text-sm font-medium text-foreground">{run.url}</p>
                 </div>
-                <Link
-                  to="/runs/$runId"
-                  params={{ runId: run._id }}
-                  className={buttonVariants({
-                    variant: "outline",
-                    className: "rounded-2xl",
-                  })}
-                >
-                  View run
-                  <IconArrowRight className="size-4" />
-                </Link>
+                {run.status === "queued" || run.status === "starting" || run.status === "running" ? (
+                  <Link
+                    to="/runs/$runId"
+                    params={{ runId: run._id }}
+                    className={buttonVariants({
+                      variant: "outline",
+                      className: "rounded-2xl",
+                    })}
+                  >
+                    View live run
+                    <IconArrowRight className="size-4" />
+                  </Link>
+                ) : (
+                  <Link
+                    to="/history/$runId"
+                    params={{ runId: run._id }}
+                    className={buttonVariants({
+                      variant: "outline",
+                      className: "rounded-2xl",
+                    })}
+                  >
+                    Open report
+                    <IconArrowRight className="size-4" />
+                  </Link>
+                )}
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-4">
                 <DashboardMetric

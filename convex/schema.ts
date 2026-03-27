@@ -10,6 +10,13 @@ const runStatus = v.union(
   v.literal("cancelled"),
 )
 
+const queueState = v.union(
+  v.literal("pending"),
+  v.literal("waiting_for_worker"),
+  v.literal("worker_unreachable"),
+  v.literal("picked_up"),
+)
+
 const reviewStatus = v.union(
   v.literal("queued"),
   v.literal("running"),
@@ -46,11 +53,23 @@ const sessionStatus = v.union(
   v.literal("failed"),
 )
 
+const runEventKind = v.union(
+  v.literal("status"),
+  v.literal("session"),
+  v.literal("navigation"),
+  v.literal("agent"),
+  v.literal("artifact"),
+  v.literal("finding"),
+  v.literal("audit"),
+  v.literal("system"),
+)
+
 export default defineSchema({
   runs: defineTable({
     url: v.string(),
     credentialNamespace: v.optional(v.string()),
     status: runStatus,
+    queueState: v.optional(queueState),
     currentStep: v.optional(v.string()),
     currentUrl: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
@@ -127,6 +146,21 @@ export default defineSchema({
     .index("by_run", ["runId"])
     .index("by_external_session_id", ["externalSessionId"])
     .index("by_run_and_started_at", ["runId", "startedAt"]),
+
+  runEvents: defineTable({
+    runId: v.id("runs"),
+    kind: runEventKind,
+    title: v.string(),
+    body: v.optional(v.string()),
+    status: v.optional(runStatus),
+    stepIndex: v.optional(v.number()),
+    pageUrl: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
+    artifactId: v.optional(v.id("artifacts")),
+    createdAt: v.number(),
+  })
+    .index("by_run", ["runId"])
+    .index("by_run_and_created_at", ["runId", "createdAt"]),
 
   performanceAudits: defineTable({
     runId: v.id("runs"),

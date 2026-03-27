@@ -75,7 +75,7 @@ function HistoryPage() {
                   </p>
                 </div>
                 <Link
-                  to="/runs/$runId"
+                  to="/history/$runId"
                   params={{ runId: run._id }}
                   className={buttonVariants({
                     variant: "outline",

@@ -780,12 +780,6 @@ function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-3">
-        <div className="rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-3 text-xs leading-5 text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden">
-          Home launches scans. Credentials are stored separately and injected
-          only inside the browser runtime when a matching site needs auth.
-        </div>
-      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )
