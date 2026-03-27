@@ -52,6 +52,19 @@ export const Route = createRootRoute({
         rel: "stylesheet",
         href: appCss,
       },
+      {
+        rel: "icon",
+        type: "image/jpeg",
+        href: "/shard-profile.jpeg",
+      },
+      {
+        rel: "apple-touch-icon",
+        href: "/shard-profile.jpeg",
+      },
+      {
+        rel: "manifest",
+        href: "/manifest.json",
+      },
     ],
   }),
   shellComponent: RootDocument,
@@ -74,6 +87,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                   <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
                     <div className="flex items-center gap-3">
                       <SidebarTrigger />
+                      <img
+                        src="/shard-profile.jpeg"
+                        alt="Shard"
+                        className="size-9 rounded-xl object-cover shadow-sm"
+                      />
                       <div>
                         <div className="text-[0.7rem] font-medium tracking-[0.28em] text-muted-foreground uppercase">
                           Shard

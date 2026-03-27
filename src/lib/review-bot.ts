@@ -268,7 +268,10 @@ export const trackPullRequest = createServerFn({ method: "POST" })
       }
     )
 
-    const reviewId = await enqueueTrackedPullRequestReview(trackedPullRequestId)
+    const reviewId = await enqueueTrackedPullRequestReview(trackedPullRequestId, {
+      isManualTrigger: true,
+      requestedReviewMode: "full",
+    })
 
     return {
       reviewId,
@@ -284,7 +287,11 @@ export const rerunTrackedPullRequestReview = createServerFn({ method: "POST" })
     ])
 
     return await enqueueTrackedPullRequestReview(
-      data.trackedPullRequestId as Id<"trackedPullRequests">
+      data.trackedPullRequestId as Id<"trackedPullRequests">,
+      {
+        isManualTrigger: true,
+        requestedReviewMode: "full",
+      }
     )
   })
 

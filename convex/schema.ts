@@ -33,6 +33,16 @@ const llmStatus = v.union(
   v.literal("skipped"),
 )
 
+const reviewMode = v.union(v.literal("full"), v.literal("incremental"))
+
+const githubPublicationStatus = v.union(
+  v.literal("pending"),
+  v.literal("published"),
+  v.literal("partial"),
+  v.literal("failed"),
+  v.literal("skipped"),
+)
+
 const findingSource = v.union(
   v.literal("browser"),
   v.literal("perf"),
@@ -134,7 +144,12 @@ export default defineSchema({
     repo: v.string(),
     prNumber: v.number(),
     headSha: v.string(),
+    previousReviewedHeadSha: v.optional(v.string()),
+    reviewMode: reviewMode,
+    isManualTrigger: v.optional(v.boolean()),
+    reviewedCommitCountDelta: v.optional(v.number()),
     changedFiles: v.array(v.string()),
+    includedFiles: v.optional(v.array(v.string())),
     diffSummary: v.string(),
     fileSummaries: v.array(
       v.object({
@@ -173,6 +188,13 @@ export default defineSchema({
         }),
       ),
     ),
+    githubPublicationStatus: v.optional(githubPublicationStatus),
+    githubPublicationError: v.optional(v.string()),
+    githubSummaryCommentId: v.optional(v.number()),
+    githubWalkthroughCommentId: v.optional(v.number()),
+    githubSummaryUpdatedAt: v.optional(v.number()),
+    publishedInlineCommentCount: v.optional(v.number()),
+    skippedFileCount: v.optional(v.number()),
     llmStatus: v.optional(llmStatus),
     browserRunId: v.optional(v.id("runs")),
     createdAt: v.number(),

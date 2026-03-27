@@ -13,7 +13,11 @@ export async function getConnectionBySessionToken(sessionToken: string) {
 }
 
 export async function enqueueTrackedPullRequestReview(
-  trackedPullRequestId: Id<"trackedPullRequests">
+  trackedPullRequestId: Id<"trackedPullRequests">,
+  options: {
+    isManualTrigger?: boolean
+    requestedReviewMode?: "full" | "incremental"
+  } = {}
 ) {
   const convex = createConvexServerClient()
   const detail = await convex.query(api.reviewBot.getTrackedPullRequestDetail, {
@@ -23,6 +27,10 @@ export async function enqueueTrackedPullRequestReview(
   if (!detail?.trackedPullRequest) {
     throw new Error("Tracked pull request could not be found.")
   }
+
+  const previousCompletedReview = detail.reviewHistory.find(
+    (review) => review.status === "completed"
+  )
 
   const reviewId = await convex.mutation(api.reviewBot.createPrReview, {
     changedFiles: [],
@@ -34,9 +42,12 @@ export async function enqueueTrackedPullRequestReview(
     diffSummary: "Collecting pull request context.",
     fileSummaries: [],
     headSha: detail.trackedPullRequest.headSha,
+    isManualTrigger: options.isManualTrigger ?? false,
     nearbyCode: [],
+    previousReviewedHeadSha: previousCompletedReview?.headSha,
     prNumber: detail.trackedPullRequest.prNumber,
     repo: detail.trackedPullRequest.repoFullName,
+    reviewMode: options.requestedReviewMode ?? "full",
     trackedPullRequestId,
   })
 
@@ -46,15 +57,35 @@ export async function enqueueTrackedPullRequestReview(
     trackedPullRequestId,
   })
 
-  await inngest.send({
-    data: { reviewId },
-    name: "app/pr-review.requested",
-  })
+  try {
+    await inngest.send({
+      data: { reviewId },
+      name: "app/pr-review.requested",
+    })
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "The background review worker could not be reached."
+
+    await convex.mutation(api.reviewBot.updatePrReview, {
+      currentStep: "Failed to queue background review",
+      errorMessage: `${message} Check the Inngest worker and review bot environment settings.`,
+      finishedAt: Date.now(),
+      githubPublicationStatus: "skipped",
+      llmStatus: "skipped",
+      reviewId,
+      status: "failed",
+    })
+
+    throw error
+  }
 
   return reviewId
 }
 
 export async function handleTrackedPullRequestWebhook(input: {
+  action: "opened" | "ready_for_review" | "reopened" | "synchronize"
   authorLogin: string | null
   baseBranch: string
   baseSha: string
@@ -103,7 +134,10 @@ export async function handleTrackedPullRequestWebhook(input: {
     url: input.url,
   })
 
-  const reviewId = await enqueueTrackedPullRequestReview(trackedPullRequest._id)
+  const reviewId = await enqueueTrackedPullRequestReview(trackedPullRequest._id, {
+    isManualTrigger: false,
+    requestedReviewMode: input.action === "synchronize" ? "incremental" : "full",
+  })
 
   return {
     queued: true,

@@ -28,6 +28,14 @@ export type GitHubPullRequestOption = {
   url: string
 }
 
+export type GitHubIssueComment = {
+  id: number
+}
+
+export type GitHubPullRequestReview = {
+  id: number
+}
+
 export type GitHubPullRequestFile = {
   additions: number
   blobUrl: string
@@ -69,12 +77,19 @@ type GitHubPullRequestDetails = {
   authorLogin: string | null
   baseBranch: string
   baseSha: string
+  body: string | null
   headBranch: string
   headSha: string
+  isDraft: boolean
   number: number
   state: "closed" | "open"
   title: string
   url: string
+}
+
+export type GitHubCommitComparison = {
+  files: Array<GitHubPullRequestFile>
+  totalCommits: number
 }
 
 function requireEnvValue(
@@ -318,8 +333,10 @@ export async function getPullRequestDetails(input: {
     authorLogin: data.user?.login ?? null,
     baseBranch: data.base.ref,
     baseSha: data.base.sha,
+    body: data.body ?? null,
     headBranch: data.head.ref,
     headSha: data.head.sha,
+    isDraft: Boolean(data.draft),
     number: data.number,
     state: data.state as "closed" | "open",
     title: data.title,
@@ -350,10 +367,42 @@ export async function listPullRequestFiles(input: {
     filename: file.filename,
     patch: file.patch ?? undefined,
     previousFilename: file.previous_filename ?? undefined,
+    rawUrl: file.raw_url,
+    sha: file.sha ?? "",
+    status: file.status,
+  }))
+}
+
+export async function compareCommitRange(input: {
+  baseRef: string
+  headRef: string
+  installationId: number
+  owner: string
+  repo: string
+}): Promise<GitHubCommitComparison> {
+  const octokit = await getGitHubApp().getInstallationOctokit(input.installationId)
+  const { data } = await octokit.request("GET /repos/{owner}/{repo}/compare/{basehead}", {
+    basehead: `${input.baseRef}...${input.headRef}`,
+    owner: input.owner,
+    repo: input.repo,
+  })
+
+  return {
+    files: (data.files ?? []).map((file) => ({
+      additions: file.additions,
+      blobUrl: file.blob_url,
+      changes: file.changes,
+      contentsUrl: file.contents_url,
+      deletions: file.deletions,
+      filename: file.filename,
+      patch: file.patch ?? undefined,
+      previousFilename: file.previous_filename ?? undefined,
       rawUrl: file.raw_url,
       sha: file.sha ?? "",
       status: file.status,
-    }))
+    })),
+    totalCommits: data.total_commits ?? data.commits?.length ?? 0,
+  }
 }
 
 export async function getRepositoryFileContent(input: {
@@ -390,4 +439,117 @@ export async function getInstallationAccessToken(installationId: number) {
   return installationOctokit.auth({
     type: "installation",
   }) as Promise<{ token: string }>
+}
+
+export async function updatePullRequestBody(input: {
+  body: string
+  installationId: number
+  owner: string
+  pullNumber: number
+  repo: string
+}) {
+  const octokit = await getGitHubApp().getInstallationOctokit(input.installationId)
+
+  await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+    body: input.body,
+    owner: input.owner,
+    pull_number: input.pullNumber,
+    repo: input.repo,
+  })
+}
+
+export async function createIssueComment(input: {
+  body: string
+  installationId: number
+  issueNumber: number
+  owner: string
+  repo: string
+}): Promise<GitHubIssueComment> {
+  const octokit = await getGitHubApp().getInstallationOctokit(input.installationId)
+  const { data } = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+    body: input.body,
+    issue_number: input.issueNumber,
+    owner: input.owner,
+    repo: input.repo,
+  })
+
+  return {
+    id: data.id,
+  }
+}
+
+export async function updateIssueComment(input: {
+  body: string
+  commentId: number
+  installationId: number
+  owner: string
+  repo: string
+}): Promise<GitHubIssueComment> {
+  const octokit = await getGitHubApp().getInstallationOctokit(input.installationId)
+  const { data } = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+    body: input.body,
+    comment_id: input.commentId,
+    owner: input.owner,
+    repo: input.repo,
+  })
+
+  return {
+    id: data.id,
+  }
+}
+
+export async function createPullRequestReviewComment(input: {
+  body: string
+  commitId: string
+  installationId: number
+  owner: string
+  path: string
+  position: number
+  pullNumber: number
+  repo: string
+}) {
+  const octokit = await getGitHubApp().getInstallationOctokit(input.installationId)
+  const { data } = await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/comments", {
+    body: input.body,
+    commit_id: input.commitId,
+    owner: input.owner,
+    path: input.path,
+    position: input.position,
+    pull_number: input.pullNumber,
+    repo: input.repo,
+  })
+
+  return {
+    id: data.id,
+  }
+}
+
+export async function createPullRequestReview(input: {
+  body: string
+  comments?: Array<{
+    body: string
+    path: string
+    position: number
+  }>
+  commitId: string
+  event?: "APPROVE" | "COMMENT" | "REQUEST_CHANGES"
+  installationId: number
+  owner: string
+  pullNumber: number
+  repo: string
+}): Promise<GitHubPullRequestReview> {
+  const octokit = await getGitHubApp().getInstallationOctokit(input.installationId)
+  const { data } = await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
+    body: input.body,
+    comments: input.comments?.length ? input.comments : undefined,
+    commit_id: input.commitId,
+    event: input.event ?? "COMMENT",
+    owner: input.owner,
+    pull_number: input.pullNumber,
+    repo: input.repo,
+  })
+
+  return {
+    id: data.id,
+  }
 }

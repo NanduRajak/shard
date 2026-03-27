@@ -76,6 +76,7 @@ export const Route = createFileRoute("/api/github/webhook")({
         }
 
         await handleTrackedPullRequestWebhook({
+          action: parsed.action as "opened" | "ready_for_review" | "reopened" | "synchronize",
           authorLogin: parsed.pull_request.user?.login ?? null,
           baseBranch: parsed.pull_request.base.ref,
           baseSha: parsed.pull_request.base.sha,

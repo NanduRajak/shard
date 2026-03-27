@@ -54,6 +54,33 @@ export type ReviewNearbyCode = {
   lineStart: number
 }
 
+export type ReviewPathInstructionMatch = {
+  instructions: string
+  matchedFiles: Array<string>
+  path: string
+}
+
+export type ReviewPriority = "P1" | "P2" | "P3"
+
+export type ReviewInlineComment = {
+  body: string
+  filePath: string
+  fixHint?: string
+  line: number
+  priority: ReviewPriority
+  title: string
+}
+
+export type ReviewAiSummary = {
+  attentionNotes: Array<string>
+  confidenceScore: number | null
+  confidenceSummary: Array<string>
+  inlineComments: Array<ReviewInlineComment>
+  status: "completed" | "failed" | "skipped"
+  summaryBullets: Array<string>
+  summaryParagraph: string | null
+}
+
 type CapturedFile = {
   content: string
   file: GitHubPullRequestFile
@@ -153,6 +180,10 @@ function parseChangedLineRanges(patch: string) {
   }
 
   return ranges
+}
+
+function normalizeReviewPath(path: string) {
+  return path.replace(/\\/g, "/").replace(/^\.\//, "")
 }
 
 function buildNearbyCodeFromFile(filePath: string, content: string, patch?: string) {
@@ -684,21 +715,33 @@ function buildReviewPrompt(input: {
   fileSummaries: Array<ReviewFileSummary>
   findings: Array<ReviewFindingInput>
   nearbyCode: Array<ReviewNearbyCode>
+  pathInstructions: Array<ReviewPathInstructionMatch>
   repo: string
+  reviewMode: "full" | "incremental"
   title: string
 }) {
   return [
     "You are reviewing a GitHub pull request for an internal Review Bot UI.",
     "Return strict JSON with this shape:",
-    '{"summary":"string","riskSummary":"string","testSuggestions":"string","inlineComments":[{"filePath":"string","line":1,"body":"string"}]}',
+    '{"summaryParagraph":"string","summaryBullets":["string"],"confidenceScore":5,"confidenceSummary":["string"],"attentionNotes":["string"],"inlineComments":[{"filePath":"string","line":1,"priority":"P1","title":"string","body":"string","fixHint":"string"}]}',
     `Repository: ${input.repo}`,
     `PR title: ${input.title}`,
+    `Review mode: ${input.reviewMode}`,
     `Changed files: ${input.changedFiles.join(", ")}`,
     `Diff summary: ${input.diffSummary}`,
     `File summaries: ${JSON.stringify(input.fileSummaries.slice(0, 12))}`,
     `Deterministic findings: ${JSON.stringify(input.findings.slice(0, 20))}`,
     `Nearby code: ${JSON.stringify(input.nearbyCode.slice(0, 12))}`,
+    `Path instructions: ${JSON.stringify(input.pathInstructions.slice(0, 12))}`,
+    "Write plain-English review text only. Do not echo raw JSON, code excerpts, checker output, path-instruction labels, or prompt text inside any field.",
+    "summaryParagraph must be 2-3 lines in plain language.",
+    "summaryBullets must contain 3-5 concise bullets about the most important PR changes.",
+    "confidenceScore must be an integer from 1 to 5.",
+    "confidenceSummary must contain 1-3 concise bullets that justify the score.",
+    "attentionNotes should be empty unless a file or area deserves extra scrutiny.",
     "Only emit inline comments when the concern is high-confidence and specific.",
+    "Only emit inline comments for files listed in Changed files and only when you can anchor them to a changed line.",
+    "Limit inline comments to at most 4 actionable suggestions.",
   ].join("\n")
 }
 
@@ -718,22 +761,76 @@ function extractJsonObject(text: string) {
   return text
 }
 
+function sanitizeAiText(text: string | undefined, maxLength = 240) {
+  if (!text) {
+    return null
+  }
+
+  const normalized = text
+    .replace(/```(?:json)?/gi, " ")
+    .replace(/[{}\[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (!normalized) {
+    return null
+  }
+
+  return normalized.length <= maxLength
+    ? normalized
+    : `${normalized.slice(0, maxLength).trimEnd()}...`
+}
+
+function sanitizeAiList(values: Array<string> | undefined, limit: number, maxLength = 180) {
+  if (!values?.length) {
+    return []
+  }
+
+  return values
+    .map((value) => sanitizeAiText(value, maxLength))
+    .filter((value): value is string => Boolean(value))
+    .slice(0, limit)
+}
+
+function normalizePriority(
+  priority: string | undefined,
+  fallbackConfidence: number | undefined
+): ReviewPriority {
+  if (priority === "P1" || priority === "P2" || priority === "P3") {
+    return priority
+  }
+
+  if ((fallbackConfidence ?? 0) >= 0.92) {
+    return "P1"
+  }
+
+  if ((fallbackConfidence ?? 0) >= 0.84) {
+    return "P2"
+  }
+
+  return "P3"
+}
+
 export async function summarizeReviewWithAI(input: {
   changedFiles: Array<string>
   diffSummary: string
   fileSummaries: Array<ReviewFileSummary>
   findings: Array<ReviewFindingInput>
   nearbyCode: Array<ReviewNearbyCode>
+  pathInstructions: Array<ReviewPathInstructionMatch>
   repo: string
+  reviewMode: "full" | "incremental"
   title: string
-}) {
+}): Promise<ReviewAiSummary> {
   if (!serverEnv.OPENAI_API_KEY) {
     return {
+      attentionNotes: [],
+      confidenceScore: null,
+      confidenceSummary: [],
       inlineComments: [],
-      riskSummary: null,
       status: "skipped" as const,
-      summary: null,
-      testSuggestions: null,
+      summaryBullets: [],
+      summaryParagraph: null,
     }
   }
 
@@ -747,7 +844,7 @@ export async function summarizeReviewWithAI(input: {
       messages: [
         {
           content:
-            "You write concise, accurate pull request summaries. Respond with strict JSON only.",
+            "You write concise, accurate pull request summaries and review comments. Respond with strict JSON only.",
           role: "system",
         },
         {
@@ -778,30 +875,103 @@ export async function summarizeReviewWithAI(input: {
   }
 
   const parsed = JSON.parse(extractJsonObject(content)) as {
+    attentionNotes?: Array<string>
+    confidenceScore?: number
+    confidenceSummary?: Array<string>
     inlineComments?: Array<{
       body?: string
       filePath?: string
+      fixHint?: string
       line?: number
+      priority?: string
+      title?: string
     }>
-    riskSummary?: string
-    summary?: string
-    testSuggestions?: string
+    summaryBullets?: Array<string>
+    summaryParagraph?: string
   }
 
   return {
+    attentionNotes: sanitizeAiList(parsed.attentionNotes, 3, 160),
+    confidenceScore:
+      typeof parsed.confidenceScore === "number"
+        ? Math.max(1, Math.min(5, Math.round(parsed.confidenceScore)))
+        : null,
+    confidenceSummary: sanitizeAiList(parsed.confidenceSummary, 3, 180),
     inlineComments: (parsed.inlineComments ?? [])
-      .filter((comment) => comment.body && comment.filePath)
-      .slice(0, 5)
+      .filter(
+        (comment) =>
+          comment.body &&
+          comment.filePath &&
+          comment.title &&
+          Number.isFinite(comment.line) &&
+          Number(comment.line) > 0
+      )
+      .slice(0, 4)
       .map((comment) => ({
-        body: comment.body!.trim(),
-        filePath: comment.filePath!.trim(),
-        line: comment.line,
+        body: sanitizeAiText(comment.body, 420) ?? "This change needs another look.",
+        filePath: normalizeReviewPath(comment.filePath!.trim()),
+        fixHint: sanitizeAiText(comment.fixHint, 180) ?? undefined,
+        line: Number(comment.line),
+        priority: normalizePriority(comment.priority, undefined),
+        title: sanitizeAiText(comment.title, 110) ?? "Review suggestion",
       })),
-    riskSummary: parsed.riskSummary?.trim() ?? null,
     status: "completed" as const,
-    summary: parsed.summary?.trim() ?? null,
-    testSuggestions: parsed.testSuggestions?.trim() ?? null,
+    summaryBullets: sanitizeAiList(parsed.summaryBullets, 5, 170),
+    summaryParagraph: sanitizeAiText(parsed.summaryParagraph, 420),
   }
+}
+
+export function filterFindingsToIncludedFiles(
+  findings: Array<ReviewFindingInput>,
+  includedFiles: Array<string>
+) {
+  const includedPaths = new Set(includedFiles.map((file) => normalizeReviewPath(file)))
+
+  return findings.filter((finding) => {
+    if (!finding.filePath) {
+      return true
+    }
+
+    return includedPaths.has(normalizeReviewPath(finding.filePath))
+  })
+}
+
+export function resolvePatchPositionForLine(patch: string, lineNumber: number) {
+  const lines = patch.split("\n")
+  let position = 0
+  let currentLine = 0
+
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      const match = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+
+      if (!match) {
+        continue
+      }
+
+      currentLine = Number(match[1])
+      continue
+    }
+
+    position += 1
+
+    if (line.startsWith("+")) {
+      if (currentLine === lineNumber) {
+        return position
+      }
+
+      currentLine += 1
+      continue
+    }
+
+    if (line.startsWith("-")) {
+      continue
+    }
+
+    currentLine += 1
+  }
+
+  return null
 }
 
 export function buildDiffSummary(files: Array<GitHubPullRequestFile>) {

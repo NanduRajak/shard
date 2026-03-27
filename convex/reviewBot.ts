@@ -25,6 +25,16 @@ const llmStatus = v.union(
   v.literal("skipped")
 )
 
+const reviewMode = v.union(v.literal("full"), v.literal("incremental"))
+
+const githubPublicationStatus = v.union(
+  v.literal("pending"),
+  v.literal("published"),
+  v.literal("partial"),
+  v.literal("failed"),
+  v.literal("skipped")
+)
+
 const findingCategory = v.union(
   v.literal("Security"),
   v.literal("Maintainability"),
@@ -356,9 +366,12 @@ export const createPrReview = mutation({
     diffSummary: v.string(),
     fileSummaries: v.array(fileSummaryValidator),
     headSha: v.string(),
+    isManualTrigger: v.optional(v.boolean()),
     nearbyCode: v.array(nearbyCodeValidator),
+    previousReviewedHeadSha: v.optional(v.string()),
     prNumber: v.number(),
     repo: v.string(),
+    reviewMode: reviewMode,
     trackedPullRequestId: v.id("trackedPullRequests"),
   },
   handler: async (ctx, args) => {
@@ -371,9 +384,12 @@ export const createPrReview = mutation({
       diffSummary: args.diffSummary,
       fileSummaries: args.fileSummaries,
       headSha: args.headSha,
+      isManualTrigger: args.isManualTrigger,
       nearbyCode: args.nearbyCode,
+      previousReviewedHeadSha: args.previousReviewedHeadSha,
       prNumber: args.prNumber,
       repo: args.repo,
+      reviewMode: args.reviewMode,
       status: "queued",
       trackedPullRequestId: args.trackedPullRequestId,
       createdAt: now,
@@ -391,11 +407,22 @@ export const updatePrReview = mutation({
     errorMessage: v.optional(v.union(v.string(), v.null())),
     fileSummaries: v.optional(v.array(fileSummaryValidator)),
     finishedAt: v.optional(v.union(v.number(), v.null())),
+    githubPublicationError: v.optional(v.union(v.string(), v.null())),
+    githubPublicationStatus: v.optional(githubPublicationStatus),
+    githubSummaryCommentId: v.optional(v.union(v.number(), v.null())),
+    githubSummaryUpdatedAt: v.optional(v.union(v.number(), v.null())),
+    githubWalkthroughCommentId: v.optional(v.union(v.number(), v.null())),
+    includedFiles: v.optional(v.array(v.string())),
     inlineComments: v.optional(v.array(inlineCommentValidator)),
     llmStatus: v.optional(llmStatus),
     nearbyCode: v.optional(v.array(nearbyCodeValidator)),
+    previousReviewedHeadSha: v.optional(v.union(v.string(), v.null())),
+    publishedInlineCommentCount: v.optional(v.union(v.number(), v.null())),
     reviewId: v.id("prReviews"),
+    reviewMode: v.optional(reviewMode),
+    reviewedCommitCountDelta: v.optional(v.union(v.number(), v.null())),
     riskSummary: v.optional(v.union(v.string(), v.null())),
+    skippedFileCount: v.optional(v.union(v.number(), v.null())),
     status: v.optional(reviewStatus),
     summary: v.optional(v.union(v.string(), v.null())),
     testSuggestions: v.optional(v.union(v.string(), v.null())),
@@ -433,6 +460,30 @@ export const updatePrReview = mutation({
       patch.finishedAt = args.finishedAt ?? undefined
     }
 
+    if (args.githubPublicationError !== undefined) {
+      patch.githubPublicationError = args.githubPublicationError ?? undefined
+    }
+
+    if (args.githubPublicationStatus !== undefined) {
+      patch.githubPublicationStatus = args.githubPublicationStatus
+    }
+
+    if (args.githubSummaryCommentId !== undefined) {
+      patch.githubSummaryCommentId = args.githubSummaryCommentId ?? undefined
+    }
+
+    if (args.githubSummaryUpdatedAt !== undefined) {
+      patch.githubSummaryUpdatedAt = args.githubSummaryUpdatedAt ?? undefined
+    }
+
+    if (args.githubWalkthroughCommentId !== undefined) {
+      patch.githubWalkthroughCommentId = args.githubWalkthroughCommentId ?? undefined
+    }
+
+    if (args.includedFiles !== undefined) {
+      patch.includedFiles = args.includedFiles
+    }
+
     if (args.inlineComments !== undefined) {
       patch.inlineComments = args.inlineComments
     }
@@ -445,8 +496,28 @@ export const updatePrReview = mutation({
       patch.nearbyCode = args.nearbyCode
     }
 
+    if (args.previousReviewedHeadSha !== undefined) {
+      patch.previousReviewedHeadSha = args.previousReviewedHeadSha ?? undefined
+    }
+
+    if (args.publishedInlineCommentCount !== undefined) {
+      patch.publishedInlineCommentCount = args.publishedInlineCommentCount ?? undefined
+    }
+
+    if (args.reviewMode !== undefined) {
+      patch.reviewMode = args.reviewMode
+    }
+
+    if (args.reviewedCommitCountDelta !== undefined) {
+      patch.reviewedCommitCountDelta = args.reviewedCommitCountDelta ?? undefined
+    }
+
     if (args.riskSummary !== undefined) {
       patch.riskSummary = args.riskSummary ?? undefined
+    }
+
+    if (args.skippedFileCount !== undefined) {
+      patch.skippedFileCount = args.skippedFileCount ?? undefined
     }
 
     if (args.status !== undefined) {
@@ -622,8 +693,18 @@ export const getPrReviewWorkflowContext = query({
       return null
     }
 
+    const reviewHistory = sortByUpdatedAtDescending(
+      await ctx.db
+        .query("prReviews")
+        .withIndex("by_tracked_pull_request", (query) =>
+          query.eq("trackedPullRequestId", review.trackedPullRequestId)
+        )
+        .take(20)
+    )
+
     return {
       review,
+      reviewHistory,
       trackedPullRequest,
       trackedRepo,
     }

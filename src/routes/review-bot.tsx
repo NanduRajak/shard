@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { formatDistanceToNow } from "date-fns"
 import {
   IconActivity,
@@ -97,11 +97,13 @@ export const Route = createFileRoute("/review-bot")({
 
 function ReviewBotPage() {
   const search = Route.useSearch()
+  const queryClient = useQueryClient()
   const [selectedRepositoryFullName, setSelectedRepositoryFullName] = useState("")
   const [selectedTrackedPullRequestId, setSelectedTrackedPullRequestId] = useState("")
   const [isRepoPickerOpen, setIsRepoPickerOpen] = useState(false)
   const [repoPickerMenuStyle, setRepoPickerMenuStyle] = useState<React.CSSProperties>({})
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
   const repoPickerRef = useRef<HTMLDivElement | null>(null)
   const {
     data: reviewBotState,
@@ -116,25 +118,41 @@ function ReviewBotPage() {
   const trackRepositoryMutation = useMutation({
     mutationFn: trackRepository,
     onSuccess: async () => {
+      setActionError(null)
       await refetch()
     },
   })
   const trackPullRequestMutation = useMutation({
     mutationFn: trackPullRequest,
     onSuccess: async (result) => {
+      setActionError(null)
       setSelectedTrackedPullRequestId(result.trackedPullRequestId)
+      await queryClient.invalidateQueries({
+        queryKey: ["tracked-pull-request-detail", result.trackedPullRequestId],
+      })
       await refetch()
+    },
+    onError: (error) => {
+      setActionError(getErrorMessage(error, "Pull request review could not be started."))
     },
   })
   const rerunMutation = useMutation({
     mutationFn: rerunTrackedPullRequestReview,
     onSuccess: async () => {
+      setActionError(null)
+      await queryClient.invalidateQueries({
+        queryKey: ["tracked-pull-request-detail", selectedTrackedPullRequestId],
+      })
       await refetch()
+    },
+    onError: (error) => {
+      setActionError(getErrorMessage(error, "Pull request review could not be queued."))
     },
   })
   const disconnectMutation = useMutation({
     mutationFn: disconnectGitHub,
     onSuccess: async () => {
+      setActionError(null)
       setSelectedRepositoryFullName("")
       setSelectedTrackedPullRequestId("")
       await refetch()
@@ -148,7 +166,10 @@ function ReviewBotPage() {
       ) ?? null,
     [reviewBotState?.accessibleRepositories, selectedRepositoryFullName]
   )
-  const trackedPullRequests = reviewBotState?.trackedPullRequests ?? []
+  const trackedPullRequests = useMemo(
+    () => reviewBotState?.trackedPullRequests ?? [],
+    [reviewBotState?.trackedPullRequests]
+  )
   const trackedRepoFullNames = useMemo(
     () => new Set((reviewBotState?.trackedRepos ?? []).map((repo) => repo.fullName)),
     [reviewBotState?.trackedRepos]
@@ -203,9 +224,10 @@ function ReviewBotPage() {
         : [],
     [selectedRepository, trackedPullRequests]
   )
-  const trackedPullRequestsForDisplay = selectedRepository
-    ? selectedRepositoryTrackedPullRequests
-    : []
+  const trackedPullRequestsForDisplay = useMemo(
+    () => (selectedRepository ? selectedRepositoryTrackedPullRequests : []),
+    [selectedRepository, selectedRepositoryTrackedPullRequests]
+  )
 
   useEffect(() => {
     if (typeof window === "undefined" || selectedRepositoryFullName) {
@@ -399,20 +421,27 @@ function ReviewBotPage() {
       {!reviewBotState?.config.isReady ? (
         <Alert variant="destructive">
           <IconShieldCheck />
-          <AlertTitle>Review Bot is not configured yet</AlertTitle>
+          <AlertTitle>Shard is not configured yet</AlertTitle>
           <AlertDescription>
             Missing env vars: {reviewBotState?.config.missing.join(", ")}
           </AlertDescription>
+        </Alert>
+      ) : null}
+      {actionError ? (
+        <Alert variant="destructive">
+          <IconShieldCheck />
+          <AlertTitle>Review request failed</AlertTitle>
+          <AlertDescription>{actionError}</AlertDescription>
         </Alert>
       ) : null}
 
       {!reviewBotState?.connection ? (
         <Empty className="min-h-[calc(100svh-12rem)] border border-dashed border-border/70 bg-card/60">
           <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <IconBrandGithub />
+            <EmptyMedia variant="icon" className="overflow-hidden rounded-2xl bg-transparent p-0">
+              <img src="/shard-profile.jpeg" alt="Shard" className="size-full object-cover" />
             </EmptyMedia>
-            <EmptyTitle>Connect GitHub to unlock Review Bot.</EmptyTitle>
+            <EmptyTitle>Connect GitHub to unlock Shard.</EmptyTitle>
             <EmptyDescription>
               Connect GitHub, install the app on selected repos, then add pull
               requests here to receive in-app review feedback.
@@ -439,11 +468,15 @@ function ReviewBotPage() {
                 <div className="space-y-1">
                   <span className="flex w-fit items-center gap-1.5 text-xs font-semibold tracking-widest uppercase text-muted-foreground/80">
                     <IconShieldCheck className="size-4" />
-                    Review Bot
+                    Shard
                   </span>
                   <div className="relative w-fit pt-1">
                     <div className="flex items-center gap-2 pr-4">
-                      <IconBrandGithub className="size-6 text-foreground/75" />
+                      <img
+                        src="/shard-profile.jpeg"
+                        alt="Shard"
+                        className="size-8 rounded-xl object-cover"
+                      />
                       <CardTitle className="text-3xl leading-tight">
                         {reviewBotState.connection.login}
                       </CardTitle>
@@ -451,7 +484,7 @@ function ReviewBotPage() {
                     <span className="absolute right-0 top-2.5 size-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(34,197,94,0.8)] animate-pulse" />
                   </div>
                   <CardDescription className="max-w-2xl pt-2 text-sm/6">
-                    Track only the repositories and pull requests you care about; Review Bot runs deterministic hygiene checks first, then adds an AI-generated summary when enabled
+                    Track only the repositories and pull requests you care about; Shard runs deterministic hygiene checks first, then adds an AI-generated summary when enabled.
                   </CardDescription>
                 </div>
 
@@ -462,7 +495,7 @@ function ReviewBotPage() {
                         variant="ghost"
                         size="icon"
                         className="rounded-2xl border-transparent bg-transparent shadow-none hover:bg-transparent focus-visible:bg-transparent"
-                        aria-label="Open review bot actions"
+                        aria-label="Open Shard actions"
                       />
                     }
                   >
@@ -519,7 +552,7 @@ function ReviewBotPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Disconnect GitHub?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Review Bot will stop syncing repositories and pull requests for this
+                  Shard will stop syncing repositories and pull requests for this
                   connection. You can connect GitHub again anytime.
                 </AlertDialogDescription>
               </AlertDialogHeader>
@@ -545,7 +578,7 @@ function ReviewBotPage() {
               <CardHeader className="gap-2 pb-4">
                 <CardTitle className="text-lg">Choose repo and track PRs</CardTitle>
                 <CardDescription className="text-sm/6">
-                  Select a repository once. Review Bot will prepare it
+                  Select a repository once. Shard will prepare it
                   automatically and load the open pull requests right below.
                 </CardDescription>
               </CardHeader>
@@ -700,7 +733,7 @@ function ReviewBotPage() {
                       </div>
                     ) : (
                       <div className="grid gap-3">
-                        {(pullRequestOptions ?? []).map((pullRequest, index) => {
+                        {(pullRequestOptions ?? []).map((pullRequest) => {
                           const trackedPullRequest = selectedRepositoryTrackedPullRequests.find(
                             (item: any) => item.prNumber === pullRequest.number
                           )
@@ -708,11 +741,7 @@ function ReviewBotPage() {
                           return (
                             <div
                               key={pullRequest.number}
-                              className="rounded-2xl border border-border/70 bg-background/70 p-4 opacity-0 shadow-sm transition-all duration-200 ease-out animate-in fade-in-0 slide-in-from-bottom-2 hover:border-border hover:bg-background/80"
-                              style={{
-                                animationDelay: `${index * 40}ms`,
-                                animationFillMode: "forwards",
-                              }}
+                              className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm transition-all duration-200 ease-out hover:border-border hover:bg-background/80"
                             >
                               <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div className="space-y-1">
@@ -808,7 +837,7 @@ function ReviewBotPage() {
                         </p>
                         <p className="max-w-sm text-sm text-muted-foreground">
                           Choose any open pull request from this repository and
-                          Review Bot will start the first review automatically.
+                          Shard will start the first review automatically.
                         </p>
                       </div>
                     </div>
@@ -980,6 +1009,19 @@ function ReviewBotPage() {
                             icon: IconGitCommit,
                           },
                           {
+                            label: "Review Mode",
+                            value:
+                              trackedPullRequestDetail.latestReview?.reviewMode ?? "full",
+                            icon: IconCode,
+                          },
+                          {
+                            label: "GitHub Publish",
+                            value:
+                              trackedPullRequestDetail.latestReview?.githubPublicationStatus ??
+                              "pending",
+                            icon: IconBrandGithub,
+                          },
+                          {
                             label: "Last Update",
                             value: formatDistanceToNow(
                               trackedPullRequestDetail.trackedPullRequest.updatedAt,
@@ -1001,11 +1043,33 @@ function ReviewBotPage() {
                           body={trackedPullRequestDetail.latestReview.riskSummary}
                         />
                       ) : null}
+                      {trackedPullRequestDetail.latestReview ? (
+                        <InfoPanel
+                          title="Review scope"
+                          body={`Included files: ${
+                            trackedPullRequestDetail.latestReview.includedFiles?.length ?? 0
+                          }\nFiltered out: ${
+                            trackedPullRequestDetail.latestReview.skippedFileCount ?? 0
+                          }\nPublished inline comments: ${
+                            trackedPullRequestDetail.latestReview
+                              .publishedInlineCommentCount ?? 0
+                          }`}
+                        />
+                      ) : null}
                       {trackedPullRequestDetail.latestReview?.testSuggestions ? (
                         <InfoPanel
                           title="Test suggestions"
                           body={trackedPullRequestDetail.latestReview.testSuggestions}
                         />
+                      ) : null}
+                      {trackedPullRequestDetail.latestReview?.githubPublicationError ? (
+                        <Alert variant="destructive">
+                          <IconShieldCheck />
+                          <AlertTitle>GitHub publication reported an issue</AlertTitle>
+                          <AlertDescription>
+                            {trackedPullRequestDetail.latestReview.githubPublicationError}
+                          </AlertDescription>
+                        </Alert>
                       ) : null}
                       {trackedPullRequestDetail.latestReview?.errorMessage ? (
                         <Alert variant="destructive">
@@ -1353,17 +1417,20 @@ function StatusBadge({
         "border px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
         normalizedStatus === "completed" ||
           normalizedStatus === "passed" ||
+          normalizedStatus === "published" ||
           normalizedStatus === "open" ||
           normalizedStatus === "ready"
           ? "border-emerald-700/80 bg-emerald-950/80 text-emerald-200"
           : normalizedStatus === "failed" ||
+              normalizedStatus === "partial" ||
               normalizedStatus === "critical" ||
               normalizedStatus === "high"
             ? "border-rose-700/80 bg-rose-950/80 text-rose-200"
             : normalizedStatus === "queued" ||
                 normalizedStatus === "running" ||
                 normalizedStatus === "preparing" ||
-                normalizedStatus === "pending"
+                normalizedStatus === "pending" ||
+                normalizedStatus === "incremental"
               ? "border-amber-700/80 bg-amber-950/80 text-amber-200"
               : "border-slate-700/80 bg-slate-800 text-slate-100"
       )}
@@ -1375,4 +1442,16 @@ function StatusBadge({
 
 function truncateSha(value: string) {
   return value.slice(0, 8)
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error
+  }
+
+  return fallback
 }

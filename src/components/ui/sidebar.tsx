@@ -8,7 +8,6 @@ import {
   IconHome2,
   IconLayoutDashboard,
   IconMessage2Bolt,
-  IconSparkles,
 } from "@tabler/icons-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -713,7 +712,7 @@ const appNavigation = [
     icon: IconLayoutDashboard,
   },
   {
-    title: "Review Bot",
+    title: "Shard",
     to: "/review-bot" as const,
     icon: IconMessage2Bolt,
   },
@@ -733,15 +732,17 @@ function AppSidebar() {
     <Sidebar collapsible="icon" variant="inset">
       <SidebarHeader className="gap-3 p-3">
         <div className="flex items-center gap-3 rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-3">
-          <div className="flex size-10 items-center justify-center rounded-2xl bg-sidebar-primary text-sidebar-primary-foreground">
-            <IconSparkles className="size-4" />
-          </div>
+          <img
+            src="/shard-profile.jpeg"
+            alt="Shard"
+            className="size-10 shrink-0 rounded-2xl object-cover"
+          />
           <div className="min-w-0 group-data-[collapsible=icon]:hidden">
             <div className="text-[0.7rem] font-medium tracking-[0.28em] text-sidebar-foreground/60 uppercase">
               Shard
             </div>
             <p className="truncate text-sm text-sidebar-foreground">
-              QA command center
+              AI review assistant
             </p>
           </div>
         </div>
