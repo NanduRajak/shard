@@ -757,17 +757,11 @@ export const getRunReport = query({
 export const listRuns = query({
   args: {},
   handler: async (ctx) => {
-    const allRuns = await ctx.db
+    const runs = await ctx.db
       .query("runs")
       .withIndex("by_started_at")
       .order("desc")
       .collect()
-    const runs = allRuns.filter(
-      (run) =>
-        run.status === "completed" ||
-        run.status === "failed" ||
-        run.status === "cancelled",
-    )
 
     const items = await Promise.all(
       runs.map(async (run) => {

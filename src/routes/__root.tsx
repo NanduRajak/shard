@@ -7,6 +7,13 @@ import {
 } from "@tanstack/react-router"
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
 import { TanStackDevtools } from "@tanstack/react-devtools"
+import {
+  IconHome2,
+  IconLayoutDashboard,
+  IconMessage2Bolt,
+  IconKey,
+  IconHistory,
+} from "@tabler/icons-react"
 import { AppProviders } from "@/components/app-providers"
 import { Toaster } from "@/components/ui/sonner"
 import { AppSidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
@@ -79,8 +86,19 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
-  const isReviewBotPage =
-    pathname === "/review-bot" || pathname.startsWith("/review-bot/")
+  const getPageHeader = (path: string) => {
+    if (path === "/") return { title: "Home", icon: IconHome2 }
+    if (path.startsWith("/review-bot")) return { title: "Review Bot", icon: IconMessage2Bolt }
+    if (path.startsWith("/dashboard")) return { title: "Dashboard", icon: IconLayoutDashboard }
+    if (path.startsWith("/credentials")) return { title: "Credentials", icon: IconKey }
+    if (path.startsWith("/history")) return { title: "History", icon: IconHistory }
+
+    const segment = path.split("/").filter(Boolean)[0]
+    const title = segment ? segment.charAt(0).toUpperCase() + segment.slice(1).replace(/-/g, " ") : "Home"
+    return { title, icon: IconHome2 }
+  }
+
+  const { title, icon: PageIcon } = getPageHeader(pathname)
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -97,28 +115,13 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                 <header className="sticky top-0 z-20 border-b border-border/70 bg-background/95 backdrop-blur">
                   <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
                     <div className="flex items-center gap-3">
-                      {!isReviewBotPage ? <SidebarTrigger className="md:hidden" /> : null}
-                      {isReviewBotPage ? (
+                      <SidebarTrigger className="md:hidden" />
+                      <div className="flex items-center gap-2.5">
+                        <PageIcon className="size-5 shrink-0 text-sidebar-accent-foreground/80 md:size-6" />
                         <h1 className="text-base font-semibold text-foreground md:text-lg">
-                          Review Bot
+                          {title}
                         </h1>
-                      ) : (
-                        <>
-                          <img
-                            src="/shard-profile.jpeg"
-                            alt="Shard"
-                            className="size-9 rounded-xl object-cover shadow-sm"
-                          />
-                          <div>
-                            <div className="text-[0.7rem] font-medium tracking-[0.28em] text-muted-foreground uppercase">
-                              Shard
-                            </div>
-                            <p className="text-sm text-foreground">
-                              Autonomous QA runs and review workflows
-                            </p>
-                          </div>
-                        </>
-                      )}
+                      </div>
                     </div>
                     <ThemeToggle />
                   </div>

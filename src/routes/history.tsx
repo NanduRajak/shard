@@ -33,13 +33,18 @@ import {
 } from "@/components/ui/empty"
 import { deleteRun } from "@/lib/delete-run"
 import { formatSessionDuration } from "@/lib/run-report"
+import { env } from "~/env"
 
 export const Route = createFileRoute("/history")({
   component: HistoryPage,
 })
 
 function HistoryPage() {
-  const { data: runs } = useQuery(convexQuery(api.runtime.listRuns, {}))
+  const {
+    data: runs,
+    error,
+    isPending,
+  } = useQuery(convexQuery(api.runtime.listRuns, {}))
   const [deleteTarget, setDeleteTarget] = useState<{
     id: Id<"runs">
     label: string
@@ -64,11 +69,29 @@ function HistoryPage() {
     }
   }
 
-  if (!runs) {
+  if (isPending) {
     return <Card className="min-h-72 border border-border/70 bg-card/70" />
   }
 
-  if (runs.length === 0) {
+  if (error) {
+    return (
+      <Card className="border border-destructive/30 bg-card/80">
+        <CardHeader>
+          <CardTitle>Unable to load run history</CardTitle>
+          <CardDescription>
+            {error instanceof Error ? error.message : "The history query failed."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Connected backend: {new URL(env.VITE_CONVEX_URL).host}
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!runs || runs.length === 0) {
     return (
       <Empty className="min-h-[calc(100svh-12rem)] border border-dashed border-border/70 bg-card/60">
         <EmptyHeader>
@@ -77,7 +100,7 @@ function HistoryPage() {
           </EmptyMedia>
           <EmptyTitle>No runs yet.</EmptyTitle>
           <EmptyDescription>
-            Completed, failed, and cancelled runs will collect here once the agent starts scanning sites.
+            Runs from this shared backend will appear here once the agent starts scanning sites.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -118,14 +141,24 @@ function HistoryPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Link
-                    to="/history/$runId"
+                    to={
+                      run.status === "queued" ||
+                      run.status === "starting" ||
+                      run.status === "running"
+                        ? "/runs/$runId"
+                        : "/history/$runId"
+                    }
                     params={{ runId: run._id }}
                     className={buttonVariants({
                       variant: "outline",
                       className: "rounded-2xl",
                     })}
                   >
-                    Open report
+                    {run.status === "queued" ||
+                    run.status === "starting" ||
+                    run.status === "running"
+                      ? "View live run"
+                      : "Open report"}
                     <IconArrowRight className="size-4" />
                   </Link>
                   <Button
