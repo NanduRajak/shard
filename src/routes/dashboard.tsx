@@ -19,6 +19,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
+import { describeBrowserProvider } from "@/lib/run-report"
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
@@ -80,8 +81,14 @@ function DashboardPage() {
                       Score {run.finalScore?.toFixed(0) ?? "Pending"}
                     </Badge>
                     <Badge variant="secondary">{findingsCount} findings</Badge>
+                    {run.executionMode === "background" ? (
+                      <Badge variant="outline">Background agent</Badge>
+                    ) : null}
                   </div>
                   <p className="break-all text-sm font-medium text-foreground">{run.url}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {describeBrowserProvider(run.browserProvider)}
+                  </p>
                 </div>
                 {run.status === "queued" || run.status === "starting" || run.status === "running" ? (
                   <Link

@@ -45,7 +45,12 @@ import {
 } from "@/components/ui/empty"
 import { inspectRunStartup } from "@/lib/inspect-run-startup"
 import { requestRunStop } from "@/lib/request-run-stop"
-import { buildSteelEmbedUrl, isActiveRunStatus, sortTimelineEvents } from "@/lib/run-report"
+import {
+  buildSteelEmbedUrl,
+  describeBrowserProvider,
+  isActiveRunStatus,
+  sortTimelineEvents,
+} from "@/lib/run-report"
 
 export const Route = createFileRoute("/runs/$runId")({
   component: RunPage,
@@ -135,12 +140,16 @@ function RunPage() {
     ? "Final page snapshot"
     : isSteelRun
       ? "Live cloud session"
-      : "Local browser status"
+      : run.browserProvider === "playwright"
+        ? "Background browser status"
+        : "Local browser status"
   const snapshotDescription = !isActive
     ? "The browser session has ended. This snapshot shows the latest page screenshot captured during the run."
     : isSteelRun
       ? "Steel mirrors the exact browser session the autonomous QA runner is controlling in real time."
-      : "The agent is driving your own Chrome window. Watch your browser directly while Shard streams steps and captures screenshots here."
+      : run.browserProvider === "playwright"
+        ? "The background agent is driving an isolated headless Playwright browser. Follow progress here while artifacts and screenshots stream in."
+        : "The agent is driving your own Chrome window. Watch your browser directly while Shard streams steps and captures screenshots here."
   const runLabel = describeRunLabel(run.status)
 
   return (
@@ -155,6 +164,9 @@ function RunPage() {
                 </Badge>
                 <StatusBadge status={run.status} />
                 <QueueBadge queueState={run.queueState} />
+                {run.executionMode === "background" ? (
+                  <Badge variant="secondary">Background agent</Badge>
+                ) : null}
               </div>
               <CardTitle className="text-2xl text-balance">
                 {isActive ? "Live autonomous QA session" : "Autonomous QA run timeline"}
@@ -194,7 +206,7 @@ function RunPage() {
             <RunMetaRow label="URL" value={run.currentUrl ?? run.url} />
             <RunMetaRow
               label="Browser"
-              value={run.browserProvider === "local_chrome" ? "local Chrome" : "Steel cloud"}
+              value={describeBrowserProvider(run.browserProvider)}
             />
             <RunMetaRow label="Session" value={session?.status ?? "Not created yet"} />
             <RunMetaRow label="Status" value={run.status} />
@@ -315,6 +327,7 @@ function RunPage() {
               />
             ) : executionState === "session_active" ? (
               <LocalSessionState
+                browserProvider={run.browserProvider ?? "steel"}
                 currentUrl={run.currentUrl ?? run.url}
                 screenshot={latestScreenshot}
               />
@@ -337,7 +350,7 @@ function PreviewState({
   executionState,
   replayUrl,
 }: {
-  browserProvider: "local_chrome" | "steel"
+  browserProvider: "local_chrome" | "playwright" | "steel"
   executionState:
     | "preview_active"
     | "queued"
@@ -356,11 +369,15 @@ function PreviewState({
         title={
           browserProvider === "local_chrome"
             ? "Attaching local Chrome session"
+            : browserProvider === "playwright"
+              ? "Launching background Playwright session"
             : "Creating cloud browser session"
         }
         body={
           browserProvider === "local_chrome"
             ? "The local helper is connecting through Chrome DevTools MCP. Chrome may ask you to approve the debugging session."
+            : browserProvider === "playwright"
+              ? "The background worker is launching an isolated Playwright browser and preparing trace capture."
             : "The runner is setting up the remote browser. The preview will appear as soon as the session is ready."
         }
       />
@@ -374,11 +391,15 @@ function PreviewState({
         title={
           browserProvider === "local_chrome"
             ? "Local helper picked up the run"
+            : browserProvider === "playwright"
+              ? "Background worker picked up the run"
             : "Runner picked up the run"
         }
         body={
           browserProvider === "local_chrome"
             ? "The local helper is preparing Chrome DevTools MCP and will begin driving your browser shortly."
+            : browserProvider === "playwright"
+              ? "The Playwright worker is running the QA job and will keep saving artifacts while it explores."
             : "The job is executing, but live session metadata has not been published yet."
         }
       />
@@ -392,11 +413,15 @@ function PreviewState({
         title={
           browserProvider === "local_chrome"
             ? "Queued and waiting for local helper"
+            : browserProvider === "playwright"
+              ? "Queued and waiting for background worker"
             : "Queued and waiting for runner"
         }
         body={
           browserProvider === "local_chrome"
             ? "The run is ready, but no healthy local helper has claimed it yet."
+            : browserProvider === "playwright"
+              ? "The batch is queued and waiting for an available Playwright worker slot."
             : "The queue is reachable, but no background runner has started this job yet."
         }
       />
@@ -410,11 +435,15 @@ function PreviewState({
         title={
           browserProvider === "local_chrome"
             ? "Local helper unavailable"
+            : browserProvider === "playwright"
+              ? "Background runner unreachable"
             : "Background runner unreachable"
         }
         body={
           browserProvider === "local_chrome"
             ? "The run is still queued and no local helper heartbeat is available. Run `pnpm run local-helper` and keep Chrome open."
+            : browserProvider === "playwright"
+              ? "The run is still queued and the background worker process is not currently responding."
             : "The run is still queued and the local Inngest dev server is not responding. Start the runner to continue this run."
         }
       />
@@ -445,7 +474,7 @@ function SnapshotState({
   runId,
   screenshot,
 }: {
-  browserProvider: "local_chrome" | "steel"
+  browserProvider: "local_chrome" | "playwright" | "steel"
   runId: Id<"runs">
   screenshot?: RunArtifact
 }) {
@@ -489,6 +518,8 @@ function SnapshotState({
         body={
           browserProvider === "local_chrome"
             ? "The session has ended and no screenshot was stored for the final state. Open the archived report for captured artifacts and findings."
+            : browserProvider === "playwright"
+              ? "The background session has ended and no screenshot was stored for the final state. Open the archived report for findings, artifacts, and the Playwright trace."
             : "The session has ended and no screenshot was stored for the final state. Open the archived report for the replay and captured artifacts."
         }
         action={
@@ -509,9 +540,11 @@ function SnapshotState({
 }
 
 function LocalSessionState({
+  browserProvider,
   currentUrl,
   screenshot,
 }: {
+  browserProvider: "local_chrome" | "playwright" | "steel"
   currentUrl: string
   screenshot?: RunArtifact
 }) {
@@ -524,7 +557,19 @@ function LocalSessionState({
           className="h-full min-h-0 w-full rounded-[1.6rem] border border-border/70 bg-background object-cover shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
         />
         <div className="rounded-[1.4rem] border border-border/70 bg-background/70 px-4 py-3 text-sm text-muted-foreground">
-          Watching your own Chrome window live. Shard keeps the latest captured screenshot here and is currently focused on <span className="break-all text-foreground">{currentUrl}</span>.
+          {browserProvider === "playwright"
+            ? (
+              <>
+                Watching the latest background Playwright snapshot. Shard is currently focused on{" "}
+                <span className="break-all text-foreground">{currentUrl}</span>.
+              </>
+            )
+            : (
+              <>
+                Watching your own Chrome window live. Shard keeps the latest captured screenshot here and is currently focused on{" "}
+                <span className="break-all text-foreground">{currentUrl}</span>.
+              </>
+            )}
         </div>
       </div>
     )
@@ -533,8 +578,12 @@ function LocalSessionState({
   return (
     <PanelState
       icon={<IconBrowser className="size-5" />}
-      title="Local Chrome is live"
-      body={`The agent is driving your browser directly. Watch Chrome for live actions while Shard continues streaming progress here.\n\nCurrent URL: ${currentUrl}`}
+      title={browserProvider === "playwright" ? "Background browser is live" : "Local Chrome is live"}
+      body={
+        browserProvider === "playwright"
+          ? `The background agent is driving an isolated Playwright browser. Shard will keep saving screenshots and artifacts while the run continues.\n\nCurrent URL: ${currentUrl}`
+          : `The agent is driving your browser directly. Watch Chrome for live actions while Shard continues streaming progress here.\n\nCurrent URL: ${currentUrl}`
+      }
     />
   )
 }

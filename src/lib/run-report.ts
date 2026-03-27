@@ -82,3 +82,17 @@ export function describeExecutionState(executionState: ExecutionState) {
       return "queued"
   }
 }
+
+export function describeBrowserProvider(
+  browserProvider: "local_chrome" | "playwright" | "steel" | undefined,
+) {
+  if (browserProvider === "local_chrome") {
+    return "Local Chrome"
+  }
+
+  if (browserProvider === "playwright") {
+    return "Background Playwright"
+  }
+
+  return "Steel cloud"
+}

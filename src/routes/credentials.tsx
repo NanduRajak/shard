@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import {
   createCredential,
   deleteCredential,
@@ -52,8 +53,10 @@ export const Route = createFileRoute("/credentials")({
 })
 
 const EMPTY_FORM: CredentialFormInput = {
+  isDefault: true,
   namespace: "",
   password: "",
+  profileLabel: "",
   totpSecret: "",
   username: "",
   website: "",
@@ -90,8 +93,10 @@ function CredentialsPage() {
 
       setEditingId(credentialId)
       setFormData({
+        isDefault: credential.isDefault,
         namespace: credential.namespace,
         password: credential.password,
+        profileLabel: credential.profileLabel,
         totpSecret: credential.totpSecret,
         username: credential.username,
         website: credential.website,
@@ -152,12 +157,13 @@ function CredentialsPage() {
               Credentials
             </Badge>
             <CardTitle className="font-heading text-2xl tracking-tight">
-              Store reusable website logins by namespace.
+              Store reusable website logins by namespace and profile.
             </CardTitle>
             <CardDescription className="max-w-2xl text-sm/6">
               Secrets are encrypted at rest, never sent to the model, and only
               resolved by the browser runtime when a matching site origin needs
-              authentication.
+              authentication. You can keep multiple account profiles per site and
+              choose one default profile for the Home page flow.
             </CardDescription>
           </div>
           <Button className="rounded-2xl" onClick={openCreateDialog}>
@@ -197,6 +203,10 @@ function CredentialsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="secondary">{credential.namespace}</Badge>
                         <Badge variant="outline">{credential.origin}</Badge>
+                        <Badge variant="outline">{credential.profileLabel}</Badge>
+                        {credential.isDefault ? (
+                          <Badge variant="default">Default</Badge>
+                        ) : null}
                         {credential.hasTotpSecret ? (
                           <Badge variant="outline">TOTP</Badge>
                         ) : null}
@@ -269,6 +279,14 @@ function CredentialsPage() {
               placeholder="admin"
             />
             <CredentialField
+              label="Profile name"
+              value={formData.profileLabel}
+              onChange={(value) => {
+                setFormData((current) => ({ ...current, profileLabel: value }))
+              }}
+              placeholder="Admin account"
+            />
+            <CredentialField
               label="Website"
               value={formData.website}
               onChange={(value) => {
@@ -303,6 +321,23 @@ function CredentialsPage() {
               }}
               placeholder="Optional base32 secret"
             />
+            <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">Default for Home</p>
+                <p className="text-sm text-muted-foreground">
+                  Namespace-based interactive runs use the default profile for this site.
+                </p>
+              </div>
+              <Switch
+                checked={formData.isDefault}
+                onCheckedChange={(checked) => {
+                  setFormData((current) => ({
+                    ...current,
+                    isDefault: Boolean(checked),
+                  }))
+                }}
+              />
+            </div>
           </div>
 
           <DialogFooter className="rounded-b-[1.6rem]" showCloseButton>

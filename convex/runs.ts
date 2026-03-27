@@ -13,6 +13,7 @@ export const createRun = mutation({
     const now = Date.now()
 
     const runId = await ctx.db.insert("runs", {
+      executionMode: "interactive",
       url: args.url,
       mode: args.mode,
       browserProvider: args.browserProvider,

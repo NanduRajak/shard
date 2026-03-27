@@ -27,7 +27,7 @@ export const goalStatusSchema = z.enum([
 
 export const sessionStatusSchema = z.enum(["creating", "active", "closed", "failed"])
 
-export const browserProviderSchema = z.enum(["steel", "local_chrome"])
+export const browserProviderSchema = z.enum(["steel", "local_chrome", "playwright"])
 
 export const runEventKindSchema = z.enum([
   "status",
@@ -50,6 +50,7 @@ export const artifactTypeSchema = z.enum([
 export const findingSeveritySchema = z.enum(["low", "medium", "high", "critical"])
 
 export const findingSourceSchema = z.enum(["browser", "perf", "hygiene", "test"])
+export const browserSignalSchema = z.enum(["console", "network", "pageerror"])
 
 export const registerLocalHelperRequestSchema = z.object({
   helperId: z.string().min(1),
@@ -107,6 +108,7 @@ export const appendRunEventRequestSchema = z.object({
 export const appendFindingRequestSchema = z.object({
   runId: z.string().min(1),
   source: findingSourceSchema,
+  browserSignal: browserSignalSchema.optional(),
   title: z.string().min(1),
   description: z.string().min(1),
   severity: findingSeveritySchema,

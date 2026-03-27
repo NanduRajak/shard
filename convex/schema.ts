@@ -18,6 +18,12 @@ const runMode = v.union(
 const browserProvider = v.union(
   v.literal("steel"),
   v.literal("local_chrome"),
+  v.literal("playwright"),
+)
+
+const executionMode = v.union(
+  v.literal("interactive"),
+  v.literal("background"),
 )
 
 const runGoalStatus = v.union(
@@ -88,6 +94,12 @@ const findingSeverity = v.union(
   v.literal("critical"),
 )
 
+const browserSignal = v.union(
+  v.literal("console"),
+  v.literal("network"),
+  v.literal("pageerror"),
+)
+
 const artifactType = v.union(
   v.literal("screenshot"),
   v.literal("trace"),
@@ -134,12 +146,23 @@ export default defineSchema({
     .index("by_session_token", ["sessionToken"])
     .index("by_github_user_id", ["githubUserId"]),
 
+  backgroundBatches: defineTable({
+    title: v.string(),
+    totalRuns: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_created_at", ["createdAt"]),
+
   runs: defineTable({
     url: v.string(),
     mode: v.optional(runMode),
     browserProvider: v.optional(browserProvider),
+    executionMode: v.optional(executionMode),
+    backgroundBatchId: v.optional(v.id("backgroundBatches")),
     credentialNamespace: v.optional(v.string()),
+    credentialProfileId: v.optional(v.id("credentials")),
     instructions: v.optional(v.string()),
+    agentOrdinal: v.optional(v.number()),
     status: runStatus,
     queueState: v.optional(queueState),
     currentStep: v.optional(v.string()),
@@ -154,7 +177,9 @@ export default defineSchema({
     finalScore: v.optional(v.number()),
   })
     .index("by_status", ["status"])
-    .index("by_started_at", ["startedAt"]),
+    .index("by_started_at", ["startedAt"])
+    .index("by_background_batch", ["backgroundBatchId"])
+    .index("by_execution_mode_started_at", ["executionMode", "startedAt"]),
 
   findings: defineTable({
     runId: v.optional(v.id("runs")),
@@ -162,6 +187,7 @@ export default defineSchema({
     category: v.optional(findingCategory),
     checker: v.optional(v.string()),
     source: findingSource,
+    browserSignal: v.optional(browserSignal),
     title: v.string(),
     description: v.string(),
     severity: findingSeverity,
@@ -354,6 +380,8 @@ export default defineSchema({
     namespace: v.string(),
     website: v.string(),
     origin: v.string(),
+    profileLabel: v.optional(v.string()),
+    isDefault: v.optional(v.boolean()),
     username: v.string(),
     passwordEncrypted: v.string(),
     totpSecretEncrypted: v.optional(v.string()),
@@ -361,5 +389,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_namespace", ["namespace"])
-    .index("by_namespace_origin", ["namespace", "origin"]),
+    .index("by_namespace_origin", ["namespace", "origin"])
+    .index("by_namespace_origin_profile", ["namespace", "origin", "profileLabel"]),
 })

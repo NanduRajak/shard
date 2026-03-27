@@ -10,6 +10,7 @@ import {
   IconLayoutDashboard,
   IconLayoutSidebarLeftExpand,
   IconMessage2Bolt,
+  IconStack2,
 } from "@tabler/icons-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -721,6 +722,11 @@ const appNavigation = [
     title: "Review Bot",
     to: "/review-bot" as const,
     icon: IconMessage2Bolt,
+  },
+  {
+    title: "Background Agents",
+    to: "/background-agents" as const,
+    icon: IconStack2,
   },
   {
     title: "Credentials",

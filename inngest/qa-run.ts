@@ -1,10 +1,11 @@
 import lighthouse from "lighthouse"
-import { chromium, type Locator, type Page } from "playwright"
+import { readFile, unlink } from "node:fs/promises"
+import { chromium, type BrowserContext, type Locator, type Page } from "playwright"
 import SteelClient from "steel-sdk"
 import { NonRetriableError } from "inngest"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
 import { google } from "@ai-sdk/google"
-import { launch } from "chrome-launcher"
+import { Launcher, launch } from "chrome-launcher"
 import { z } from "zod"
 import type { Id } from "../convex/_generated/dataModel"
 import { api } from "../convex/_generated/api"
@@ -14,7 +15,10 @@ import { inngest } from "./core"
 import { isTransientWorkflowError } from "@/lib/workflow-errors"
 import { scoreLighthouseFinding } from "@/lib/lighthouse-audits"
 import { pickQaFallbackAction } from "@/lib/qa-fallback"
-import { getDecryptedCredentialForOrigin } from "@/lib/credentials-server"
+import {
+  getDecryptedCredentialForOrigin,
+  getDecryptedCredentialProfileById,
+} from "@/lib/credentials-server"
 import {
   buildActionSignature,
   isSameHostname,
@@ -30,18 +34,28 @@ import {
   impactWeightForSource,
 } from "@/lib/scoring"
 
-const SESSION_TIMEOUT_MS = 10 * 60 * 1000
-const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000
-const MAX_AGENT_STEPS = 36
-const MAX_DISCOVERED_PAGES = 12
 const MAX_PAGE_FINDINGS = 2
 const ACTION_HIGHLIGHT_DELAY_MS = 350
 const DEFAULT_MODEL = serverEnv.GEMINI_MODEL ?? "gemini-2.5-flash"
+const INTERACTIVE_QA_CONFIG = {
+  agentTimeBudgetMs: 8 * 60 * 1000,
+  maxAgentSteps: 36,
+  maxDiscoveredPages: 12,
+  sessionTimeoutMs: 10 * 60 * 1000,
+} as const
+const BACKGROUND_QA_CONFIG = {
+  agentTimeBudgetMs: 20 * 60 * 1000,
+  maxAgentSteps: 60,
+  maxDiscoveredPages: 18,
+  sessionTimeoutMs: 24 * 60 * 1000,
+} as const
+const PLAYWRIGHT_TRACE_PATH_PREFIX = "/tmp/shard-background-trace"
 
 type RunRequestedEvent = {
   data: {
-    browserProvider: "local_chrome" | "steel"
+    browserProvider: "local_chrome" | "playwright" | "steel"
     credentialNamespace?: string
+    credentialProfileId?: Id<"credentials">
     instructions?: string
     mode: "explore" | "task"
     runId: Id<"runs">
@@ -85,6 +99,7 @@ type GoalOutcome = {
 }
 
 type BufferedFinding = {
+  browserSignal?: "console" | "network" | "pageerror"
   confidence: number
   description: string
   pageOrFlow?: string
@@ -93,6 +108,13 @@ type BufferedFinding = {
   source: "browser" | "perf"
   suggestedFix?: string
   title: string
+}
+
+type QaRuntimeConfig = {
+  agentTimeBudgetMs: number
+  maxAgentSteps: number
+  maxDiscoveredPages: number
+  sessionTimeoutMs: number
 }
 
 type SavedFinding = {
@@ -152,9 +174,73 @@ export const qaRun = inngest.createFunction(
   },
 )
 
+export const backgroundQaRun = inngest.createFunction(
+  {
+    id: "background-qa-run",
+    retries: 1,
+    concurrency: {
+      limit: 4,
+    },
+    triggers: [{ event: "app/background-run.requested" }],
+    onFailure: async ({ event, error }) => {
+      const convex = createConvexServerClient()
+      const runId = extractRunIdFromFailureEvent(event)
+
+      if (!runId) {
+        return
+      }
+
+      await convex.mutation(api.runtime.updateRun, {
+        runId,
+        status: "failed",
+        currentStep: "Background QA run failed",
+        errorMessage: error.message,
+        finishedAt: Date.now(),
+      })
+    },
+  },
+  async ({ event }: { event: RunRequestedEvent }) => {
+    return await runQaWorkflow(event.data)
+  },
+)
+
+function getQaRuntimeConfig(browserProvider: "local_chrome" | "playwright" | "steel") {
+  return browserProvider === "playwright"
+    ? BACKGROUND_QA_CONFIG
+    : INTERACTIVE_QA_CONFIG
+}
+
+async function launchBackgroundPlaywrightBrowser() {
+  try {
+    return await chromium.launch({
+      headless: true,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+
+    if (!message.includes("Executable doesn't exist")) {
+      throw error
+    }
+
+    const chromePath = Launcher.getFirstInstallation()
+
+    if (!chromePath) {
+      throw new NonRetriableError(
+        "Background agents could not find a Playwright Chromium binary or a local Chrome installation. Run `npx playwright install chromium` once, or install Google Chrome.",
+      )
+    }
+
+    return await chromium.launch({
+      executablePath: chromePath,
+      headless: true,
+    })
+  }
+}
+
 export async function runQaWorkflow({
   browserProvider,
   credentialNamespace,
+  credentialProfileId,
   instructions,
   mode,
   runId,
@@ -167,11 +253,16 @@ export async function runQaWorkflow({
   }
 
   const convex = createConvexServerClient()
+  const runRecord = await convex.query(api.runs.getRun, { runId })
+  const qaConfig = getQaRuntimeConfig(browserProvider)
 
-  let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | null = null
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
+  let context: BrowserContext | null = null
   let chrome: Awaited<ReturnType<typeof launch>> | null = null
   let currentSessionId: string | null = null
   let sessionDocId: Id<"sessions"> | null = null
+  let sessionDebugUrl: string | undefined
+  let sessionReplayUrl: string | undefined
   let finalRunStatus: "cancelled" | "completed" | "failed" = "completed"
   let workflowError: Error | null = null
   let screenshotCount = 0
@@ -200,7 +291,10 @@ export async function runQaWorkflow({
         runId,
         status: "starting",
         queueState: "picked_up",
-        currentStep: "Creating Steel session",
+        currentStep:
+          browserProvider === "playwright"
+            ? "Creating background Playwright session"
+            : "Creating Steel session",
         currentUrl: url,
         errorMessage: null,
       })
@@ -208,7 +302,10 @@ export async function runQaWorkflow({
         runId,
         kind: "status",
         title: "Run starting",
-        body: "Initializing the Steel browser session and preparing the worker.",
+        body:
+          browserProvider === "playwright"
+            ? "Initializing the isolated Playwright browser session and preparing the background worker."
+            : "Initializing the Steel browser session and preparing the worker.",
         status: "starting",
         pageUrl: url,
       })
@@ -219,28 +316,48 @@ export async function runQaWorkflow({
         currentStep: "QA run stopped before session startup",
       })
 
-      const steelSession = await steel.sessions.create({
-        timeout: SESSION_TIMEOUT_MS,
-      })
-      currentSessionId = steelSession.id
-      const debugUrl = steelSession.debugUrl ?? steelSession.sessionViewerUrl
-      sessionDocId = await convex.mutation(api.runtime.createSession, {
-        runId,
-        provider: "steel",
-        externalSessionId: steelSession.id,
-        status: "creating",
-        debugUrl,
-        replayUrl: steelSession.sessionViewerUrl,
-      })
-      await emitRunEvent(convex, {
-        runId,
-        kind: "session",
-        title: "Steel session created",
-        body: "Browser infrastructure is ready. The live preview will appear once Playwright attaches.",
-        status: "starting",
-        pageUrl: url,
-        sessionId: sessionDocId,
-      })
+      if (browserProvider === "steel") {
+        const steelSession = await steel.sessions.create({
+          timeout: qaConfig.sessionTimeoutMs,
+        })
+        currentSessionId = steelSession.id
+        sessionDebugUrl = steelSession.debugUrl ?? steelSession.sessionViewerUrl
+        sessionReplayUrl = steelSession.sessionViewerUrl
+        sessionDocId = await convex.mutation(api.runtime.createSession, {
+          runId,
+          provider: "steel",
+          externalSessionId: steelSession.id,
+          status: "creating",
+          debugUrl: sessionDebugUrl,
+          replayUrl: sessionReplayUrl,
+        })
+        await emitRunEvent(convex, {
+          runId,
+          kind: "session",
+          title: "Steel session created",
+          body: "Browser infrastructure is ready. The live preview will appear once Playwright attaches.",
+          status: "starting",
+          pageUrl: url,
+          sessionId: sessionDocId,
+        })
+      } else {
+        currentSessionId = `playwright-${runId}`
+        sessionDocId = await convex.mutation(api.runtime.createSession, {
+          runId,
+          provider: "playwright",
+          externalSessionId: currentSessionId,
+          status: "creating",
+        })
+        await emitRunEvent(convex, {
+          runId,
+          kind: "session",
+          title: "Background Playwright session created",
+          body: "An isolated headless Playwright session is ready for the background QA agent.",
+          status: "starting",
+          pageUrl: url,
+          sessionId: sessionDocId,
+        })
+      }
 
       await throwIfStopRequested({
         convex,
@@ -251,40 +368,70 @@ export async function runQaWorkflow({
       await convex.mutation(api.runtime.updateRun, {
         runId,
         status: "running",
-        currentStep: "Connecting Playwright to Steel",
+        currentStep:
+          browserProvider === "playwright"
+            ? "Launching Playwright browser"
+            : "Connecting Playwright to Steel",
       })
-      failureStage = "Connecting Playwright to Steel"
+      failureStage =
+        browserProvider === "playwright"
+          ? "Launching Playwright browser"
+          : "Connecting Playwright to Steel"
       await emitRunEvent(convex, {
         runId,
         kind: "session",
-        title: "Connecting to Steel",
-        body: "Attaching Playwright to the remote browser session.",
+        title:
+          browserProvider === "playwright"
+            ? "Launching Playwright"
+            : "Connecting to Steel",
+        body:
+          browserProvider === "playwright"
+            ? "Launching a fresh headless Playwright browser for the background worker."
+            : "Attaching Playwright to the remote browser session.",
         status: "running",
         pageUrl: url,
         sessionId: sessionDocId,
       })
 
-      browser = await chromium.connectOverCDP(
-        `wss://connect.steel.dev?apiKey=${serverEnv.STEEL_API_KEY}&sessionId=${steelSession.id}`,
-      )
+      if (browserProvider === "steel") {
+        browser = await chromium.connectOverCDP(
+          `wss://connect.steel.dev?apiKey=${serverEnv.STEEL_API_KEY}&sessionId=${currentSessionId}`,
+        )
+        context = browser.contexts()[0] ?? (await browser.newContext())
+        await convex.mutation(api.runtime.updateSession, {
+          sessionId: sessionDocId,
+          status: "active",
+          debugUrl: sessionDebugUrl,
+          replayUrl: sessionReplayUrl,
+        })
+        await emitRunEvent(convex, {
+          runId,
+          kind: "session",
+          title: "Steel live preview ready",
+          body: "The browser session is active and can be watched live.",
+          status: "running",
+          pageUrl: url,
+          sessionId: sessionDocId,
+        })
+      } else {
+        browser = await launchBackgroundPlaywrightBrowser()
+        context = await browser.newContext()
+        await context.tracing.start({ screenshots: true, snapshots: true })
+        await convex.mutation(api.runtime.updateSession, {
+          sessionId: sessionDocId,
+          status: "active",
+        })
+        await emitRunEvent(convex, {
+          runId,
+          kind: "session",
+          title: "Background Playwright session active",
+          body: "The isolated background browser is active and recording a trace for later review.",
+          status: "running",
+          pageUrl: url,
+          sessionId: sessionDocId,
+        })
+      }
 
-      await convex.mutation(api.runtime.updateSession, {
-        sessionId: sessionDocId,
-        status: "active",
-        debugUrl,
-        replayUrl: steelSession.sessionViewerUrl,
-      })
-      await emitRunEvent(convex, {
-        runId,
-        kind: "session",
-        title: "Steel live preview ready",
-        body: "The browser session is active and can be watched live.",
-        status: "running",
-        pageUrl: url,
-        sessionId: sessionDocId,
-      })
-
-      const context = browser.contexts()[0] ?? (await browser.newContext())
       const page = context.pages()[0] ?? (await context.newPage())
 
       attachBrowserSignalCapture({
@@ -378,8 +525,11 @@ export async function runQaWorkflow({
       })
 
       const agentLoopResult = await runAgentLoop({
+        agentOrdinal: runRecord?.agentOrdinal,
         convex,
+        credentialProfileId,
         credentialNamespace,
+        config: qaConfig,
         findingSignatures,
         bufferedFindings,
         instructions,
@@ -404,11 +554,12 @@ export async function runQaWorkflow({
         pageUrl: page.url(),
         runIdForFindings: runId,
         savedFindings,
-        stepIndex: MAX_AGENT_STEPS,
+        stepIndex: qaConfig.maxAgentSteps,
         findingSignatures,
       })
 
       const auditUrls = selectAuditUrls({
+        maxAuditUrls: qaConfig.maxDiscoveredPages,
         pageCandidates,
         startUrl: url,
       })
@@ -430,7 +581,7 @@ export async function runQaWorkflow({
           pageUrl: auditUrl,
           runIdForFindings: runId,
           savedFindings,
-          stepIndex: MAX_AGENT_STEPS + index,
+          stepIndex: qaConfig.maxAgentSteps + index,
           findingSignatures,
         })
 
@@ -582,7 +733,7 @@ export async function runQaWorkflow({
         pageUrl: page.url(),
         runIdForFindings: runId,
         savedFindings,
-        stepIndex: MAX_AGENT_STEPS + auditUrls.length,
+        stepIndex: qaConfig.maxAgentSteps + auditUrls.length,
         findingSignatures,
       })
 
@@ -699,6 +850,43 @@ export async function runQaWorkflow({
 
       throw workflowError
   } finally {
+      if (browserProvider === "playwright" && context) {
+        const tracePath = `${PLAYWRIGHT_TRACE_PATH_PREFIX}-${runId}.zip`
+
+        try {
+          await context.tracing.stop({ path: tracePath })
+          const artifactId = await uploadArtifact({
+            body: await readFile(tracePath),
+            contentType: "application/zip",
+            convex,
+            pageUrl: lastKnownUrl,
+            runId,
+            title: "Playwright trace",
+            type: "trace",
+          })
+
+          await emitRunEvent(convex, {
+            runId,
+            kind: "artifact",
+            title: "Playwright trace saved",
+            body: "Stored the background Playwright replay trace for later review.",
+            status:
+              finalRunStatus === "completed"
+                ? "completed"
+                : finalRunStatus === "cancelled"
+                  ? "cancelled"
+                  : "failed",
+            pageUrl: lastKnownUrl,
+            sessionId: sessionDocId,
+            artifactId,
+          }).catch(() => undefined)
+        } catch {
+          // Ignore trace export failures during cleanup.
+        } finally {
+          await unlink(tracePath).catch(() => undefined)
+        }
+      }
+
       if (browser) {
         await browser.close().catch(() => undefined)
       }
@@ -711,7 +899,7 @@ export async function runQaWorkflow({
         }
       }
 
-      if (currentSessionId) {
+      if (currentSessionId && browserProvider === "steel") {
         await steel.sessions.release(currentSessionId).catch(() => undefined)
         await emitRunEvent(convex, {
           runId,
@@ -734,6 +922,7 @@ export async function runQaWorkflow({
           .mutation(api.runtime.updateSession, {
             sessionId: sessionDocId,
             status: finalRunStatus === "failed" ? "failed" : "closed",
+            replayUrl: sessionReplayUrl,
             finishedAt: Date.now(),
           })
           .catch(() => undefined)
@@ -742,8 +931,11 @@ export async function runQaWorkflow({
 }
 
 async function runAgentLoop({
+  agentOrdinal,
   convex,
+  credentialProfileId,
   credentialNamespace,
+  config,
   findingSignatures,
   bufferedFindings,
   instructions,
@@ -755,8 +947,11 @@ async function runAgentLoop({
   sessionId,
   startUrl,
 }: {
+  agentOrdinal?: number
   convex: ReturnType<typeof createConvexServerClient>
+  credentialProfileId?: Id<"credentials">
   credentialNamespace?: string
+  config: QaRuntimeConfig
   findingSignatures: Set<string>
   bufferedFindings: BufferedFinding[]
   instructions?: string
@@ -772,7 +967,7 @@ async function runAgentLoop({
   const actionHistory: string[] = []
   const triedActions = new Set<string>()
   const analyzedSnapshots = new Set<string>()
-  const deadlineAt = Date.now() + AGENT_TIME_BUDGET_MS
+  const deadlineAt = Date.now() + config.agentTimeBudgetMs
   let noOpCount = 0
   let screenshotCount = 0
   let goalOutcome: GoalOutcome | undefined
@@ -785,7 +980,7 @@ async function runAgentLoop({
     | "repeat_actions"
     | "time_budget" = "max_steps"
 
-  for (let stepIndex = 1; stepIndex <= MAX_AGENT_STEPS; stepIndex += 1) {
+  for (let stepIndex = 1; stepIndex <= config.maxAgentSteps; stepIndex += 1) {
     if (Date.now() >= deadlineAt) {
       stopReason = "time_budget"
       await emitRunEvent(convex, {
@@ -830,8 +1025,8 @@ async function runAgentLoop({
       runId,
       currentStep:
         mode === "task"
-          ? `Task step ${stepIndex} of ${MAX_AGENT_STEPS}`
-          : `Exploration step ${stepIndex} of ${MAX_AGENT_STEPS}`,
+          ? `Task step ${stepIndex} of ${config.maxAgentSteps}`
+          : `Exploration step ${stepIndex} of ${config.maxAgentSteps}`,
       currentUrl: snapshot.url,
       status: "running",
     })
@@ -852,7 +1047,9 @@ async function runAgentLoop({
     const result = await generateText({
       model: google(DEFAULT_MODEL),
       prompt: buildAgentPrompt({
+        agentOrdinal,
         credentialNamespace,
+        maxAgentSteps: config.maxAgentSteps,
         instructions,
         mode,
         remainingMs: Math.max(deadlineAt - Date.now(), 0),
@@ -866,8 +1063,10 @@ async function runAgentLoop({
       stopWhen: stepCountIs(4),
       tools: buildAgentTools({
         bufferedFindings,
+        credentialProfileId,
         credentialNamespace,
         convex,
+        maxDiscoveredPages: config.maxDiscoveredPages,
         page,
         runId,
         sessionId,
@@ -926,6 +1125,7 @@ async function runAgentLoop({
     const outcome = latestToolResult && !latestToolResult.dynamic && isToolOutcome(latestToolResult.output)
       ? latestToolResult.output
       : await executePlannerFallback({
+          maxDiscoveredPages: config.maxDiscoveredPages,
           bufferedFindings,
           convex,
           page,
@@ -1016,7 +1216,7 @@ async function runAgentLoop({
       candidate.interactionCount += 1
     }
 
-    if (visitedPages.size > MAX_DISCOVERED_PAGES) {
+    if (visitedPages.size > config.maxDiscoveredPages) {
       stopReason = "max_pages"
       break
     }
@@ -1223,8 +1423,10 @@ async function runSnapshotStage({
 
 function buildAgentTools({
   bufferedFindings,
+  credentialProfileId,
   credentialNamespace,
   convex,
+  maxDiscoveredPages,
   page,
   runId,
   sessionId,
@@ -1232,8 +1434,10 @@ function buildAgentTools({
   visitedPages,
 }: {
   bufferedFindings: BufferedFinding[]
+  credentialProfileId?: Id<"credentials">
   credentialNamespace?: string
   convex: ReturnType<typeof createConvexServerClient>
+  maxDiscoveredPages: number
   page: Page
   runId: Id<"runs">
   sessionId: Id<"sessions"> | null
@@ -1264,6 +1468,7 @@ function buildAgentTools({
       execute: async ({ id }) => {
         return await performClickAction({
           bufferedFindings,
+          maxDiscoveredPages,
           page,
           startUrl,
           targetId: id,
@@ -1313,6 +1518,7 @@ function buildAgentTools({
 
         return await performNavigationAction({
           bufferedFindings,
+          maxDiscoveredPages,
           page,
           resolvedUrl,
           targetLabel: resolvedUrl,
@@ -1345,18 +1551,23 @@ function buildAgentTools({
         } satisfies ToolOutcome
       },
     }),
-    ...(credentialNamespace
+    ...(credentialNamespace || credentialProfileId
       ? {
           useStoredLogin: tool({
             description:
               "Use the stored login credential for the current website when an auth wall blocks useful exploration.",
             inputSchema: z.object({}),
             execute: async () => {
-              const credential = await getDecryptedCredentialForOrigin({
-                convex,
-                namespace: credentialNamespace,
-                pageUrl: page.url(),
-              })
+              const credential = credentialProfileId
+                ? await getDecryptedCredentialProfileById({
+                    convex,
+                    credentialId: credentialProfileId,
+                  })
+                : await getDecryptedCredentialForOrigin({
+                    convex,
+                    namespace: credentialNamespace ?? "",
+                    pageUrl: page.url(),
+                  })
 
               if (!credential) {
                 return {
@@ -1407,7 +1618,9 @@ function buildAgentTools({
 }
 
 function buildAgentPrompt({
+  agentOrdinal,
   credentialNamespace,
+  maxAgentSteps,
   instructions,
   mode,
   remainingMs,
@@ -1416,7 +1629,9 @@ function buildAgentPrompt({
   visitedPages,
   recentActions,
 }: {
+  agentOrdinal?: number
   credentialNamespace?: string
+  maxAgentSteps: number
   instructions?: string
   mode: "explore" | "task"
   remainingMs: number
@@ -1457,7 +1672,10 @@ function buildAgentPrompt({
   return [
     ...baseRules,
     ...modeRules,
-    `Step: ${stepIndex}/${MAX_AGENT_STEPS}`,
+    agentOrdinal
+      ? `Agent ordinal: ${agentOrdinal}. Favor a fresh area of the app when several agents share the same site or goal.`
+      : null,
+    `Step: ${stepIndex}/${maxAgentSteps}`,
     `Remaining time budget: ${Math.ceil(remainingMs / 1000)} seconds`,
     `Current URL: ${snapshot.url}`,
     `Title: ${snapshot.title}`,
@@ -1466,12 +1684,15 @@ function buildAgentPrompt({
     `Recent actions: ${recentActions.length ? recentActions.join(" | ") : "none"}`,
     `Visible text excerpt: ${snapshot.textExcerpt}`,
     `Current interactives: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} [${item.tagName}${item.type ? `:${item.type}` : ""}]`).join("; ")}`,
-  ].join("\n")
+  ]
+    .filter(Boolean)
+    .join("\n")
 }
 
 async function executePlannerFallback({
   bufferedFindings,
   convex,
+  maxDiscoveredPages,
   page,
   runId,
   sessionId,
@@ -1483,6 +1704,7 @@ async function executePlannerFallback({
 }: {
   bufferedFindings: BufferedFinding[]
   convex: ReturnType<typeof createConvexServerClient>
+  maxDiscoveredPages: number
   page: Page
   runId: Id<"runs">
   sessionId: Id<"sessions"> | null
@@ -1495,7 +1717,7 @@ async function executePlannerFallback({
   const fallbackAction = pickQaFallbackAction({
     currentUrl: snapshot.url,
     interactives: snapshot.interactives,
-    maxPages: MAX_DISCOVERED_PAGES,
+    maxPages: maxDiscoveredPages,
     startUrl,
     triedActions,
     visitedPages,
@@ -1505,6 +1727,7 @@ async function executePlannerFallback({
     return {
       ...(await performNavigationAction({
         bufferedFindings,
+        maxDiscoveredPages,
         page,
         resolvedUrl: fallbackAction.url,
         targetLabel: fallbackAction.targetLabel,
@@ -1519,6 +1742,7 @@ async function executePlannerFallback({
     return {
       ...(await performClickAction({
         bufferedFindings,
+        maxDiscoveredPages,
         page,
         startUrl,
         targetId: fallbackAction.id,
@@ -1564,12 +1788,14 @@ async function executePlannerFallback({
 
 async function performClickAction({
   bufferedFindings,
+  maxDiscoveredPages,
   page,
   startUrl,
   targetId,
   visitedPages,
 }: {
   bufferedFindings: BufferedFinding[]
+  maxDiscoveredPages: number
   page: Page
   startUrl: string
   targetId: number
@@ -1623,7 +1849,7 @@ async function performClickAction({
       wouldExceedPageLimit({
         visitedPages,
         nextUrl: resolvedHref,
-        maxPages: MAX_DISCOVERED_PAGES,
+        maxPages: maxDiscoveredPages,
       })
     ) {
       return {
@@ -1658,7 +1884,7 @@ async function performClickAction({
       wouldExceedPageLimit({
         visitedPages,
         nextUrl: page.url(),
-        maxPages: MAX_DISCOVERED_PAGES,
+        maxPages: maxDiscoveredPages,
       })
     ) {
       await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
@@ -1783,12 +2009,14 @@ async function performFillAction({
 
 async function performNavigationAction({
   bufferedFindings,
+  maxDiscoveredPages,
   page,
   resolvedUrl,
   targetLabel,
   visitedPages,
 }: {
   bufferedFindings: BufferedFinding[]
+  maxDiscoveredPages: number
   page: Page
   resolvedUrl: string
   targetLabel: string
@@ -1798,7 +2026,7 @@ async function performNavigationAction({
     wouldExceedPageLimit({
       visitedPages,
       nextUrl: resolvedUrl,
-      maxPages: MAX_DISCOVERED_PAGES,
+      maxPages: maxDiscoveredPages,
     })
   ) {
     return {
@@ -2057,8 +2285,27 @@ function attachBrowserSignalCapture({
   page: Page
   startUrl: string
 }) {
+  page.on("console", (message) => {
+    if (message.type() !== "error" && message.type() !== "warning") {
+      return
+    }
+
+    bufferedFindings.push({
+      browserSignal: "console",
+      source: "browser",
+      signature: `console::${message.type()}::${page.url()}::${message.text()}`,
+      title: message.type() === "error" ? "Browser console error" : "Browser console warning",
+      description: message.text(),
+      severity: message.type() === "error" ? "high" : "medium",
+      confidence: 0.9,
+      pageOrFlow: page.url(),
+      suggestedFix: "Inspect the console output and fix the underlying frontend runtime issue.",
+    })
+  })
+
   page.on("pageerror", (error) => {
     bufferedFindings.push({
+      browserSignal: "pageerror",
       source: "browser",
       signature: `pageerror::${page.url()}::${error.message}`,
       title: "Unhandled browser error",
@@ -2084,6 +2331,7 @@ function attachBrowserSignalCapture({
     }
 
     bufferedFindings.push({
+      browserSignal: "network",
       source: "browser",
       signature: `requestfailed::${failureUrl}::${request.failure()?.errorText ?? "unknown"}`,
       title: "Same-origin request failed",
@@ -2112,6 +2360,7 @@ function attachBrowserSignalCapture({
     }
 
     bufferedFindings.push({
+      browserSignal: "network",
       source: "browser",
       signature: `response::${response.status()}::${responseUrl}`,
       title: "Same-origin request returned an error status",
@@ -2163,6 +2412,7 @@ async function flushBufferedFindings({
 
     await convex.mutation(api.runtime.createFinding, {
       runId,
+      browserSignal: finding.browserSignal,
       source: finding.source,
       title: finding.title,
       description: finding.description,
@@ -2418,7 +2668,7 @@ async function uploadArtifact({
   pageUrl: string
   runId: Id<"runs">
   title: string
-  type: "html-report" | "screenshot"
+  type: "html-report" | "screenshot" | "trace"
 }) {
   const uploadUrl = await convex.mutation(api.runtime.generateArtifactUploadUrl, {})
   const uploadResponse = await fetch(uploadUrl, {
@@ -2549,9 +2799,11 @@ async function safeGoto(page: Page, url: string) {
 }
 
 function selectAuditUrls({
+  maxAuditUrls,
   pageCandidates,
   startUrl,
 }: {
+  maxAuditUrls: number
   pageCandidates: Map<string, PageCandidate>
   startUrl: string
 }) {
@@ -2568,7 +2820,7 @@ function selectAuditUrls({
 
       return left.firstSeenAt - right.firstSeenAt
     })
-    .slice(0, MAX_DISCOVERED_PAGES - 1)
+    .slice(0, maxAuditUrls - 1)
     .map((candidate) => candidate.url)
 
   return [startUrl, ...otherUrls]

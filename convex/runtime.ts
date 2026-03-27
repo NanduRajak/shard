@@ -16,6 +16,7 @@ const runStatus = v.union(
 const browserProvider = v.union(
   v.literal("steel"),
   v.literal("local_chrome"),
+  v.literal("playwright"),
 )
 
 const runGoalStatus = v.union(
@@ -69,6 +70,12 @@ const findingSource = v.union(
   v.literal("perf"),
   v.literal("hygiene"),
   v.literal("test"),
+)
+
+const browserSignal = v.union(
+  v.literal("console"),
+  v.literal("network"),
+  v.literal("pageerror"),
 )
 
 const findingSeverity = v.union(
@@ -166,9 +173,15 @@ function normalizeQueueState(
 }
 
 function normalizeBrowserProvider(
-  provider?: "local_chrome" | "steel",
+  provider?: "local_chrome" | "playwright" | "steel",
 ) {
   return provider ?? "steel"
+}
+
+function normalizeExecutionMode(
+  executionModeValue?: "background" | "interactive",
+) {
+  return executionModeValue ?? "interactive"
 }
 
 function normalizeLocalHelperStatus(
@@ -330,6 +343,7 @@ export const clearAllData = mutation({
   args: {},
   handler: async (ctx) => {
     const [
+      backgroundBatches,
       runs,
       findings,
       artifacts,
@@ -341,6 +355,7 @@ export const clearAllData = mutation({
       localHelpers,
     ] =
       await Promise.all([
+        ctx.db.query("backgroundBatches").collect(),
         ctx.db.query("runs").collect(),
         ctx.db.query("findings").collect(),
         ctx.db.query("artifacts").collect(),
@@ -370,12 +385,14 @@ export const clearAllData = mutation({
       ...credentials.map((doc) => ctx.db.delete(doc._id)),
       ...localHelpers.map((doc) => ctx.db.delete(doc._id)),
       ...runs.map((doc) => ctx.db.delete(doc._id)),
+      ...backgroundBatches.map((doc) => ctx.db.delete(doc._id)),
     ])
 
     return {
       ok: true as const,
       counts: {
         artifacts: artifacts.length,
+        backgroundBatches: backgroundBatches.length,
         credentials: credentials.length,
         findings: findings.length,
         performanceAudits: performanceAudits.length,
@@ -490,6 +507,7 @@ export const getRunExecutionState = query({
 
     return {
       browserProvider: normalizeBrowserProvider(run.browserProvider),
+      executionMode: normalizeExecutionMode(run.executionMode),
       status: run.status,
       queueState: normalizeQueueState(run.queueState),
       startedAt: run.startedAt,
@@ -501,35 +519,62 @@ export const getRunExecutionState = query({
 
 const LOCAL_HELPER_STALE_MS = 30_000
 
+async function loadLocalHelperOverview(ctx: QueryCtx) {
+  const helper = await ctx.db
+    .query("localHelpers")
+    .withIndex("by_updated_at")
+    .order("desc")
+    .first()
+
+  if (!helper) {
+    return {
+      available: false,
+      helper: null,
+      lastHeartbeatAt: null,
+    }
+  }
+
+  const isFresh = Date.now() - helper.lastHeartbeatAt < LOCAL_HELPER_STALE_MS
+  const normalizedStatus = isFresh ? helper.status : ("offline" as const)
+
+  return {
+    available:
+      normalizeLocalHelperStatus(normalizedStatus) === "idle" ||
+      normalizeLocalHelperStatus(normalizedStatus) === "busy",
+    helper: {
+      ...helper,
+      status: normalizedStatus,
+    },
+    lastHeartbeatAt: helper.lastHeartbeatAt,
+  }
+}
+
 export const getLocalHelperOverview = query({
   args: {},
   handler: async (ctx) => {
-    const helper = await ctx.db
-      .query("localHelpers")
-      .withIndex("by_updated_at")
-      .order("desc")
-      .first()
+    return await loadLocalHelperOverview(ctx)
+  },
+})
 
-    if (!helper) {
-      return {
-        available: false,
-        helper: null,
-        lastHeartbeatAt: null,
-      }
-    }
-
-    const isFresh = Date.now() - helper.lastHeartbeatAt < LOCAL_HELPER_STALE_MS
-    const normalizedStatus = isFresh ? helper.status : ("offline" as const)
+// Compatibility query for older browser sessions that still request the
+// previous runtime capabilities endpoint. Keep this lightweight and derived
+// from the current local helper overview until all clients refresh.
+export const getRunModeCapabilities = query({
+  args: {},
+  handler: async (ctx) => {
+    const localHelperOverview = await loadLocalHelperOverview(ctx)
 
     return {
-      available:
-        normalizeLocalHelperStatus(normalizedStatus) === "idle" ||
-        normalizeLocalHelperStatus(normalizedStatus) === "busy",
-      helper: {
-        ...helper,
-        status: normalizedStatus,
+      cloud: {
+        available: true,
+        provider: "steel" as const,
       },
-      lastHeartbeatAt: helper.lastHeartbeatAt,
+      local: {
+        available: localHelperOverview.available,
+        helper: localHelperOverview.helper,
+        lastHeartbeatAt: localHelperOverview.lastHeartbeatAt,
+        provider: "local_chrome" as const,
+      },
     }
   },
 })
@@ -598,6 +643,7 @@ export const claimNextLocalRun = mutation({
           run: {
             ...existingRun,
             browserProvider: normalizeBrowserProvider(existingRun.browserProvider),
+            executionMode: normalizeExecutionMode(existingRun.executionMode),
             mode: existingRun.mode ?? "explore",
           },
         }
@@ -654,6 +700,7 @@ export const claimNextLocalRun = mutation({
       run: {
         ...run,
         browserProvider: normalizeBrowserProvider(run.browserProvider),
+        executionMode: normalizeExecutionMode(run.executionMode),
         mode: run.mode ?? "explore",
       },
     }
@@ -835,6 +882,7 @@ export const createFinding = mutation({
     runId: v.optional(v.id("runs")),
     prReviewId: v.optional(v.id("prReviews")),
     source: findingSource,
+    browserSignal: v.optional(browserSignal),
     title: v.string(),
     description: v.string(),
     severity: findingSeverity,
@@ -972,6 +1020,7 @@ export const getRunReport = query({
       run: {
         ...run,
         browserProvider: normalizeBrowserProvider(run.browserProvider),
+        executionMode: normalizeExecutionMode(run.executionMode),
         mode: run.mode ?? "explore",
         queueState: normalizeQueueState(run.queueState),
       },
@@ -1047,6 +1096,7 @@ export const listRuns = query({
           run: {
             ...run,
             browserProvider: normalizeBrowserProvider(run.browserProvider),
+            executionMode: normalizeExecutionMode(run.executionMode),
             mode: run.mode ?? "explore",
           },
           session: session
@@ -1115,6 +1165,7 @@ export const getDashboardRuns = query({
           run: {
             ...run,
             browserProvider: normalizeBrowserProvider(run.browserProvider),
+            executionMode: normalizeExecutionMode(run.executionMode),
           },
           findingsCount: findings.length,
           currentAuditTrend: buildAuditTrend({
@@ -1151,13 +1202,13 @@ function buildExecutionState({
   session,
 }: {
   run: {
-    browserProvider?: "local_chrome" | "steel"
+    browserProvider?: "local_chrome" | "playwright" | "steel"
     queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
     status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
   }
   session:
     | {
-        provider?: "local_chrome" | "steel"
+        provider?: "local_chrome" | "playwright" | "steel"
         replayUrl?: string
         status: "active" | "closed" | "creating" | "failed"
       }

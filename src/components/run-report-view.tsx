@@ -22,7 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { formatSessionDuration } from "@/lib/run-report"
+import { describeBrowserProvider, formatSessionDuration } from "@/lib/run-report"
 
 export function RunReportView({ report }: { report: any }) {
   const {
@@ -43,6 +43,9 @@ export function RunReportView({ report }: { report: any }) {
   const topFindings = sortedFindings.slice(0, 5)
   const sourceScores = Object.entries(scoreSummary.bySource) as Array<[string, number]>
   const isSteelRun = (run.browserProvider ?? "steel") === "steel"
+  const consoleFindings = sortedFindings.filter((finding: any) => finding.browserSignal === "console")
+  const networkFindings = sortedFindings.filter((finding: any) => finding.browserSignal === "network")
+  const pageErrorFindings = sortedFindings.filter((finding: any) => finding.browserSignal === "pageerror")
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -55,6 +58,9 @@ export function RunReportView({ report }: { report: any }) {
                   Archived run
                 </Badge>
                 <StatusBadge status={run.status} />
+                {run.executionMode === "background" ? (
+                  <Badge variant="secondary">Background agent</Badge>
+                ) : null}
               </div>
               <CardTitle className="text-2xl leading-tight">QA report</CardTitle>
               <CardDescription className="max-w-3xl break-all text-sm/6">
@@ -87,7 +93,7 @@ export function RunReportView({ report }: { report: any }) {
           <MetricCard label="Last URL" value={run.currentUrl ?? run.url} />
           <MetricCard
             label="Browser backend"
-            value={isSteelRun ? "Steel cloud" : "Local Chrome"}
+            value={describeBrowserProvider(run.browserProvider)}
           />
           <MetricCard label="Session" value={session?.status ?? "Not started"} />
           <MetricCard label="Run mode" value={run.mode} />
@@ -256,6 +262,20 @@ export function RunReportView({ report }: { report: any }) {
               {run.errorMessage}
             </div>
           ) : null}
+        </CardContent>
+      </Card>
+
+      <Card className="border border-border/70 bg-card/80">
+        <CardHeader className="gap-3 border-b border-border/70">
+          <CardTitle className="text-base">Browser signals</CardTitle>
+          <CardDescription>
+            Console, network, and page runtime issues captured during the run.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 pt-4">
+          <InfoRow label="Console issues" value={consoleFindings.length.toString()} />
+          <InfoRow label="Network issues" value={networkFindings.length.toString()} />
+          <InfoRow label="Page errors" value={pageErrorFindings.length.toString()} />
         </CardContent>
       </Card>
 

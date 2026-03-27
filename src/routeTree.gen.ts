@@ -13,6 +13,7 @@ import { Route as ReviewBotRouteImport } from './routes/review-bot'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CredentialsRouteImport } from './routes/credentials'
+import { Route as BackgroundAgentsRouteImport } from './routes/background-agents'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 import { Route as HistoryRunIdRouteImport } from './routes/history_.$runId'
@@ -44,6 +45,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const CredentialsRoute = CredentialsRouteImport.update({
   id: '/credentials',
   path: '/credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BackgroundAgentsRoute = BackgroundAgentsRouteImport.update({
+  id: '/background-agents',
+  path: '/background-agents',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -110,6 +116,7 @@ const ApiGithubInstallCallbackRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/background-agents': typeof BackgroundAgentsRoute
   '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/background-agents': typeof BackgroundAgentsRoute
   '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
@@ -147,6 +155,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/background-agents': typeof BackgroundAgentsRoute
   '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/background-agents'
     | '/credentials'
     | '/dashboard'
     | '/history'
@@ -185,6 +195,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/background-agents'
     | '/credentials'
     | '/dashboard'
     | '/history'
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/background-agents'
     | '/credentials'
     | '/dashboard'
     | '/history'
@@ -222,6 +234,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BackgroundAgentsRoute: typeof BackgroundAgentsRoute
   CredentialsRoute: typeof CredentialsRoute
   DashboardRoute: typeof DashboardRoute
   HistoryRoute: typeof HistoryRoute
@@ -266,6 +279,13 @@ declare module '@tanstack/react-router' {
       path: '/credentials'
       fullPath: '/credentials'
       preLoaderRoute: typeof CredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/background-agents': {
+      id: '/background-agents'
+      path: '/background-agents'
+      fullPath: '/background-agents'
+      preLoaderRoute: typeof BackgroundAgentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -368,6 +388,7 @@ const ApiGithubInstallRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BackgroundAgentsRoute: BackgroundAgentsRoute,
   CredentialsRoute: CredentialsRoute,
   DashboardRoute: DashboardRoute,
   HistoryRoute: HistoryRoute,

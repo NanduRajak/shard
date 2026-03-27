@@ -32,7 +32,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { deleteRun } from "@/lib/delete-run"
-import { formatSessionDuration } from "@/lib/run-report"
+import { describeBrowserProvider, formatSessionDuration } from "@/lib/run-report"
 import { env } from "~/env"
 
 export const Route = createFileRoute("/history")({
@@ -130,6 +130,9 @@ function HistoryPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge status={run.status} />
                     <Badge variant="outline">{run.finalScore?.toFixed(0) ?? "Pending"}</Badge>
+                    {run.executionMode === "background" ? (
+                      <Badge variant="secondary">Background agent</Badge>
+                    ) : null}
                   </div>
                   <p className="break-all text-sm font-medium text-foreground">{run.url}</p>
                   <p className="text-sm text-muted-foreground">
@@ -137,7 +140,9 @@ function HistoryPage() {
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline">{run.mode}</Badge>
-                    <Badge variant="outline">{isSteelRun ? "Steel cloud" : "Local Chrome"}</Badge>
+                    <Badge variant="outline">
+                      {describeBrowserProvider(run.browserProvider)}
+                    </Badge>
                     {run.goalStatus && run.goalStatus !== "not_requested" ? (
                       <Badge variant="outline">{run.goalStatus.replaceAll("_", " ")}</Badge>
                     ) : null}

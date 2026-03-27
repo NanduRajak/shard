@@ -7,8 +7,10 @@ import {
 } from "@/lib/credential-url"
 
 export type CredentialFormInput = {
+  isDefault: boolean
   namespace: string
   password: string
+  profileLabel: string
   totpSecret?: string
   username: string
   website: string
@@ -16,6 +18,7 @@ export type CredentialFormInput = {
 
 async function validateCredentialInput(data: CredentialFormInput) {
   const { encryptCredentialValue } = await import("@/lib/credential-crypto")
+  const profileLabel = data.profileLabel.trim()
   const namespace = normalizeCredentialNamespace(data.namespace)
   const username = data.username.trim()
   const normalizedWebsite = normalizeCredentialWebsite(data.website)
@@ -30,6 +33,10 @@ async function validateCredentialInput(data: CredentialFormInput) {
     throw new Error("Website must be a full http:// or https:// URL.")
   }
 
+  if (!profileLabel) {
+    throw new Error("Profile name is required.")
+  }
+
   if (!username) {
     throw new Error("Username is required.")
   }
@@ -39,9 +46,11 @@ async function validateCredentialInput(data: CredentialFormInput) {
   }
 
   return {
+    isDefault: data.isDefault,
     namespace,
     origin: normalizedWebsite.origin,
     passwordEncrypted: await encryptCredentialValue(password),
+    profileLabel,
     totpSecretEncrypted: totpSecret
       ? await encryptCredentialValue(totpSecret)
       : undefined,
@@ -85,9 +94,45 @@ export async function getDecryptedCredentialForOrigin({
   const { decryptCredentialValue } = await import("@/lib/credential-crypto")
 
   return {
+    isDefault: credential.isDefault ?? false,
     namespace: credential.namespace,
     origin: credential.origin,
     password: await decryptCredentialValue(credential.passwordEncrypted),
+    profileLabel: credential.profileLabel ?? credential.username,
+    totpSecret: credential.totpSecretEncrypted
+      ? await decryptCredentialValue(credential.totpSecretEncrypted)
+      : undefined,
+    username: credential.username,
+    website: credential.website,
+  }
+}
+
+export async function getDecryptedCredentialProfileById({
+  convex,
+  credentialId,
+}: {
+  convex: {
+    query: (...args: any[]) => Promise<any>
+  }
+  credentialId: Id<"credentials">
+}) {
+  const credential = await convex.query(api.credentials.getCredentialProfileForRuntime, {
+    credentialId,
+  })
+
+  if (!credential) {
+    return null
+  }
+
+  const { decryptCredentialValue } = await import("@/lib/credential-crypto")
+
+  return {
+    _id: credential._id,
+    isDefault: credential.isDefault ?? false,
+    namespace: credential.namespace,
+    origin: credential.origin,
+    password: await decryptCredentialValue(credential.passwordEncrypted),
+    profileLabel: credential.profileLabel ?? credential.username,
     totpSecret: credential.totpSecretEncrypted
       ? await decryptCredentialValue(credential.totpSecretEncrypted)
       : undefined,
@@ -165,8 +210,10 @@ export const getCredentialForEdit = createServerFn({ method: "POST" })
 
     return {
       credentialId: credential._id,
+      isDefault: credential.isDefault ?? false,
       namespace: credential.namespace,
       password: await decryptCredentialValue(credential.passwordEncrypted),
+      profileLabel: credential.profileLabel ?? credential.username,
       totpSecret: credential.totpSecretEncrypted
         ? await decryptCredentialValue(credential.totpSecretEncrypted)
         : "",

@@ -8,6 +8,7 @@ import {
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
 import { TanStackDevtools } from "@tanstack/react-devtools"
 import {
+  IconStack2,
   IconHome2,
   IconLayoutDashboard,
   IconMessage2Bolt,
@@ -18,7 +19,6 @@ import { AppProviders } from "@/components/app-providers"
 import { Toaster } from "@/components/ui/sonner"
 import { AppSidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeProvider } from "@/components/theme-provider"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { env } from "~/env"
 
@@ -29,17 +29,8 @@ void env.VITE_CONVEX_URL
 const themeInitScript = `
   (() => {
     try {
-      const themeKey = "shard-theme"
-      const storedTheme = window.localStorage.getItem(themeKey)
-      const theme =
-        storedTheme === "light" || storedTheme === "dark"
-          ? storedTheme
-          : window.matchMedia("(prefers-color-scheme: dark)").matches
-            ? "dark"
-            : "light"
-
-      document.documentElement.classList.toggle("dark", theme === "dark")
-      document.documentElement.style.colorScheme = theme
+      document.documentElement.classList.add("dark")
+      document.documentElement.style.colorScheme = "dark"
     } catch {}
   })();
 `
@@ -90,6 +81,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     if (path === "/") return { title: "Home", icon: IconHome2 }
     if (path.startsWith("/review-bot")) return { title: "Review Bot", icon: IconMessage2Bolt }
     if (path.startsWith("/dashboard")) return { title: "Dashboard", icon: IconLayoutDashboard }
+    if (path.startsWith("/background-agents")) return { title: "Background Agents", icon: IconStack2 }
     if (path.startsWith("/credentials")) return { title: "Credentials", icon: IconKey }
     if (path.startsWith("/history")) return { title: "History", icon: IconHistory }
 
@@ -123,7 +115,6 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                         </h1>
                       </div>
                     </div>
-                    <ThemeToggle />
                   </div>
                 </header>
                 <div className="flex-1 px-4 py-4 md:px-6 md:py-6">

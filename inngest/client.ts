@@ -1,5 +1,5 @@
 import { prReview } from "./pr-review"
-import { qaRun } from "./qa-run"
+import { backgroundQaRun, qaRun } from "./qa-run"
 
-export const functions = [qaRun, prReview]
+export const functions = [qaRun, backgroundQaRun, prReview]
 export { inngest } from "./core"
