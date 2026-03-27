@@ -19,6 +19,7 @@ export const serverEnv = createEnv({
     INNGEST_EVENT_KEY: z.string().min(1).optional(),
     INNGEST_SERVE_ORIGIN: z.url().optional(),
     INNGEST_SIGNING_KEY: z.string().min(1).optional(),
+    LOCAL_HELPER_SECRET: z.string().min(16).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
     OPENAI_MODEL: z.string().min(1).optional(),
     REVIEW_BOT_SECRET: z.string().min(16).optional(),

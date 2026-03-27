@@ -40,6 +40,7 @@ const DEFAULT_MODEL = serverEnv.GEMINI_MODEL ?? "gemini-2.5-flash"
 
 type RunRequestedEvent = {
   data: {
+    browserProvider: "local_chrome" | "steel"
     credentialNamespace?: string
     instructions?: string
     mode: "explore" | "task"
@@ -152,12 +153,19 @@ export const qaRun = inngest.createFunction(
 )
 
 export async function runQaWorkflow({
+  browserProvider,
   credentialNamespace,
   instructions,
   mode,
   runId,
   url,
 }: RunRequestedEvent["data"]) {
+  if (browserProvider === "local_chrome") {
+    throw new NonRetriableError(
+      "Local Chrome runs must be claimed by the local helper and cannot execute in the Steel/Inngest worker.",
+    )
+  }
+
   const convex = createConvexServerClient()
 
   let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | null = null
@@ -218,6 +226,7 @@ export async function runQaWorkflow({
       const debugUrl = steelSession.debugUrl ?? steelSession.sessionViewerUrl
       sessionDocId = await convex.mutation(api.runtime.createSession, {
         runId,
+        provider: "steel",
         externalSessionId: steelSession.id,
         status: "creating",
         debugUrl,

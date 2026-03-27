@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router"
 import { convexQuery } from "@convex-dev/react-query"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
+  IconBrowser,
   IconClock,
   IconCircleCheck,
   IconCircleX,
@@ -125,14 +126,21 @@ function RunPage() {
   const { artifacts, executionState, run, runEvents, session } = report
   const isActive = isActiveRunStatus(run.status)
   const timeline = sortTimelineEvents(runEvents as RunEvent[])
-  const liveEmbedUrl = buildSteelEmbedUrl(session?.debugUrl)
+  const isSteelRun = (run.browserProvider ?? "steel") === "steel"
+  const liveEmbedUrl = isSteelRun ? buildSteelEmbedUrl(session?.debugUrl) : null
   const latestScreenshot = (artifacts as RunArtifact[]).find(
     (artifact) => artifact.type === "screenshot",
   )
-  const snapshotTitle = isActive ? "Live session" : "Final page snapshot"
-  const snapshotDescription = isActive
-    ? "Steel mirrors the exact browser session the Playwright QA worker is controlling in real time."
-    : "The browser session has ended. This snapshot shows the latest page screenshot captured during the run."
+  const snapshotTitle = !isActive
+    ? "Final page snapshot"
+    : isSteelRun
+      ? "Live cloud session"
+      : "Local browser status"
+  const snapshotDescription = !isActive
+    ? "The browser session has ended. This snapshot shows the latest page screenshot captured during the run."
+    : isSteelRun
+      ? "Steel mirrors the exact browser session the autonomous QA runner is controlling in real time."
+      : "The agent is driving your own Chrome window. Watch your browser directly while Shard streams steps and captures screenshots here."
   const runLabel = describeRunLabel(run.status)
 
   return (
@@ -184,6 +192,10 @@ function RunPage() {
           <div className="grid gap-3 rounded-[1.5rem] border border-border/70 bg-background/60 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] md:grid-cols-2 xl:grid-cols-5">
             <RunMetaRow label="Step" value={run.currentStep ?? "Queued for scan"} />
             <RunMetaRow label="URL" value={run.currentUrl ?? run.url} />
+            <RunMetaRow
+              label="Browser"
+              value={run.browserProvider === "local_chrome" ? "local Chrome" : "Steel cloud"}
+            />
             <RunMetaRow label="Session" value={session?.status ?? "Not created yet"} />
             <RunMetaRow label="Status" value={run.status} />
             <RunMetaRow
@@ -199,7 +211,7 @@ function RunPage() {
           <CardHeader className="shrink-0 gap-2 border-b border-border/70 bg-card/95">
             <CardTitle className="text-base">Agent output</CardTitle>
             <CardDescription className="text-pretty">
-              Playwright actions, QA decisions, findings, and citations from the live worker session.
+              Playwright actions, QA decisions, findings, and citations from the live runner session.
             </CardDescription>
           </CardHeader>
           <CardContent ref={transcriptRef} className="h-0 min-h-0 flex-1 overflow-y-auto p-4">
@@ -271,7 +283,7 @@ function RunPage() {
               <PanelState
                 icon={<IconRadar2 className="size-4" />}
                 title="Waiting for transcript"
-                body="The worker has not emitted any runtime events yet."
+                body="The run has not emitted any runtime events yet."
               />
             )}
           </CardContent>
@@ -298,10 +310,17 @@ function RunPage() {
             ) : !isActive ? (
               <SnapshotState
                 runId={typedRunId}
+                browserProvider={run.browserProvider ?? "steel"}
+                screenshot={latestScreenshot}
+              />
+            ) : executionState === "session_active" ? (
+              <LocalSessionState
+                currentUrl={run.currentUrl ?? run.url}
                 screenshot={latestScreenshot}
               />
             ) : (
               <PreviewState
+                browserProvider={run.browserProvider ?? "steel"}
                 executionState={executionState}
                 replayUrl={session?.replayUrl}
               />
@@ -314,12 +333,15 @@ function RunPage() {
 }
 
 function PreviewState({
+  browserProvider,
   executionState,
   replayUrl,
 }: {
+  browserProvider: "local_chrome" | "steel"
   executionState:
     | "preview_active"
     | "queued"
+    | "session_active"
     | "session_creating"
     | "terminal"
     | "waiting_for_worker"
@@ -331,8 +353,16 @@ function PreviewState({
     return (
       <PanelState
         icon={<IconLoader3 className="size-5 animate-spin" />}
-        title="Creating Steel session"
-        body="The worker is running and setting up the remote browser. The preview will appear as soon as Steel finishes provisioning."
+        title={
+          browserProvider === "local_chrome"
+            ? "Attaching local Chrome session"
+            : "Creating cloud browser session"
+        }
+        body={
+          browserProvider === "local_chrome"
+            ? "The local helper is connecting through Chrome DevTools MCP. Chrome may ask you to approve the debugging session."
+            : "The runner is setting up the remote browser. The preview will appear as soon as the session is ready."
+        }
       />
     )
   }
@@ -341,8 +371,16 @@ function PreviewState({
     return (
       <PanelState
         icon={<IconSatellite className="size-5" />}
-        title="Worker picked up the run"
-        body="The job is executing, but Steel session metadata has not been published yet."
+        title={
+          browserProvider === "local_chrome"
+            ? "Local helper picked up the run"
+            : "Runner picked up the run"
+        }
+        body={
+          browserProvider === "local_chrome"
+            ? "The local helper is preparing Chrome DevTools MCP and will begin driving your browser shortly."
+            : "The job is executing, but live session metadata has not been published yet."
+        }
       />
     )
   }
@@ -351,8 +389,16 @@ function PreviewState({
     return (
       <PanelState
         icon={<IconClock className="size-5" />}
-        title="Queued and waiting for worker"
-        body="The queue is reachable, but no background worker has started this job yet."
+        title={
+          browserProvider === "local_chrome"
+            ? "Queued and waiting for local helper"
+            : "Queued and waiting for runner"
+        }
+        body={
+          browserProvider === "local_chrome"
+            ? "The run is ready, but no healthy local helper has claimed it yet."
+            : "The queue is reachable, but no background runner has started this job yet."
+        }
       />
     )
   }
@@ -361,8 +407,16 @@ function PreviewState({
     return (
       <PanelState
         icon={<IconCircleX className="size-5" />}
-        title="Background worker unreachable"
-        body="The run is still queued and the local Inngest dev server is not responding. Start the worker to continue this run."
+        title={
+          browserProvider === "local_chrome"
+            ? "Local helper unavailable"
+            : "Background runner unreachable"
+        }
+        body={
+          browserProvider === "local_chrome"
+            ? "The run is still queued and no local helper heartbeat is available. Make sure Bun is installed, then start `bun run local-helper` and keep Chrome open."
+            : "The run is still queued and the local Inngest dev server is not responding. Start the runner to continue this run."
+        }
       />
     )
   }
@@ -387,9 +441,11 @@ function PreviewState({
 }
 
 function SnapshotState({
+  browserProvider,
   runId,
   screenshot,
 }: {
+  browserProvider: "local_chrome" | "steel"
   runId: Id<"runs">
   screenshot?: RunArtifact
 }) {
@@ -427,12 +483,16 @@ function SnapshotState({
   }
 
   return (
-    <PanelState
-      icon={<IconCircleCheck className="size-5" />}
-      title="Run finished"
-      body="The session has ended and no screenshot was stored for the final state. Open the archived report for the replay and captured artifacts."
-      action={
-        <Link
+      <PanelState
+        icon={<IconCircleCheck className="size-5" />}
+        title="Run finished"
+        body={
+          browserProvider === "local_chrome"
+            ? "The session has ended and no screenshot was stored for the final state. Open the archived report for captured artifacts and findings."
+            : "The session has ended and no screenshot was stored for the final state. Open the archived report for the replay and captured artifacts."
+        }
+        action={
+          <Link
           to="/history/$runId"
           params={{ runId }}
           className={buttonVariants({
@@ -444,6 +504,37 @@ function SnapshotState({
           <IconExternalLink className="size-4" />
         </Link>
       }
+    />
+  )
+}
+
+function LocalSessionState({
+  currentUrl,
+  screenshot,
+}: {
+  currentUrl: string
+  screenshot?: RunArtifact
+}) {
+  if (screenshot?.url) {
+    return (
+      <div className="flex h-full min-h-[26rem] flex-col gap-4">
+        <img
+          alt={screenshot.title ?? "Latest local session screenshot"}
+          src={screenshot.url}
+          className="h-full min-h-0 w-full rounded-[1.6rem] border border-border/70 bg-background object-cover shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
+        />
+        <div className="rounded-[1.4rem] border border-border/70 bg-background/70 px-4 py-3 text-sm text-muted-foreground">
+          Watching your own Chrome window live. Shard keeps the latest captured screenshot here and is currently focused on <span className="break-all text-foreground">{currentUrl}</span>.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <PanelState
+      icon={<IconBrowser className="size-5" />}
+      title="Local Chrome is live"
+      body={`The agent is driving your browser directly. Watch Chrome for live actions while Shard continues streaming progress here.\n\nCurrent URL: ${currentUrl}`}
     />
   )
 }

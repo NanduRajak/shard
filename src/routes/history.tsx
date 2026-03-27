@@ -117,7 +117,10 @@ function HistoryPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 pt-4">
-          {runs.map(({ currentAuditTrend, latestReportArtifact, run, session, sessionDurationMs }) => (
+          {runs.map(({ currentAuditTrend, latestReportArtifact, latestScreenshot, run, session, sessionDurationMs }) => {
+            const isSteelRun = (run.browserProvider ?? "steel") === "steel"
+
+            return (
             <article
               key={run._id}
               className="rounded-2xl border border-border/70 bg-background/70 p-4"
@@ -134,6 +137,7 @@ function HistoryPage() {
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline">{run.mode}</Badge>
+                    <Badge variant="outline">{isSteelRun ? "Steel cloud" : "Local Chrome"}</Badge>
                     {run.goalStatus && run.goalStatus !== "not_requested" ? (
                       <Badge variant="outline">{run.goalStatus.replaceAll("_", " ")}</Badge>
                     ) : null}
@@ -186,8 +190,16 @@ function HistoryPage() {
                   value={formatTrendMetric(currentAuditTrend.accessibility.delta)}
                 />
                 <HistoryMetric
-                  label="Replay"
-                  value={session?.replayUrl ? "Available" : "Missing"}
+                  label={isSteelRun ? "Replay" : "Latest screenshot"}
+                  value={
+                    isSteelRun
+                      ? session?.replayUrl
+                        ? "Available"
+                        : "Missing"
+                      : latestScreenshot
+                        ? "Available"
+                        : "Missing"
+                  }
                 />
                 <HistoryMetric
                   label="Report artifact"
@@ -202,7 +214,8 @@ function HistoryPage() {
                 <p className="mt-4 text-sm leading-6 text-muted-foreground">{run.goalSummary}</p>
               ) : null}
             </article>
-          ))}
+            )
+          })}
         </CardContent>
       </Card>
       <Dialog

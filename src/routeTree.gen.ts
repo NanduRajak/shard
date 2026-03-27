@@ -17,6 +17,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 import { Route as HistoryRunIdRouteImport } from './routes/history_.$runId'
 import { Route as ApiInngestRouteImport } from './routes/api.inngest'
+import { Route as ApiLocalHelperActionRouteImport } from './routes/api.local-helper.$action'
 import { Route as ApiGithubWebhookRouteImport } from './routes/api/github/webhook'
 import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
 import { Route as ApiGithubConnectRouteImport } from './routes/api/github/connect'
@@ -63,6 +64,11 @@ const HistoryRunIdRoute = HistoryRunIdRouteImport.update({
 const ApiInngestRoute = ApiInngestRouteImport.update({
   id: '/api/inngest',
   path: '/api/inngest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiLocalHelperActionRoute = ApiLocalHelperActionRouteImport.update({
+  id: '/api/local-helper/$action',
+  path: '/api/local-helper/$action',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiGithubWebhookRoute = ApiGithubWebhookRouteImport.update({
@@ -115,6 +121,7 @@ export interface FileRoutesByFullPath {
   '/api/github/connect': typeof ApiGithubConnectRoute
   '/api/github/install': typeof ApiGithubInstallRouteWithChildren
   '/api/github/webhook': typeof ApiGithubWebhookRoute
+  '/api/local-helper/$action': typeof ApiLocalHelperActionRoute
   '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
   '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
   '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
@@ -132,6 +139,7 @@ export interface FileRoutesByTo {
   '/api/github/connect': typeof ApiGithubConnectRoute
   '/api/github/install': typeof ApiGithubInstallRouteWithChildren
   '/api/github/webhook': typeof ApiGithubWebhookRoute
+  '/api/local-helper/$action': typeof ApiLocalHelperActionRoute
   '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
   '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
   '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
@@ -150,6 +158,7 @@ export interface FileRoutesById {
   '/api/github/connect': typeof ApiGithubConnectRoute
   '/api/github/install': typeof ApiGithubInstallRouteWithChildren
   '/api/github/webhook': typeof ApiGithubWebhookRoute
+  '/api/local-helper/$action': typeof ApiLocalHelperActionRoute
   '/api/github/install/callback': typeof ApiGithubInstallCallbackRoute
   '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
   '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
@@ -169,6 +178,7 @@ export interface FileRouteTypes {
     | '/api/github/connect'
     | '/api/github/install'
     | '/api/github/webhook'
+    | '/api/local-helper/$action'
     | '/api/github/install/callback'
     | '/api/steel/$sessionId/hls'
     | '/api/steel/$sessionId/media'
@@ -186,6 +196,7 @@ export interface FileRouteTypes {
     | '/api/github/connect'
     | '/api/github/install'
     | '/api/github/webhook'
+    | '/api/local-helper/$action'
     | '/api/github/install/callback'
     | '/api/steel/$sessionId/hls'
     | '/api/steel/$sessionId/media'
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
     | '/api/github/connect'
     | '/api/github/install'
     | '/api/github/webhook'
+    | '/api/local-helper/$action'
     | '/api/github/install/callback'
     | '/api/steel/$sessionId/hls'
     | '/api/steel/$sessionId/media'
@@ -221,6 +233,7 @@ export interface RootRouteChildren {
   ApiGithubConnectRoute: typeof ApiGithubConnectRoute
   ApiGithubInstallRoute: typeof ApiGithubInstallRouteWithChildren
   ApiGithubWebhookRoute: typeof ApiGithubWebhookRoute
+  ApiLocalHelperActionRoute: typeof ApiLocalHelperActionRoute
   ApiSteelSessionIdHlsRoute: typeof ApiSteelSessionIdHlsRoute
   ApiSteelSessionIdMediaRoute: typeof ApiSteelSessionIdMediaRoute
 }
@@ -281,6 +294,13 @@ declare module '@tanstack/react-router' {
       path: '/api/inngest'
       fullPath: '/api/inngest'
       preLoaderRoute: typeof ApiInngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/local-helper/$action': {
+      id: '/api/local-helper/$action'
+      path: '/api/local-helper/$action'
+      fullPath: '/api/local-helper/$action'
+      preLoaderRoute: typeof ApiLocalHelperActionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/github/webhook': {
@@ -359,6 +379,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiGithubConnectRoute: ApiGithubConnectRoute,
   ApiGithubInstallRoute: ApiGithubInstallRouteWithChildren,
   ApiGithubWebhookRoute: ApiGithubWebhookRoute,
+  ApiLocalHelperActionRoute: ApiLocalHelperActionRoute,
   ApiSteelSessionIdHlsRoute: ApiSteelSessionIdHlsRoute,
   ApiSteelSessionIdMediaRoute: ApiSteelSessionIdMediaRoute,
 }

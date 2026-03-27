@@ -10,6 +10,7 @@ describe("prepareCreateRunPayload", () => {
     ).toEqual({
       url: "https://example.com/",
       mode: "explore",
+      browserProvider: "steel",
       credentialNamespace: undefined,
       instructions: undefined,
     })
@@ -24,8 +25,24 @@ describe("prepareCreateRunPayload", () => {
     ).toEqual({
       url: "https://shop.example.com/search",
       mode: "task",
+      browserProvider: "steel",
       credentialNamespace: "Store Admin",
       instructions: "Open this site and search for headphones",
+    })
+  })
+
+  it("supports local Chrome runs", () => {
+    expect(
+      prepareCreateRunPayload({
+        prompt: "https://example.com",
+        browserProvider: "local_chrome",
+      }),
+    ).toEqual({
+      url: "https://example.com/",
+      mode: "explore",
+      browserProvider: "local_chrome",
+      credentialNamespace: undefined,
+      instructions: undefined,
     })
   })
 

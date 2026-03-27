@@ -16,7 +16,10 @@ export const deleteRun = createServerFn({ method: "POST" })
       runId: data.runId,
     })
 
-    if (report?.session?.externalSessionId) {
+    if (
+      report?.session?.externalSessionId &&
+      (report.session.provider ?? "steel") === "steel"
+    ) {
       const steel = new SteelClient({
         steelAPIKey: serverEnv.STEEL_API_KEY,
       })

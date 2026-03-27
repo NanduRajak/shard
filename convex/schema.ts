@@ -15,6 +15,11 @@ const runMode = v.union(
   v.literal("task"),
 )
 
+const browserProvider = v.union(
+  v.literal("steel"),
+  v.literal("local_chrome"),
+)
+
 const runGoalStatus = v.union(
   v.literal("not_requested"),
   v.literal("completed"),
@@ -97,6 +102,13 @@ const sessionStatus = v.union(
   v.literal("failed"),
 )
 
+const localHelperStatus = v.union(
+  v.literal("idle"),
+  v.literal("busy"),
+  v.literal("offline"),
+  v.literal("error"),
+)
+
 const runEventKind = v.union(
   v.literal("status"),
   v.literal("session"),
@@ -125,6 +137,7 @@ export default defineSchema({
   runs: defineTable({
     url: v.string(),
     mode: v.optional(runMode),
+    browserProvider: v.optional(browserProvider),
     credentialNamespace: v.optional(v.string()),
     instructions: v.optional(v.string()),
     status: runStatus,
@@ -250,7 +263,7 @@ export default defineSchema({
 
   sessions: defineTable({
     runId: v.id("runs"),
-    provider: v.literal("steel"),
+    provider: browserProvider,
     externalSessionId: v.string(),
     status: sessionStatus,
     debugUrl: v.optional(v.string()),
@@ -262,6 +275,20 @@ export default defineSchema({
     .index("by_run", ["runId"])
     .index("by_external_session_id", ["externalSessionId"])
     .index("by_run_and_started_at", ["runId", "startedAt"]),
+
+  localHelpers: defineTable({
+    helperId: v.string(),
+    machineLabel: v.string(),
+    status: localHelperStatus,
+    version: v.optional(v.string()),
+    currentClaimedRunId: v.optional(v.id("runs")),
+    lastHeartbeatAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_helper_id", ["helperId"])
+    .index("by_updated_at", ["updatedAt"])
+    .index("by_status", ["status"]),
 
   trackedRepos: defineTable({
     connectionId: v.id("githubConnections"),

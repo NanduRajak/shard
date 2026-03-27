@@ -13,6 +13,11 @@ const runStatus = v.union(
   v.literal("cancelled"),
 )
 
+const browserProvider = v.union(
+  v.literal("steel"),
+  v.literal("local_chrome"),
+)
+
 const runGoalStatus = v.union(
   v.literal("not_requested"),
   v.literal("completed"),
@@ -32,6 +37,13 @@ const sessionStatus = v.union(
   v.literal("active"),
   v.literal("closed"),
   v.literal("failed"),
+)
+
+const localHelperStatus = v.union(
+  v.literal("idle"),
+  v.literal("busy"),
+  v.literal("offline"),
+  v.literal("error"),
 )
 
 const runEventKind = v.union(
@@ -151,6 +163,24 @@ function normalizeQueueState(
   queueStateValue?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable",
 ) {
   return queueStateValue ?? "pending"
+}
+
+function normalizeBrowserProvider(
+  provider?: "local_chrome" | "steel",
+) {
+  return provider ?? "steel"
+}
+
+function normalizeLocalHelperStatus(
+  status?: "busy" | "error" | "idle" | "offline",
+) {
+  return status ?? "offline"
+}
+
+function isActiveRun(
+  status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting",
+) {
+  return status === "queued" || status === "starting" || status === "running"
 }
 
 export const resetRunState = mutation({
@@ -299,7 +329,17 @@ export const requestRunStop = mutation({
 export const clearAllData = mutation({
   args: {},
   handler: async (ctx) => {
-    const [runs, findings, artifacts, prReviews, sessions, runEvents, performanceAudits, credentials] =
+    const [
+      runs,
+      findings,
+      artifacts,
+      prReviews,
+      sessions,
+      runEvents,
+      performanceAudits,
+      credentials,
+      localHelpers,
+    ] =
       await Promise.all([
         ctx.db.query("runs").collect(),
         ctx.db.query("findings").collect(),
@@ -309,6 +349,7 @@ export const clearAllData = mutation({
         ctx.db.query("runEvents").collect(),
         ctx.db.query("performanceAudits").collect(),
         ctx.db.query("credentials").collect(),
+        ctx.db.query("localHelpers").collect(),
       ])
 
     await Promise.all(
@@ -327,6 +368,7 @@ export const clearAllData = mutation({
       ...runEvents.map((doc) => ctx.db.delete(doc._id)),
       ...performanceAudits.map((doc) => ctx.db.delete(doc._id)),
       ...credentials.map((doc) => ctx.db.delete(doc._id)),
+      ...localHelpers.map((doc) => ctx.db.delete(doc._id)),
       ...runs.map((doc) => ctx.db.delete(doc._id)),
     ])
 
@@ -341,6 +383,7 @@ export const clearAllData = mutation({
         runEvents: runEvents.length,
         runs: runs.length,
         sessions: sessions.length,
+        localHelpers: localHelpers.length,
       },
     }
   },
@@ -357,7 +400,7 @@ export const deleteRun = mutation({
       return { ok: false as const, reason: "not_found" as const }
     }
 
-    const [findings, artifacts, sessions, runEvents, performanceAudits, prReviews] =
+    const [findings, artifacts, sessions, runEvents, performanceAudits, prReviews, localHelpers] =
       await Promise.all([
         ctx.db
           .query("findings")
@@ -380,9 +423,13 @@ export const deleteRun = mutation({
           .withIndex("by_run", (q) => q.eq("runId", args.runId))
           .collect(),
         ctx.db.query("prReviews").collect(),
+        ctx.db.query("localHelpers").collect(),
       ])
 
     const linkedReviews = prReviews.filter((review) => review.browserRunId === args.runId)
+    const claimedHelpers = localHelpers.filter(
+      (helper) => helper.currentClaimedRunId === args.runId,
+    )
 
     await Promise.all(
       artifacts.map(async (artifact) => {
@@ -396,6 +443,13 @@ export const deleteRun = mutation({
       ...linkedReviews.map((review) =>
         ctx.db.patch(review._id, {
           browserRunId: undefined,
+          updatedAt: Date.now(),
+        }),
+      ),
+      ...claimedHelpers.map((helper) =>
+        ctx.db.patch(helper._id, {
+          currentClaimedRunId: undefined,
+          status: "idle",
           updatedAt: Date.now(),
         }),
       ),
@@ -417,6 +471,7 @@ export const deleteRun = mutation({
         prReviewsCleared: linkedReviews.length,
         runEvents: runEvents.length,
         sessions: sessions.length,
+        localHelpersReleased: claimedHelpers.length,
       },
     }
   },
@@ -434,12 +489,201 @@ export const getRunExecutionState = query({
     }
 
     return {
+      browserProvider: normalizeBrowserProvider(run.browserProvider),
       status: run.status,
       queueState: normalizeQueueState(run.queueState),
       startedAt: run.startedAt,
       stopRequestedAt: run.stopRequestedAt ?? null,
       currentUrl: run.currentUrl ?? null,
     }
+  },
+})
+
+const LOCAL_HELPER_STALE_MS = 30_000
+
+export const getLocalHelperOverview = query({
+  args: {},
+  handler: async (ctx) => {
+    const helper = await ctx.db
+      .query("localHelpers")
+      .withIndex("by_updated_at")
+      .order("desc")
+      .first()
+
+    if (!helper) {
+      return {
+        available: false,
+        helper: null,
+        lastHeartbeatAt: null,
+      }
+    }
+
+    const isFresh = Date.now() - helper.lastHeartbeatAt < LOCAL_HELPER_STALE_MS
+    const normalizedStatus = isFresh ? helper.status : ("offline" as const)
+
+    return {
+      available:
+        normalizeLocalHelperStatus(normalizedStatus) === "idle" ||
+        normalizeLocalHelperStatus(normalizedStatus) === "busy",
+      helper: {
+        ...helper,
+        status: normalizedStatus,
+      },
+      lastHeartbeatAt: helper.lastHeartbeatAt,
+    }
+  },
+})
+
+export const upsertLocalHelperHeartbeat = mutation({
+  args: {
+    helperId: v.string(),
+    machineLabel: v.string(),
+    version: v.optional(v.string()),
+    status: localHelperStatus,
+    currentClaimedRunId: v.optional(v.id("runs")),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const existing = await ctx.db
+      .query("localHelpers")
+      .withIndex("by_helper_id", (q) => q.eq("helperId", args.helperId))
+      .first()
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        machineLabel: args.machineLabel,
+        version: args.version,
+        status: args.status,
+        currentClaimedRunId: args.currentClaimedRunId,
+        lastHeartbeatAt: now,
+        updatedAt: now,
+      })
+
+      return existing._id
+    }
+
+    return await ctx.db.insert("localHelpers", {
+      helperId: args.helperId,
+      machineLabel: args.machineLabel,
+      version: args.version,
+      status: args.status,
+      currentClaimedRunId: args.currentClaimedRunId,
+      lastHeartbeatAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+  },
+})
+
+export const claimNextLocalRun = mutation({
+  args: {
+    helperId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const helper = await ctx.db
+      .query("localHelpers")
+      .withIndex("by_helper_id", (q) => q.eq("helperId", args.helperId))
+      .first()
+
+    if (!helper) {
+      return { ok: false as const, reason: "helper_not_registered" as const }
+    }
+
+    if (helper.currentClaimedRunId) {
+      const existingRun = await ctx.db.get(helper.currentClaimedRunId)
+
+      if (existingRun && isActiveRun(existingRun.status)) {
+        return {
+          ok: true as const,
+          run: {
+            ...existingRun,
+            browserProvider: normalizeBrowserProvider(existingRun.browserProvider),
+            mode: existingRun.mode ?? "explore",
+          },
+        }
+      }
+    }
+
+    const queuedRuns = await ctx.db
+      .query("runs")
+      .withIndex("by_started_at")
+      .order("asc")
+      .collect()
+
+    const run = queuedRuns.find(
+      (candidate) =>
+        candidate.status === "queued" &&
+        normalizeBrowserProvider(candidate.browserProvider) === "local_chrome",
+    )
+
+    if (!run) {
+      await ctx.db.patch(helper._id, {
+        currentClaimedRunId: undefined,
+        status: "idle",
+        lastHeartbeatAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+
+      return { ok: true as const, run: null }
+    }
+
+    await ctx.db.patch(helper._id, {
+      currentClaimedRunId: run._id,
+      status: "busy",
+      lastHeartbeatAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    await ctx.db.patch(run._id, {
+      queueState: "picked_up",
+      updatedAt: Date.now(),
+    })
+
+    await ctx.db.insert("runEvents", {
+      runId: run._id,
+      kind: "system",
+      title: "Local helper picked up run",
+      body: `Local helper ${helper.machineLabel} claimed the run and is preparing Chrome DevTools MCP.`,
+      status: run.status,
+      pageUrl: run.currentUrl ?? run.url,
+      createdAt: Date.now(),
+    })
+
+    return {
+      ok: true as const,
+      run: {
+        ...run,
+        browserProvider: normalizeBrowserProvider(run.browserProvider),
+        mode: run.mode ?? "explore",
+      },
+    }
+  },
+})
+
+export const releaseLocalHelperClaim = mutation({
+  args: {
+    helperId: v.string(),
+    status: localHelperStatus,
+    currentClaimedRunId: v.optional(v.union(v.id("runs"), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const helper = await ctx.db
+      .query("localHelpers")
+      .withIndex("by_helper_id", (q) => q.eq("helperId", args.helperId))
+      .first()
+
+    if (!helper) {
+      return { ok: false as const, reason: "helper_not_registered" as const }
+    }
+
+    await ctx.db.patch(helper._id, {
+      currentClaimedRunId: args.currentClaimedRunId ?? undefined,
+      status: args.status,
+      lastHeartbeatAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    return { ok: true as const }
   },
 })
 
@@ -476,6 +720,7 @@ export const getSessionReplayAccess = query({
 export const createSession = mutation({
   args: {
     runId: v.id("runs"),
+    provider: browserProvider,
     externalSessionId: v.string(),
     status: sessionStatus,
     debugUrl: v.optional(v.string()),
@@ -486,7 +731,7 @@ export const createSession = mutation({
 
     return await ctx.db.insert("sessions", {
       runId: args.runId,
-      provider: "steel",
+      provider: args.provider,
       externalSessionId: args.externalSessionId,
       status: args.status,
       debugUrl: args.debugUrl,
@@ -726,10 +971,16 @@ export const getRunReport = query({
     return {
       run: {
         ...run,
+        browserProvider: normalizeBrowserProvider(run.browserProvider),
         mode: run.mode ?? "explore",
         queueState: normalizeQueueState(run.queueState),
       },
-      session,
+      session: session
+        ? {
+            ...session,
+            provider: normalizeBrowserProvider(session.provider),
+          }
+        : null,
       sessionDurationMs: getSessionDurationMs({
         runFinishedAt: run.finishedAt,
         runStartedAt: run.startedAt,
@@ -795,14 +1046,22 @@ export const listRuns = query({
         return {
           run: {
             ...run,
+            browserProvider: normalizeBrowserProvider(run.browserProvider),
             mode: run.mode ?? "explore",
           },
-          session,
+          session: session
+            ? {
+                ...session,
+                provider: normalizeBrowserProvider(session.provider),
+              }
+            : null,
           sessionDurationMs: getSessionDurationMs({
             runFinishedAt: run.finishedAt,
             runStartedAt: run.startedAt,
             session,
           }),
+          latestScreenshot:
+            artifacts.find((artifact) => artifact.type === "screenshot") ?? null,
           latestReportArtifact:
             artifacts.find((artifact) => artifact.type === "html-report") ??
             artifacts.find((artifact) => artifact.type === "trace") ??
@@ -853,7 +1112,10 @@ export const getDashboardRuns = query({
           : []
 
         return {
-          run,
+          run: {
+            ...run,
+            browserProvider: normalizeBrowserProvider(run.browserProvider),
+          },
           findingsCount: findings.length,
           currentAuditTrend: buildAuditTrend({
             currentAudits: audits,
@@ -889,11 +1151,13 @@ function buildExecutionState({
   session,
 }: {
   run: {
+    browserProvider?: "local_chrome" | "steel"
     queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
     status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
   }
   session:
     | {
+        provider?: "local_chrome" | "steel"
         replayUrl?: string
         status: "active" | "closed" | "creating" | "failed"
       }
@@ -903,8 +1167,14 @@ function buildExecutionState({
     return "terminal" as const
   }
 
-  if (session?.status === "active") {
+  const provider = normalizeBrowserProvider(session?.provider ?? run.browserProvider)
+
+  if (session?.status === "active" && provider === "steel") {
     return "preview_active" as const
+  }
+
+  if (session?.status === "active") {
+    return "session_active" as const
   }
 
   if (session?.status === "creating") {

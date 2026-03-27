@@ -42,6 +42,7 @@ export function RunReportView({ report }: { report: any }) {
     .sort((left: any, right: any) => right.score - left.score)
   const topFindings = sortedFindings.slice(0, 5)
   const sourceScores = Object.entries(scoreSummary.bySource) as Array<[string, number]>
+  const isSteelRun = (run.browserProvider ?? "steel") === "steel"
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -84,6 +85,10 @@ export function RunReportView({ report }: { report: any }) {
         <CardContent className="grid gap-4 pt-4 md:grid-cols-5">
           <MetricCard label="Final step" value={run.currentStep ?? "Finished"} />
           <MetricCard label="Last URL" value={run.currentUrl ?? run.url} />
+          <MetricCard
+            label="Browser backend"
+            value={isSteelRun ? "Steel cloud" : "Local Chrome"}
+          />
           <MetricCard label="Session" value={session?.status ?? "Not started"} />
           <MetricCard label="Run mode" value={run.mode} />
           <MetricCard label="Session duration" value={formatSessionDuration(sessionDurationMs)} />
@@ -124,27 +129,46 @@ export function RunReportView({ report }: { report: any }) {
         <CardContent className="space-y-4 pt-4">
           <EmptyStateCopy
             icon={<IconCircleCheck className="size-4" />}
-            title={session?.replayUrl ? "Replay is available" : "No replay stored"}
+            title={
+              isSteelRun
+                ? session?.replayUrl
+                  ? "Replay is available"
+                  : "No replay stored"
+                : screenshots.length
+                  ? "Session artifacts are available"
+                  : "No session replay stored"
+            }
             body={
-              session?.replayUrl
-                ? "The active browser session has been archived. Open the Steel replay or the latest HTML report below."
-                : "This run finished without a stored Steel replay URL."
+              isSteelRun
+                ? session?.replayUrl
+                  ? "The active browser session has been archived. Open the Steel replay or the latest HTML report below."
+                  : "This run finished without a stored Steel replay URL."
+                : screenshots.length
+                  ? "This local Chrome run finished with captured screenshots and the same shared QA report format."
+                  : "This local Chrome run finished without a replay stream. Review findings, screenshots, and report artifacts below."
             }
           />
           <div className="grid gap-3">
-            <InfoRow label="Replay" value={session?.replayUrl ?? "Not available yet"} />
+            <InfoRow
+              label={isSteelRun ? "Replay" : "Latest screenshot"}
+              value={
+                isSteelRun
+                  ? session?.replayUrl ?? "Not available yet"
+                  : screenshots[0]?.url ?? "Not available yet"
+              }
+            />
             <InfoRow label="Duration" value={formatSessionDuration(sessionDurationMs)} />
             <InfoRow
               label="Last update"
               value={formatDistanceToNow(run.updatedAt, { addSuffix: true })}
             />
           </div>
-          {session?.externalSessionId ? (
+          {isSteelRun && session?.externalSessionId ? (
             <SteelReplayPlayer sessionId={session.externalSessionId} />
           ) : null}
-          {session?.replayUrl || latestReportArtifact ? (
+          {session?.replayUrl || latestReportArtifact || (!isSteelRun && screenshots[0]?.url) ? (
             <div className="grid gap-2">
-              {session?.replayUrl ? (
+              {isSteelRun && session?.replayUrl ? (
                 <a
                   href={session.replayUrl}
                   target="_blank"
@@ -156,6 +180,20 @@ export function RunReportView({ report }: { report: any }) {
                 >
                   Open Steel replay
                   <IconExternalLink className="size-4" />
+                </a>
+              ) : null}
+              {!isSteelRun && screenshots[0]?.url ? (
+                <a
+                  href={screenshots[0].url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={buttonVariants({
+                    variant: "outline",
+                    className: "w-full justify-between rounded-2xl",
+                  })}
+                >
+                  Open latest screenshot
+                  <IconPhoto className="size-4" />
                 </a>
               ) : null}
               {latestReportArtifact?.url ? (

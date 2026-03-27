@@ -19,6 +19,7 @@ export type QueueState =
 export type ExecutionState =
   | "preview_active"
   | "queued"
+  | "session_active"
   | "session_creating"
   | "terminal"
   | "waiting_for_worker"
@@ -63,6 +64,8 @@ export function sortTimelineEvents<T extends TimelineEvent>(events: T[]) {
 
 export function describeExecutionState(executionState: ExecutionState) {
   switch (executionState) {
+    case "session_active":
+      return "active"
     case "session_creating":
       return "creating"
     case "worker_picked_up":

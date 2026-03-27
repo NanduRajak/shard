@@ -4,7 +4,11 @@ import { prepareCreateRunPayload } from "./run-request"
 
 export const createRun = createServerFn({ method: "POST" })
   .inputValidator(
-    (data: { credentialNamespace?: string | null; prompt: string }) => data,
+    (data: {
+      browserProvider?: "local_chrome" | "steel" | null
+      credentialNamespace?: string | null
+      prompt: string
+    }) => data,
   )
   .handler(async ({ data }) => {
     const payload = prepareCreateRunPayload(data)
@@ -18,7 +22,14 @@ export const createRun = createServerFn({ method: "POST" })
     const runId = await convex.mutation(api.runs.createRun, payload)
 
     try {
-      if (serverEnv.QA_DIRECT_RUN_FALLBACK === "1") {
+      if (payload.browserProvider === "local_chrome") {
+        await convex.mutation(api.runtime.updateRunQueueState, {
+          runId,
+          queueState: "waiting_for_worker",
+          title: "Waiting for local helper",
+          body: "The local run is queued and waiting for a healthy local helper to claim it.",
+        })
+      } else if (serverEnv.QA_DIRECT_RUN_FALLBACK === "1") {
         const { runQaWorkflow } = await import("../../inngest/qa-run")
 
         await convex.mutation(api.runtime.updateRunQueueState, {
