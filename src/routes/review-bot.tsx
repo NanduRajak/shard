@@ -466,17 +466,9 @@ function ReviewBotPage() {
             <CardHeader className="gap-3 border-b border-border/70">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="space-y-1">
-                  <span className="flex w-fit items-center gap-1.5 text-xs font-semibold tracking-widest uppercase text-muted-foreground/80">
-                    <IconShieldCheck className="size-4" />
-                    Shard
-                  </span>
                   <div className="relative w-fit pt-1">
                     <div className="flex items-center gap-2 pr-4">
-                      <img
-                        src="/shard-profile.jpeg"
-                        alt="Shard"
-                        className="size-8 rounded-xl object-cover"
-                      />
+                      <IconBrandGithub className="size-7 text-muted-foreground" />
                       <CardTitle className="text-3xl leading-tight">
                         {reviewBotState.connection.login}
                       </CardTitle>

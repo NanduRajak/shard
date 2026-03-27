@@ -3,34 +3,25 @@
 import { IconMoon, IconSun } from "@tabler/icons-react"
 
 import { useTheme } from "@/components/theme-provider"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Button } from "@/components/ui/button"
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
+  const nextTheme = theme === "dark" ? "light" : "dark"
 
   return (
-    <ToggleGroup
-      aria-label="Theme"
-      value={[theme]}
+    <Button
+      type="button"
       variant="outline"
-      size="sm"
-      spacing={1}
-      onValueChange={(value) => {
-        const nextTheme = value.at(-1)
-
-        if (nextTheme === "light" || nextTheme === "dark") {
-          setTheme(nextTheme)
-        }
+      size="icon"
+      aria-label="Theme"
+      title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      className="size-9 rounded-xl"
+      onClick={() => {
+        setTheme(nextTheme)
       }}
     >
-      <ToggleGroupItem value="light" aria-label="Light mode">
-        <IconSun data-icon="inline-start" />
-        Light
-      </ToggleGroupItem>
-      <ToggleGroupItem value="dark" aria-label="Dark mode">
-        <IconMoon data-icon="inline-start" />
-        Dark
-      </ToggleGroupItem>
-    </ToggleGroup>
+      {theme === "dark" ? <IconSun className="size-4" /> : <IconMoon className="size-4" />}
+    </Button>
   )
 }
