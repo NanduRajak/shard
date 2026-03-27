@@ -2,7 +2,7 @@ import {
   computeFindingScore,
   impactWeightForSource,
   type FindingSeverity,
-} from "./scoring"
+} from "./scoring.ts"
 
 type LighthouseCategoryId =
   | "performance"

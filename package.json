@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite dev --port 3000",
     "inngest:dev": "npx inngest-cli@latest dev -u http://localhost:3000/api/inngest",
-    "local-helper": "bun run scripts/local-helper.ts",
+    "local-helper": "node --env-file=.env --env-file=.env.local --experimental-strip-types scripts/local-helper.ts",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",

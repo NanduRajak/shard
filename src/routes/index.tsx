@@ -175,14 +175,7 @@ function App() {
                   </p>
                   <div className="mt-3 space-y-2 text-sm text-muted-foreground">
                     <p>
-                      Helper runtime: <code>Bun</code> is required for this CLI.
-                    </p>
-                    <p>
-                      Required env vars: <code>APP_BASE_URL</code>,{" "}
-                      <code>LOCAL_HELPER_SECRET</code>, <code>GEMINI_API_KEY</code>
-                    </p>
-                    <p>
-                      Start command: <code>bun run local-helper</code>
+                      Start command: <code>pnpm run local-helper</code>
                     </p>
                   </div>
                 </div>

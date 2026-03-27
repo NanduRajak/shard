@@ -10,7 +10,7 @@ import { google } from "@ai-sdk/google"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { z } from "zod"
-import { scoreLighthouseFinding } from "../src/lib/lighthouse-audits"
+import { scoreLighthouseFinding } from "../src/lib/lighthouse-audits.ts"
 import {
   buildActionSignature,
   isSameHostname,
@@ -18,13 +18,13 @@ import {
   shouldStopForNoOps,
   shouldStopForRepeatActions,
   wouldExceedPageLimit,
-} from "../src/lib/qa-guards"
-import { pickQaFallbackAction } from "../src/lib/qa-fallback"
+} from "../src/lib/qa-guards.ts"
+import { pickQaFallbackAction } from "../src/lib/qa-fallback.ts"
 import {
   buildScoreSummary,
   computeFindingScore,
   impactWeightForSource,
-} from "../src/lib/scoring"
+} from "../src/lib/scoring.ts"
 
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000
 const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000
@@ -1798,19 +1798,28 @@ function selectAuditUrls({
 }
 
 class RunCancelledError extends Error {
+  readonly currentUrl?: string
+
   constructor(
     message: string,
-    readonly currentUrl?: string,
+    currentUrl?: string,
   ) {
     super(message)
+    this.currentUrl = currentUrl
   }
 }
 
 class LocalHelperApi {
+  private readonly appBaseUrl: string
+  private readonly helperSecret: string
+
   constructor(
-    private readonly appBaseUrl: string,
-    private readonly helperSecret: string,
-  ) {}
+    appBaseUrl: string,
+    helperSecret: string,
+  ) {
+    this.appBaseUrl = appBaseUrl
+    this.helperSecret = helperSecret
+  }
 
   async register(payload: {
     helperId: string

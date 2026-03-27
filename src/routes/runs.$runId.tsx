@@ -414,7 +414,7 @@ function PreviewState({
         }
         body={
           browserProvider === "local_chrome"
-            ? "The run is still queued and no local helper heartbeat is available. Make sure Bun is installed, then start `bun run local-helper` and keep Chrome open."
+            ? "The run is still queued and no local helper heartbeat is available. Run `pnpm run local-helper` and keep Chrome open."
             : "The run is still queued and the local Inngest dev server is not responding. Start the runner to continue this run."
         }
       />
