@@ -13,6 +13,13 @@ const runStatus = v.union(
   v.literal("cancelled"),
 )
 
+const runGoalStatus = v.union(
+  v.literal("not_requested"),
+  v.literal("completed"),
+  v.literal("partially_completed"),
+  v.literal("blocked"),
+)
+
 const queueState = v.union(
   v.literal("pending"),
   v.literal("waiting_for_worker"),
@@ -68,6 +75,8 @@ export const updateRun = mutation({
     currentUrl: v.optional(v.union(v.string(), v.null())),
     errorMessage: v.optional(v.union(v.string(), v.null())),
     stopRequestedAt: v.optional(v.union(v.number(), v.null())),
+    goalStatus: v.optional(v.union(runGoalStatus, v.null())),
+    goalSummary: v.optional(v.union(v.string(), v.null())),
     finishedAt: v.optional(v.number()),
     finalScore: v.optional(v.number()),
   },
@@ -78,6 +87,8 @@ export const updateRun = mutation({
       errorMessage?: string | undefined
       finalScore?: number
       finishedAt?: number
+      goalStatus?: "blocked" | "completed" | "not_requested" | "partially_completed" | undefined
+      goalSummary?: string | undefined
       stopRequestedAt?: number | undefined
       queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
       status?:
@@ -116,6 +127,14 @@ export const updateRun = mutation({
       patch.stopRequestedAt = args.stopRequestedAt ?? undefined
     }
 
+    if (args.goalStatus !== undefined) {
+      patch.goalStatus = args.goalStatus ?? undefined
+    }
+
+    if (args.goalSummary !== undefined) {
+      patch.goalSummary = args.goalSummary ?? undefined
+    }
+
     if (args.finishedAt !== undefined) {
       patch.finishedAt = args.finishedAt
     }
@@ -139,6 +158,12 @@ export const resetRunState = mutation({
     runId: v.id("runs"),
   },
   handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId)
+
+    if (!run) {
+      return
+    }
+
     const [findings, artifacts, performanceAudits, sessions, runEvents] = await Promise.all([
       ctx.db
         .query("findings")
@@ -185,6 +210,8 @@ export const resetRunState = mutation({
       errorMessage: undefined,
       finalScore: undefined,
       finishedAt: undefined,
+      goalStatus: run.mode === "task" ? "not_requested" : undefined,
+      goalSummary: undefined,
     })
   },
 })
@@ -319,6 +346,82 @@ export const clearAllData = mutation({
   },
 })
 
+export const deleteRun = mutation({
+  args: {
+    runId: v.id("runs"),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId)
+
+    if (!run) {
+      return { ok: false as const, reason: "not_found" as const }
+    }
+
+    const [findings, artifacts, sessions, runEvents, performanceAudits, prReviews] =
+      await Promise.all([
+        ctx.db
+          .query("findings")
+          .withIndex("by_run", (q) => q.eq("runId", args.runId))
+          .collect(),
+        ctx.db
+          .query("artifacts")
+          .withIndex("by_run", (q) => q.eq("runId", args.runId))
+          .collect(),
+        ctx.db
+          .query("sessions")
+          .withIndex("by_run", (q) => q.eq("runId", args.runId))
+          .collect(),
+        ctx.db
+          .query("runEvents")
+          .withIndex("by_run", (q) => q.eq("runId", args.runId))
+          .collect(),
+        ctx.db
+          .query("performanceAudits")
+          .withIndex("by_run", (q) => q.eq("runId", args.runId))
+          .collect(),
+        ctx.db.query("prReviews").collect(),
+      ])
+
+    const linkedReviews = prReviews.filter((review) => review.browserRunId === args.runId)
+
+    await Promise.all(
+      artifacts.map(async (artifact) => {
+        if (artifact.storageId) {
+          await ctx.storage.delete(artifact.storageId).catch(() => undefined)
+        }
+      }),
+    )
+
+    await Promise.all([
+      ...linkedReviews.map((review) =>
+        ctx.db.patch(review._id, {
+          browserRunId: undefined,
+          updatedAt: Date.now(),
+        }),
+      ),
+      ...findings.map((finding) => ctx.db.delete(finding._id)),
+      ...artifacts.map((artifact) => ctx.db.delete(artifact._id)),
+      ...sessions.map((session) => ctx.db.delete(session._id)),
+      ...runEvents.map((event) => ctx.db.delete(event._id)),
+      ...performanceAudits.map((audit) => ctx.db.delete(audit._id)),
+    ])
+
+    await ctx.db.delete(args.runId)
+
+    return {
+      ok: true as const,
+      counts: {
+        artifacts: artifacts.length,
+        findings: findings.length,
+        performanceAudits: performanceAudits.length,
+        prReviewsCleared: linkedReviews.length,
+        runEvents: runEvents.length,
+        sessions: sessions.length,
+      },
+    }
+  },
+})
+
 export const getRunExecutionState = query({
   args: {
     runId: v.id("runs"),
@@ -336,6 +439,36 @@ export const getRunExecutionState = query({
       startedAt: run.startedAt,
       stopRequestedAt: run.stopRequestedAt ?? null,
       currentUrl: run.currentUrl ?? null,
+    }
+  },
+})
+
+export const getSessionReplayAccess = query({
+  args: {
+    externalSessionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_external_session_id", (q) =>
+        q.eq("externalSessionId", args.externalSessionId),
+      )
+      .first()
+
+    if (!session) {
+      return null
+    }
+
+    const run = await ctx.db.get(session.runId)
+
+    if (!run) {
+      return null
+    }
+
+    return {
+      externalSessionId: session.externalSessionId,
+      runId: session.runId,
+      status: session.status,
     }
   },
 })
@@ -593,9 +726,15 @@ export const getRunReport = query({
     return {
       run: {
         ...run,
+        mode: run.mode ?? "explore",
         queueState: normalizeQueueState(run.queueState),
       },
       session,
+      sessionDurationMs: getSessionDurationMs({
+        runFinishedAt: run.finishedAt,
+        runStartedAt: run.startedAt,
+        session,
+      }),
       executionState: buildExecutionState({
         run,
         session,
@@ -660,8 +799,16 @@ export const listRuns = query({
           : []
 
         return {
-          run,
+          run: {
+            ...run,
+            mode: run.mode ?? "explore",
+          },
           session,
+          sessionDurationMs: getSessionDurationMs({
+            runFinishedAt: run.finishedAt,
+            runStartedAt: run.startedAt,
+            session,
+          }),
           latestReportArtifact:
             artifacts.find((artifact) => artifact.type === "html-report") ??
             artifacts.find((artifact) => artifact.type === "trace") ??
@@ -783,4 +930,29 @@ function buildExecutionState({
   }
 
   return "queued" as const
+}
+
+function getSessionDurationMs({
+  runFinishedAt,
+  runStartedAt,
+  session,
+}: {
+  runFinishedAt?: number
+  runStartedAt: number
+  session:
+    | {
+        finishedAt?: number
+        startedAt: number
+      }
+    | null
+}) {
+  if (session?.finishedAt) {
+    return Math.max(session.finishedAt - session.startedAt, 0)
+  }
+
+  if (runFinishedAt) {
+    return Math.max(runFinishedAt - (session?.startedAt ?? runStartedAt), 0)
+  }
+
+  return null
 }

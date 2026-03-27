@@ -40,12 +40,13 @@ describe("qa guards", () => {
     })
 
     expect(shouldStopForRepeatActions([action])).toBe(false)
-    expect(shouldStopForRepeatActions([action, action])).toBe(true)
+    expect(shouldStopForRepeatActions([action, action])).toBe(false)
+    expect(shouldStopForRepeatActions([action, action, action])).toBe(true)
   })
 
   it("stops after repeated no-op steps", () => {
-    expect(shouldStopForNoOps(1)).toBe(false)
-    expect(shouldStopForNoOps(2)).toBe(true)
+    expect(shouldStopForNoOps(3)).toBe(false)
+    expect(shouldStopForNoOps(4)).toBe(true)
   })
 
   it("blocks discovering a page beyond the configured limit", () => {

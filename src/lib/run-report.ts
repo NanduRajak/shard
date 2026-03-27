@@ -37,6 +37,26 @@ export function buildSteelEmbedUrl(debugUrl?: string) {
   return `${debugUrl}${debugUrl.includes("?") ? "&" : "?"}interactive=false&showControls=false`
 }
 
+export function formatSessionDuration(durationMs: number | null | undefined) {
+  if (!durationMs || durationMs < 1000) {
+    return "Less than a second"
+  }
+
+  const totalSeconds = Math.floor(durationMs / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (minutes === 0) {
+    return `${seconds}s`
+  }
+
+  if (seconds === 0) {
+    return `${minutes}m`
+  }
+
+  return `${minutes}m ${seconds}s`
+}
+
 export function sortTimelineEvents<T extends TimelineEvent>(events: T[]) {
   return events.slice().sort((left, right) => left.createdAt - right.createdAt)
 }

@@ -11,6 +11,7 @@ import {
 } from "@tabler/icons-react"
 import { formatDistanceToNow } from "date-fns"
 import type { ReactNode } from "react"
+import { SteelReplayPlayer } from "@/components/steel-replay-player"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
 import {
@@ -20,6 +21,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { formatSessionDuration } from "@/lib/run-report"
 
 export function RunReportView({ report }: { report: any }) {
   const {
@@ -31,6 +33,7 @@ export function RunReportView({ report }: { report: any }) {
     run,
     scoreSummary,
     session,
+    sessionDurationMs,
   } = report
   const screenshots = (artifacts as any[]).filter((artifact: any) => artifact.type === "screenshot")
   const sortedFindings = (findings as any[])
@@ -65,14 +68,33 @@ export function RunReportView({ report }: { report: any }) {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-4 pt-4 md:grid-cols-4">
+        <CardContent className="grid gap-4 pt-4 md:grid-cols-5">
           <MetricCard label="Final step" value={run.currentStep ?? "Finished"} />
           <MetricCard label="Last URL" value={run.currentUrl ?? run.url} />
           <MetricCard label="Session" value={session?.status ?? "Not started"} />
-          <MetricCard
-            label="Started"
-            value={formatDistanceToNow(run.startedAt, { addSuffix: true })}
-          />
+          <MetricCard label="Run mode" value={run.mode} />
+          <MetricCard label="Session duration" value={formatSessionDuration(sessionDurationMs)} />
+          {run.instructions ? (
+            <div className="rounded-2xl border border-border/70 bg-background/70 p-4 md:col-span-5">
+              <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
+                Task instructions
+              </p>
+              <p className="mt-2 text-sm leading-6 text-foreground">{run.instructions}</p>
+            </div>
+          ) : null}
+          {run.goalStatus && run.goalStatus !== "not_requested" ? (
+            <div className="rounded-2xl border border-border/70 bg-background/70 p-4 md:col-span-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
+                  Task outcome
+                </p>
+                <Badge variant="outline">{run.goalStatus.replaceAll("_", " ")}</Badge>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-foreground">
+                {run.goalSummary ?? "No task summary was recorded."}
+              </p>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -98,11 +120,15 @@ export function RunReportView({ report }: { report: any }) {
           />
           <div className="grid gap-3">
             <InfoRow label="Replay" value={session?.replayUrl ?? "Not available yet"} />
+            <InfoRow label="Duration" value={formatSessionDuration(sessionDurationMs)} />
             <InfoRow
               label="Last update"
               value={formatDistanceToNow(run.updatedAt, { addSuffix: true })}
             />
           </div>
+          {session?.externalSessionId ? (
+            <SteelReplayPlayer sessionId={session.externalSessionId} />
+          ) : null}
           {session?.replayUrl || latestReportArtifact ? (
             <div className="grid gap-2">
               {session?.replayUrl ? (

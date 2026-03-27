@@ -1,5 +1,5 @@
-const MAX_REPEAT_COUNT = 2
-const MAX_NO_OP_COUNT = 2
+const MAX_REPEAT_COUNT = 3
+const MAX_NO_OP_COUNT = 4
 
 export type ActionSignature = {
   action: string

@@ -40,6 +40,7 @@
     "convex": "^1.34.0",
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
+    "hls.js": "^1.6.15",
     "inngest": "^4.1.0",
     "input-otp": "^1.4.2",
     "lighthouse": "^13.0.3",

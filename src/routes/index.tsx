@@ -28,22 +28,20 @@ export const Route = createFileRoute("/")({ component: App })
 function App() {
   const navigate = Route.useNavigate()
   const { data: namespaces } = useQuery(convexQuery(api.credentials.listNamespaces, {}))
-  const [url, setUrl] = useState("")
+  const [prompt, setPrompt] = useState("")
   const [credentialNamespace, setCredentialNamespace] = useState("none")
   const [error, setError] = useState<string | null>(null)
   const { mutateAsync, isPending } = useMutation({
     mutationFn: createRun,
   })
 
-  const normalizedUrl = useMemo(() => url.trim(), [url])
+  const normalizedPrompt = useMemo(() => prompt.trim(), [prompt])
   const selectedNamespace =
     credentialNamespace !== "none" ? credentialNamespace : undefined
 
   const handleSubmit = async () => {
-    const validatedUrl = validateRunUrl(normalizedUrl)
-
-    if (!validatedUrl) {
-      setError("Enter a full URL starting with http:// or https://.")
+    if (!validateRunUrl(normalizedPrompt.match(/https?:\/\/\S+/i)?.[0] ?? "")) {
+      setError("Enter a prompt that includes a full URL starting with http:// or https://.")
       return
     }
 
@@ -52,7 +50,7 @@ function App() {
     const { runId } = await mutateAsync({
       data: {
         credentialNamespace: selectedNamespace,
-        url: validatedUrl,
+        prompt: normalizedPrompt,
       },
     })
 
@@ -63,9 +61,9 @@ function App() {
     <div className="flex min-h-[calc(100svh-10rem)] items-center justify-center">
       <div className="w-full max-w-4xl">
         <PromptInput
-          value={url}
+          value={prompt}
           onValueChange={(value) => {
-            setUrl(value)
+            setPrompt(value)
             if (error) {
               setError(null)
             }
@@ -114,14 +112,14 @@ function App() {
           </div>
 
           <PromptInputTextarea
-            placeholder="https://app.example.com"
+            placeholder={"https://app.example.com\nSearch for headphones and add one to cart"}
             className="min-h-[180px] px-1 py-4 text-2xl leading-9 md:text-[2rem] md:leading-[2.75rem]"
-            aria-label="Run URL"
+            aria-label="Run prompt"
           />
 
           <PromptInputActions className="justify-between gap-3 border-t border-border/60 pt-3">
             <p className="text-sm text-muted-foreground">
-              Enter to run.
+              Paste a URL, then optionally add task instructions. Enter to run.
             </p>
             <Button
               onClick={() => {
@@ -140,6 +138,9 @@ function App() {
         {error ? (
           <p className="mt-3 text-center text-sm text-destructive">{error}</p>
         ) : null}
+        <p className="mt-3 text-center text-sm text-muted-foreground">
+          Try `https://shop.example.com` for broad exploration or add a second line with a task.
+        </p>
       </div>
     </div>
   )

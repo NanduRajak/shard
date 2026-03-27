@@ -17,6 +17,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 import { Route as HistoryRunIdRouteImport } from './routes/history_.$runId'
 import { Route as ApiInngestRouteImport } from './routes/api.inngest'
+import { Route as ApiSteelSessionIdMediaRouteImport } from './routes/api.steel.$sessionId.media'
+import { Route as ApiSteelSessionIdHlsRouteImport } from './routes/api.steel.$sessionId.hls'
 
 const ReviewBotRoute = ReviewBotRouteImport.update({
   id: '/review-bot',
@@ -58,6 +60,16 @@ const ApiInngestRoute = ApiInngestRouteImport.update({
   path: '/api/inngest',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiSteelSessionIdMediaRoute = ApiSteelSessionIdMediaRouteImport.update({
+  id: '/api/steel/$sessionId/media',
+  path: '/api/steel/$sessionId/media',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSteelSessionIdHlsRoute = ApiSteelSessionIdHlsRouteImport.update({
+  id: '/api/steel/$sessionId/hls',
+  path: '/api/steel/$sessionId/hls',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -68,6 +80,8 @@ export interface FileRoutesByFullPath {
   '/api/inngest': typeof ApiInngestRoute
   '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
+  '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -78,6 +92,8 @@ export interface FileRoutesByTo {
   '/api/inngest': typeof ApiInngestRoute
   '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
+  '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -89,6 +105,8 @@ export interface FileRoutesById {
   '/api/inngest': typeof ApiInngestRoute
   '/history_/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/api/steel/$sessionId/hls': typeof ApiSteelSessionIdHlsRoute
+  '/api/steel/$sessionId/media': typeof ApiSteelSessionIdMediaRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +119,8 @@ export interface FileRouteTypes {
     | '/api/inngest'
     | '/history/$runId'
     | '/runs/$runId'
+    | '/api/steel/$sessionId/hls'
+    | '/api/steel/$sessionId/media'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +131,8 @@ export interface FileRouteTypes {
     | '/api/inngest'
     | '/history/$runId'
     | '/runs/$runId'
+    | '/api/steel/$sessionId/hls'
+    | '/api/steel/$sessionId/media'
   id:
     | '__root__'
     | '/'
@@ -121,6 +143,8 @@ export interface FileRouteTypes {
     | '/api/inngest'
     | '/history_/$runId'
     | '/runs/$runId'
+    | '/api/steel/$sessionId/hls'
+    | '/api/steel/$sessionId/media'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -132,6 +156,8 @@ export interface RootRouteChildren {
   ApiInngestRoute: typeof ApiInngestRoute
   HistoryRunIdRoute: typeof HistoryRunIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
+  ApiSteelSessionIdHlsRoute: typeof ApiSteelSessionIdHlsRoute
+  ApiSteelSessionIdMediaRoute: typeof ApiSteelSessionIdMediaRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -192,6 +218,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInngestRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/steel/$sessionId/media': {
+      id: '/api/steel/$sessionId/media'
+      path: '/api/steel/$sessionId/media'
+      fullPath: '/api/steel/$sessionId/media'
+      preLoaderRoute: typeof ApiSteelSessionIdMediaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/steel/$sessionId/hls': {
+      id: '/api/steel/$sessionId/hls'
+      path: '/api/steel/$sessionId/hls'
+      fullPath: '/api/steel/$sessionId/hls'
+      preLoaderRoute: typeof ApiSteelSessionIdHlsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -204,6 +244,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInngestRoute: ApiInngestRoute,
   HistoryRunIdRoute: HistoryRunIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
+  ApiSteelSessionIdHlsRoute: ApiSteelSessionIdHlsRoute,
+  ApiSteelSessionIdMediaRoute: ApiSteelSessionIdMediaRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

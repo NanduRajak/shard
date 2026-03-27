@@ -14,10 +14,52 @@ const NAVIGATION_PRIORITY_KEYWORDS = [
   "solutions",
 ]
 
+const COVERAGE_CLICK_KEYWORDS = [
+  "tab",
+  "menu",
+  "drawer",
+  "modal",
+  "dialog",
+  "filter",
+  "sort",
+  "apply",
+  "next",
+  "previous",
+  "prev",
+  "show more",
+  "load more",
+  "details",
+  "view",
+  "open",
+  "expand",
+  "accordion",
+  "add to cart",
+  "cart",
+]
+
+const DANGEROUS_ACTION_KEYWORDS = [
+  "delete",
+  "remove",
+  "destroy",
+  "purge",
+  "erase",
+  "deactivate",
+  "disable",
+  "terminate",
+  "confirm purchase",
+  "complete purchase",
+  "complete order",
+  "place order",
+  "pay now",
+  "submit payment",
+]
+
 export type QaFallbackInteractive = {
   href?: string | null
+  id: number
   label: string
   tagName: string
+  type?: string | null
 }
 
 export type QaFallbackAction =
@@ -26,6 +68,20 @@ export type QaFallbackAction =
       reason: string
       targetLabel: string
       url: string
+    }
+  | {
+      id: number
+      kind: "click"
+      reason: string
+      targetLabel: string
+    }
+  | {
+      id: number
+      kind: "fill"
+      reason: string
+      submitOnEnter?: boolean
+      targetLabel: string
+      value: string
     }
   | {
       kind: "screenshot"
@@ -37,59 +93,105 @@ export function pickQaFallbackAction({
   interactives,
   maxPages,
   startUrl,
+  triedActions,
   visitedPages,
 }: {
   currentUrl: string
   interactives: QaFallbackInteractive[]
   maxPages: number
   startUrl: string
+  triedActions: Iterable<string>
   visitedPages: Iterable<string>
 }): QaFallbackAction {
   const visited = new Set(visitedPages)
+  const tried = new Set(triedActions)
 
   const candidates = interactives
     .flatMap((interactive) => {
-      if (!interactive.href) {
-        return []
+      const label = normalizeLabel(interactive.label)
+      const resolvedHref = interactive.href
+        ? resolveHref(interactive.href, currentUrl)
+        : null
+      const actionCandidates: Array<
+        {
+          action: QaFallbackAction
+          score: number
+          signature: string
+        }
+      > = []
+
+      if (isDangerousLabel(label)) {
+        return actionCandidates
       }
 
-      try {
-        const resolvedUrl = new URL(interactive.href, currentUrl).toString()
+      if (isSafeSearchInput(interactive)) {
+        actionCandidates.push({
+          action: {
+            kind: "fill",
+            id: interactive.id,
+            value: "test search",
+            submitOnEnter: true,
+            reason:
+              "The planner did not choose a tool, so the run is exercising a visible search or filter field before leaving the page.",
+            targetLabel: interactive.label,
+          },
+          score: scoreInputCandidate(interactive),
+          signature: `fill::${currentUrl}::${interactive.id}::submit`,
+        })
+      }
 
-        if (new URL(resolvedUrl).hostname !== new URL(startUrl).hostname) {
-          return []
+      if (
+        isSafeClickCandidate(interactive) &&
+        (!resolvedHref || new URL(resolvedHref).hostname === new URL(startUrl).hostname) &&
+        (!resolvedHref || !visited.has(resolvedHref))
+      ) {
+        actionCandidates.push({
+          action: {
+            kind: "click",
+            id: interactive.id,
+            reason:
+              "The planner did not choose a tool, so the run is exercising a reversible visible control on the current page.",
+            targetLabel: interactive.label,
+          },
+          score: scoreClickCandidate(interactive, resolvedHref, visited),
+          signature: `click::${currentUrl}::${interactive.id}`,
+        })
+      }
+
+      if (resolvedHref) {
+        if (new URL(resolvedHref).hostname !== new URL(startUrl).hostname) {
+          return actionCandidates
         }
 
-        return [
-          {
-            label: interactive.label,
-            score: scoreNavigationCandidate(interactive.label, resolvedUrl, visited),
-            url: resolvedUrl,
-            visited: visited.has(resolvedUrl),
-          },
-        ]
-      } catch {
-        return []
+        if (visited.size < maxPages && !visited.has(resolvedHref)) {
+          actionCandidates.push({
+            action: {
+              kind: "navigate",
+              reason: `The planner did not choose a tool, so the run is following the next useful same-host path: ${interactive.label}.`,
+              targetLabel: interactive.label,
+              url: resolvedHref,
+            },
+            score: scoreNavigationCandidate(interactive.label, resolvedHref, visited),
+            signature: `navigate::${resolvedHref}`,
+          })
+        }
       }
+
+      return actionCandidates
     })
-    .filter((candidate) => !candidate.visited)
+    .filter((candidate) => !tried.has(candidate.signature))
     .sort((left, right) => right.score - left.score)
 
   const nextCandidate = candidates[0]
 
-  if (nextCandidate && visited.size < maxPages) {
-    return {
-      kind: "navigate",
-      reason: `The planner did not choose a tool, so the run is following the next high-signal public path: ${nextCandidate.label}.`,
-      targetLabel: nextCandidate.label,
-      url: nextCandidate.url,
-    }
+  if (nextCandidate) {
+    return nextCandidate.action
   }
 
   return {
     kind: "screenshot",
     reason:
-      "The planner did not choose a tool and no fresh high-signal links were available, so the run captured the current state and continued.",
+      "The planner did not choose a tool and no fresh reversible actions remained, so the run captured the current state and continued.",
   }
 }
 
@@ -112,4 +214,94 @@ function scoreNavigationCandidate(label: string, url: string, visited: Set<strin
   }
 
   return score
+}
+
+function scoreClickCandidate(
+  interactive: QaFallbackInteractive,
+  resolvedHref: string | null,
+  visited: Set<string>,
+) {
+  const haystack = normalizeLabel(`${interactive.label} ${interactive.tagName}`)
+  let score = interactive.tagName === "button" ? 22 : 14
+
+  for (const keyword of COVERAGE_CLICK_KEYWORDS) {
+    if (haystack.includes(keyword)) {
+      score += 12
+    }
+  }
+
+  if (haystack.includes("add to cart")) {
+    score += 8
+  }
+
+  if (resolvedHref) {
+    score += scoreNavigationCandidate(interactive.label, resolvedHref, visited)
+  }
+
+  return score
+}
+
+function scoreInputCandidate(interactive: QaFallbackInteractive) {
+  const haystack = normalizeLabel(`${interactive.label} ${interactive.type ?? ""}`)
+  let score = 30
+
+  if (haystack.includes("search")) {
+    score += 16
+  }
+
+  if (haystack.includes("filter") || haystack.includes("sort")) {
+    score += 10
+  }
+
+  return score
+}
+
+function isSafeClickCandidate(interactive: QaFallbackInteractive) {
+  const label = normalizeLabel(interactive.label)
+
+  if (!label || isDangerousLabel(label)) {
+    return false
+  }
+
+  if (interactive.tagName === "input") {
+    return false
+  }
+
+  return true
+}
+
+function isSafeSearchInput(interactive: QaFallbackInteractive) {
+  if (interactive.tagName !== "input") {
+    return false
+  }
+
+  const type = interactive.type?.toLowerCase() ?? "text"
+  const label = normalizeLabel(interactive.label)
+
+  if (!["search", "text", "email", "url", "tel"].includes(type)) {
+    return false
+  }
+
+  return (
+    label.includes("search") ||
+    label.includes("find") ||
+    label.includes("filter") ||
+    label.includes("query")
+  )
+}
+
+function isDangerousLabel(label: string) {
+  return DANGEROUS_ACTION_KEYWORDS.some((keyword) => label.includes(keyword))
+}
+
+function normalizeLabel(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function resolveHref(href: string, currentUrl: string) {
+  try {
+    return new URL(href, currentUrl).toString()
+  } catch {
+    return null
+  }
 }

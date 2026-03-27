@@ -10,6 +10,18 @@ const runStatus = v.union(
   v.literal("cancelled"),
 )
 
+const runMode = v.union(
+  v.literal("explore"),
+  v.literal("task"),
+)
+
+const runGoalStatus = v.union(
+  v.literal("not_requested"),
+  v.literal("completed"),
+  v.literal("partially_completed"),
+  v.literal("blocked"),
+)
+
 const queueState = v.union(
   v.literal("pending"),
   v.literal("waiting_for_worker"),
@@ -67,12 +79,16 @@ const runEventKind = v.union(
 export default defineSchema({
   runs: defineTable({
     url: v.string(),
+    mode: v.optional(runMode),
     credentialNamespace: v.optional(v.string()),
+    instructions: v.optional(v.string()),
     status: runStatus,
     queueState: v.optional(queueState),
     currentStep: v.optional(v.string()),
     currentUrl: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
+    goalStatus: v.optional(runGoalStatus),
+    goalSummary: v.optional(v.string()),
     stopRequestedAt: v.optional(v.number()),
     startedAt: v.number(),
     updatedAt: v.number(),

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildSteelEmbedUrl,
   describeExecutionState,
+  formatSessionDuration,
   isActiveRunStatus,
   sortTimelineEvents,
 } from "./run-report"
@@ -47,5 +48,12 @@ describe("run report helpers", () => {
     expect(describeExecutionState("queued")).toBe("queued")
     expect(describeExecutionState("waiting_for_worker")).toBe("waiting")
     expect(describeExecutionState("worker_unreachable")).toBe("worker_unreachable")
+  })
+
+  it("formats derived session durations for archived reports", () => {
+    expect(formatSessionDuration(null)).toBe("Less than a second")
+    expect(formatSessionDuration(45_000)).toBe("45s")
+    expect(formatSessionDuration(120_000)).toBe("2m")
+    expect(formatSessionDuration(125_000)).toBe("2m 5s")
   })
 })

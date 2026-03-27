@@ -30,7 +30,9 @@ import {
   impactWeightForSource,
 } from "@/lib/scoring"
 
-const MAX_AGENT_STEPS = 24
+const SESSION_TIMEOUT_MS = 10 * 60 * 1000
+const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000
+const MAX_AGENT_STEPS = 36
 const MAX_DISCOVERED_PAGES = 12
 const MAX_PAGE_FINDINGS = 2
 const DEFAULT_MODEL = serverEnv.GEMINI_MODEL ?? "gemini-2.5-flash"
@@ -38,6 +40,8 @@ const DEFAULT_MODEL = serverEnv.GEMINI_MODEL ?? "gemini-2.5-flash"
 type RunRequestedEvent = {
   data: {
     credentialNamespace?: string
+    instructions?: string
+    mode: "explore" | "task"
     runId: Id<"runs">
     url: string
   }
@@ -62,13 +66,20 @@ type PageSnapshot = {
 }
 
 type ToolOutcome = {
+  actionKey?: string
   artifactCreated?: boolean
   changed: boolean
   currentUrl: string
   fallback?: boolean
+  goalOutcome?: GoalOutcome
   note: string
   target?: string
   toolName: string
+}
+
+type GoalOutcome = {
+  status: "blocked" | "completed" | "partially_completed"
+  summary: string
 }
 
 type BufferedFinding = {
@@ -141,6 +152,8 @@ export const qaRun = inngest.createFunction(
 
 export async function runQaWorkflow({
   credentialNamespace,
+  instructions,
+  mode,
   runId,
   url,
 }: RunRequestedEvent["data"]) {
@@ -197,7 +210,9 @@ export async function runQaWorkflow({
         currentStep: "QA run stopped before session startup",
       })
 
-      const steelSession = await steel.sessions.create()
+      const steelSession = await steel.sessions.create({
+        timeout: SESSION_TIMEOUT_MS,
+      })
       currentSessionId = steelSession.id
       const debugUrl = steelSession.debugUrl ?? steelSession.sessionViewerUrl
       sessionDocId = await convex.mutation(api.runtime.createSession, {
@@ -304,7 +319,10 @@ export async function runQaWorkflow({
         runId,
         kind: "agent",
         title: "Autonomous QA agent booted",
-        body: "The run is now exploring the site, capturing screenshots, and collecting findings.",
+        body:
+          mode === "task" && instructions
+            ? `The run is now following the requested task, capturing screenshots, and collecting findings.\nTask: ${instructions}`
+            : "The run is now exploring the site, capturing screenshots, and collecting findings.",
         status: "running",
         pageUrl: page.url(),
         sessionId: sessionDocId,
@@ -349,11 +367,13 @@ export async function runQaWorkflow({
         findingSignatures,
       })
 
-      screenshotCount += await runAgentLoop({
+      const agentLoopResult = await runAgentLoop({
         convex,
         credentialNamespace,
         findingSignatures,
         bufferedFindings,
+        instructions,
+        mode,
         page,
         pageCandidates,
         runId,
@@ -361,6 +381,8 @@ export async function runQaWorkflow({
         sessionId: sessionDocId,
         startUrl: url,
       })
+      screenshotCount += agentLoopResult.screenshotCount
+      lastKnownUrl = page.url()
 
       screenshotCount += await throwIfStopRequested({
         convex,
@@ -571,18 +593,23 @@ export async function runQaWorkflow({
         runId,
         status: "completed",
         currentStep: "QA run completed",
-        currentUrl: url,
+        currentUrl: page.url(),
         finalScore: scoreSummary.overall,
         finishedAt: Date.now(),
+        goalStatus: agentLoopResult.goalOutcome?.status ?? null,
+        goalSummary: agentLoopResult.goalOutcome?.summary ?? null,
         errorMessage: null,
       })
       await emitRunEvent(convex, {
         runId,
         kind: "status",
         title: "Run completed",
-        body: `Final quality score: ${scoreSummary.overall}/100.`,
+        body:
+          mode === "task" && agentLoopResult.goalOutcome
+            ? `Final quality score: ${scoreSummary.overall}/100.\nTask outcome: ${agentLoopResult.goalOutcome.status}.\n${agentLoopResult.goalOutcome.summary}`
+            : `Final quality score: ${scoreSummary.overall}/100.`,
         status: "completed",
-        pageUrl: url,
+        pageUrl: page.url(),
         sessionId: sessionDocId,
       })
   } catch (error) {
@@ -709,6 +736,8 @@ async function runAgentLoop({
   credentialNamespace,
   findingSignatures,
   bufferedFindings,
+  instructions,
+  mode,
   page,
   pageCandidates,
   runId,
@@ -720,6 +749,8 @@ async function runAgentLoop({
   credentialNamespace?: string
   findingSignatures: Set<string>
   bufferedFindings: BufferedFinding[]
+  instructions?: string
+  mode: "explore" | "task"
   page: Page
   pageCandidates: Map<string, PageCandidate>
   runId: Id<"runs">
@@ -729,11 +760,37 @@ async function runAgentLoop({
 }) {
   const visitedPages = new Set<string>([page.url()])
   const actionHistory: string[] = []
+  const triedActions = new Set<string>()
   const analyzedSnapshots = new Set<string>()
+  const deadlineAt = Date.now() + AGENT_TIME_BUDGET_MS
   let noOpCount = 0
   let screenshotCount = 0
+  let goalOutcome: GoalOutcome | undefined
+  let stopReason:
+    | "goal"
+    | "max_pages"
+    | "max_steps"
+    | "no_ops"
+    | "planner_unavailable"
+    | "repeat_actions"
+    | "time_budget" = "max_steps"
 
   for (let stepIndex = 1; stepIndex <= MAX_AGENT_STEPS; stepIndex += 1) {
+    if (Date.now() >= deadlineAt) {
+      stopReason = "time_budget"
+      await emitRunEvent(convex, {
+        runId,
+        kind: "system",
+        title: "Exploration time budget reached",
+        body: "The worker hit the exploration time budget and is moving on to final scoring and cleanup.",
+        status: "running",
+        pageUrl: page.url(),
+        sessionId,
+        stepIndex,
+      })
+      break
+    }
+
     await throwIfStopRequested({
       convex,
       runId,
@@ -761,15 +818,21 @@ async function runAgentLoop({
 
     await convex.mutation(api.runtime.updateRun, {
       runId,
-      currentStep: `Exploration step ${stepIndex} of ${MAX_AGENT_STEPS}`,
+      currentStep:
+        mode === "task"
+          ? `Task step ${stepIndex} of ${MAX_AGENT_STEPS}`
+          : `Exploration step ${stepIndex} of ${MAX_AGENT_STEPS}`,
       currentUrl: snapshot.url,
       status: "running",
     })
     await emitRunEvent(convex, {
       runId,
       kind: "agent",
-      title: `Exploration step ${stepIndex}`,
-      body: `Reviewing ${snapshot.url}.`,
+      title: mode === "task" ? `Task step ${stepIndex}` : `Exploration step ${stepIndex}`,
+      body:
+        mode === "task" && instructions
+          ? `Reviewing ${snapshot.url}.\nTask: ${instructions}`
+          : `Reviewing ${snapshot.url}.`,
       status: "running",
       pageUrl: snapshot.url,
       sessionId,
@@ -780,6 +843,9 @@ async function runAgentLoop({
       model: google(DEFAULT_MODEL),
       prompt: buildAgentPrompt({
         credentialNamespace,
+        instructions,
+        mode,
+        remainingMs: Math.max(deadlineAt - Date.now(), 0),
         snapshot,
         stepIndex,
         visitedPages: [...visitedPages],
@@ -811,21 +877,46 @@ async function runAgentLoop({
       })
 
       return null
-    })
+      })
 
     if (!result) {
+      stopReason = "planner_unavailable"
       break
     }
 
     const plannerSummary = result.text.trim()
+    const plannerGoalOutcome =
+      mode === "task" ? parseGoalOutcome(plannerSummary) : null
     const toolResults = result.steps.flatMap((step) => step.toolResults)
     const latestToolResult = [...toolResults]
       .reverse()
       .find((toolResult) => Boolean(toolResult))
 
+    if (plannerGoalOutcome && !latestToolResult) {
+      goalOutcome = plannerGoalOutcome
+      stopReason = "goal"
+      await emitRunEvent(convex, {
+        runId,
+        kind: "agent",
+        title:
+          plannerGoalOutcome.status === "completed"
+            ? "Task completed"
+            : plannerGoalOutcome.status === "blocked"
+              ? "Task blocked"
+              : "Task partially completed",
+        body: plannerGoalOutcome.summary,
+        status: "running",
+        pageUrl: snapshot.url,
+        sessionId,
+        stepIndex,
+      })
+      break
+    }
+
     const outcome = latestToolResult && !latestToolResult.dynamic && isToolOutcome(latestToolResult.output)
       ? latestToolResult.output
       : await executePlannerFallback({
+          bufferedFindings,
           convex,
           page,
           runId,
@@ -833,6 +924,7 @@ async function runAgentLoop({
           snapshot,
           startUrl,
           stepIndex,
+          triedActions,
           visitedPages,
         })
 
@@ -852,12 +944,14 @@ async function runAgentLoop({
     }
 
     actionHistory.push(
-      buildActionSignature({
-        action: outcome.toolName,
-        pageUrl: outcome.currentUrl,
-        target: outcome.target,
-      }),
+      outcome.actionKey ??
+        buildActionSignature({
+          action: outcome.toolName,
+          pageUrl: outcome.currentUrl,
+          target: outcome.target,
+        }),
     )
+    triedActions.add(actionHistory[actionHistory.length - 1]!)
 
     await throwIfStopRequested({
       convex,
@@ -888,6 +982,7 @@ async function runAgentLoop({
     }
 
     if (shouldStopForRepeatActions(actionHistory)) {
+      stopReason = "repeat_actions"
       break
     }
 
@@ -912,6 +1007,7 @@ async function runAgentLoop({
     }
 
     if (visitedPages.size > MAX_DISCOVERED_PAGES) {
+      stopReason = "max_pages"
       break
     }
 
@@ -943,11 +1039,24 @@ async function runAgentLoop({
     }
 
     if (shouldStopForNoOps(noOpCount)) {
+      stopReason = "no_ops"
       break
     }
   }
 
-  return screenshotCount
+  return {
+    screenshotCount,
+    goalOutcome:
+      mode === "task"
+        ? goalOutcome ??
+          inferTaskOutcome({
+            actionCount: actionHistory.length,
+            instructions,
+            stopReason,
+            visitedPageCount: visitedPages.size,
+          })
+        : undefined,
+  }
 }
 
 async function runSnapshotStage({
@@ -1143,113 +1252,13 @@ function buildAgentTools({
         id: z.number(),
       }),
       execute: async ({ id }) => {
-        const snapshot = await inspectCurrentPage(page)
-        const target = snapshot.interactives.find((item) => item.id === id)
-
-        if (!target) {
-          return {
-            toolName: "clickElement",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Element ${id} is no longer available.`,
-          } satisfies ToolOutcome
-        }
-
-        if (target.href && !isSameHostname(startUrl, new URL(target.href, page.url()).toString())) {
-          return {
-            toolName: "clickElement",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Blocked external link ${target.href}.`,
-            target: target.label,
-          } satisfies ToolOutcome
-        }
-
-        try {
-          const before = await inspectCurrentPage(page)
-          const resolvedHref = target.href
-            ? new URL(target.href, page.url()).toString()
-            : null
-
-          if (
-            resolvedHref &&
-            wouldExceedPageLimit({
-              visitedPages,
-              nextUrl: resolvedHref,
-              maxPages: MAX_DISCOVERED_PAGES,
-            })
-          ) {
-            return {
-              toolName: "clickElement",
-              changed: false,
-              currentUrl: page.url(),
-              note: `Skipped ${target.label} because it would exceed the page limit.`,
-              target: target.label,
-            } satisfies ToolOutcome
-          }
-
-          const locator = page.locator(target.selector).first()
-          await locator.scrollIntoViewIfNeeded().catch(() => undefined)
-          await locator.click({ timeout: 5_000 })
-          await settlePage(page)
-
-          if (!isSameHostname(startUrl, page.url())) {
-            await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
-            await settlePage(page)
-            return {
-              toolName: "clickElement",
-              changed: false,
-              currentUrl: page.url(),
-              note: "Blocked navigation outside the starting hostname.",
-              target: target.label,
-            } satisfies ToolOutcome
-          }
-
-          if (
-            wouldExceedPageLimit({
-              visitedPages,
-              nextUrl: page.url(),
-              maxPages: MAX_DISCOVERED_PAGES,
-            })
-          ) {
-            await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
-            await settlePage(page)
-            return {
-              toolName: "clickElement",
-              changed: false,
-              currentUrl: page.url(),
-              note: `Skipped ${target.label} because it would exceed the page limit.`,
-              target: target.label,
-            } satisfies ToolOutcome
-          }
-
-          const after = await inspectCurrentPage(page)
-
-          return {
-            toolName: "clickElement",
-            changed: after.signature !== before.signature,
-            currentUrl: after.url,
-            note: `Clicked ${target.label}.`,
-            target: target.label,
-          } satisfies ToolOutcome
-        } catch (error) {
-          bufferedFindings.push(
-            createActionFailureFinding({
-              action: "click",
-              error,
-              pageUrl: page.url(),
-              target: target.label,
-            }),
-          )
-
-          return {
-            toolName: "clickElement",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Failed to click ${target.label}.`,
-            target: target.label,
-          } satisfies ToolOutcome
-        }
+        return await performClickAction({
+          bufferedFindings,
+          page,
+          startUrl,
+          targetId: id,
+          visitedPages,
+        })
       },
     }),
     fillInput: tool({
@@ -1257,61 +1266,17 @@ function buildAgentTools({
         "Fill a safe text-like input by its current snapshot id. Do not use for auth, passwords, payments, or destructive forms.",
       inputSchema: z.object({
         id: z.number(),
+        submitOnEnter: z.boolean().optional(),
         value: z.string().min(1),
       }),
-      execute: async ({ id, value }) => {
-        const snapshot = await inspectCurrentPage(page)
-        const target = snapshot.interactives.find((item) => item.id === id)
-
-        if (!target) {
-          return {
-            toolName: "fillInput",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Input ${id} is no longer available.`,
-          } satisfies ToolOutcome
-        }
-
-        if (!isSafeInput(target)) {
-          return {
-            toolName: "fillInput",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Skipped unsafe field ${target.label}.`,
-            target: target.label,
-          } satisfies ToolOutcome
-        }
-
-        try {
-          const locator = page.locator(target.selector).first()
-          await locator.fill(value, { timeout: 5_000 })
-          await settlePage(page)
-
-          return {
-            toolName: "fillInput",
-            changed: true,
-            currentUrl: page.url(),
-            note: `Filled ${target.label}.`,
-            target: target.label,
-          } satisfies ToolOutcome
-        } catch (error) {
-          bufferedFindings.push(
-            createActionFailureFinding({
-              action: "fill",
-              error,
-              pageUrl: page.url(),
-              target: target.label,
-            }),
-          )
-
-          return {
-            toolName: "fillInput",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Failed to fill ${target.label}.`,
-            target: target.label,
-          } satisfies ToolOutcome
-        }
+      execute: async ({ id, submitOnEnter, value }) => {
+        return await performFillAction({
+          bufferedFindings,
+          page,
+          submitOnEnter: submitOnEnter ?? false,
+          targetId: id,
+          value,
+        })
       },
     }),
     navigateToUrl: tool({
@@ -1336,51 +1301,13 @@ function buildAgentTools({
           } satisfies ToolOutcome
         }
 
-        if (
-          wouldExceedPageLimit({
-            visitedPages,
-            nextUrl: resolvedUrl,
-            maxPages: MAX_DISCOVERED_PAGES,
-          })
-        ) {
-          return {
-            toolName: "navigateToUrl",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Blocked navigation to ${resolvedUrl} because it would exceed the page limit.`,
-            target: resolvedUrl,
-          } satisfies ToolOutcome
-        }
-
-        try {
-          const beforeUrl = page.url()
-          await safeGoto(page, resolvedUrl)
-
-          return {
-            toolName: "navigateToUrl",
-            changed: page.url() !== beforeUrl,
-            currentUrl: page.url(),
-            note: `Navigated to ${resolvedUrl}.`,
-            target: resolvedUrl,
-          } satisfies ToolOutcome
-        } catch (error) {
-          bufferedFindings.push(
-            createActionFailureFinding({
-              action: "navigate",
-              error,
-              pageUrl: page.url(),
-              target: resolvedUrl,
-            }),
-          )
-
-          return {
-            toolName: "navigateToUrl",
-            changed: false,
-            currentUrl: page.url(),
-            note: `Failed to navigate to ${resolvedUrl}.`,
-            target: resolvedUrl,
-          } satisfies ToolOutcome
-        }
+        return await performNavigationAction({
+          bufferedFindings,
+          page,
+          resolvedUrl,
+          targetLabel: resolvedUrl,
+          visitedPages,
+        })
       },
     }),
     captureScreenshot: tool({
@@ -1471,30 +1398,57 @@ function buildAgentTools({
 
 function buildAgentPrompt({
   credentialNamespace,
+  instructions,
+  mode,
+  remainingMs,
   snapshot,
   stepIndex,
   visitedPages,
   recentActions,
 }: {
   credentialNamespace?: string
+  instructions?: string
+  mode: "explore" | "task"
+  remainingMs: number
   snapshot: PageSnapshot
   stepIndex: number
   visitedPages: string[]
   recentActions: string[]
 }) {
-  return [
+  const baseRules = [
     "You are a balanced autonomous QA engineer exploring a public website.",
     "Rules:",
     "- Stay on the starting hostname only.",
     credentialNamespace
-      ? "- Do not attempt signup, checkout, payment, account deletion, or destructive submission flows. If login is required, use the stored login tool instead of typing credentials yourself."
-      : "- Do not attempt login, signup, checkout, payment, account deletion, or destructive submission flows.",
-    "- Prefer high-signal public pages like pricing, product, docs, support, contact, and clear navigation destinations.",
-    "- Continue exploring even if the current page looks healthy when there are fresh public paths available.",
-    "- Call at most one tool for the next best action. Avoid plain-text answers unless the page is truly exhausted and no fresh public navigation or safe interactions remain.",
+      ? "- Do not attempt signup, payment submission, purchase completion, account deletion, or destructive submission flows. If login is required, use the stored login tool instead of typing credentials yourself."
+      : "- Do not attempt login, signup, payment submission, purchase completion, account deletion, or destructive submission flows.",
+    "- Reversible actions are allowed, including search, filters, sorting, tabs, drawers, pagination, safe forms, add-to-cart, and opening checkout pages.",
+    "- Never finalize a purchase, submit payment, or trigger destructive admin/account actions.",
+    "- Call at most one tool for the next best action.",
     "- You do not need to capture screenshots on every step because the system already captures them after meaningful changes.",
-    "- Favor visible navigation and exploratory clicks before giving up on the page.",
+    "- Use conservative values if you fill a field, such as 'test search', 'Shard QA', or 'qa@example.com'.",
+  ]
+
+  const modeRules =
+    mode === "task" && instructions
+      ? [
+          `Primary task: ${instructions}`,
+          "- Prioritize finishing the task safely and efficiently over broad exploration.",
+          "- When the task is complete and no more action is needed, reply with `TASK_COMPLETE: <brief summary>` and do not call a tool.",
+          "- When the task cannot be completed safely or the app blocks progress, reply with `TASK_BLOCKED: <brief summary>` and do not call a tool.",
+          "- If you made meaningful progress but cannot fully complete the task, reply with `TASK_PARTIAL: <brief summary>` and do not call a tool.",
+        ]
+      : [
+          "- Explore like a strong QA engineer: prefer fresh reversible interactions on the current page before leaving it.",
+          "- Prioritize tabs, accordions, drawers, filters, sort controls, pagination, search fields, safe forms, modals, add-to-cart, then same-host navigation.",
+          "- Continue exploring when the current page looks healthy and fresh reversible actions remain.",
+        ]
+
+  return [
+    ...baseRules,
+    ...modeRules,
     `Step: ${stepIndex}/${MAX_AGENT_STEPS}`,
+    `Remaining time budget: ${Math.ceil(remainingMs / 1000)} seconds`,
     `Current URL: ${snapshot.url}`,
     `Title: ${snapshot.title}`,
     `Forms: ${snapshot.formsSummary}`,
@@ -1502,11 +1456,11 @@ function buildAgentPrompt({
     `Recent actions: ${recentActions.length ? recentActions.join(" | ") : "none"}`,
     `Visible text excerpt: ${snapshot.textExcerpt}`,
     `Current interactives: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} [${item.tagName}${item.type ? `:${item.type}` : ""}]`).join("; ")}`,
-    "Use conservative values if you fill a field, such as 'test search', 'Shard QA', or 'qa@example.com'.",
   ].join("\n")
 }
 
 async function executePlannerFallback({
+  bufferedFindings,
   convex,
   page,
   runId,
@@ -1514,8 +1468,10 @@ async function executePlannerFallback({
   snapshot,
   startUrl,
   stepIndex,
+  triedActions,
   visitedPages,
 }: {
+  bufferedFindings: BufferedFinding[]
   convex: ReturnType<typeof createConvexServerClient>
   page: Page
   runId: Id<"runs">
@@ -1523,6 +1479,7 @@ async function executePlannerFallback({
   snapshot: PageSnapshot
   startUrl: string
   stepIndex: number
+  triedActions: Set<string>
   visitedPages: Set<string>
 }): Promise<ToolOutcome> {
   const fallbackAction = pickQaFallbackAction({
@@ -1530,31 +1487,49 @@ async function executePlannerFallback({
     interactives: snapshot.interactives,
     maxPages: MAX_DISCOVERED_PAGES,
     startUrl,
+    triedActions,
     visitedPages,
   })
 
   if (fallbackAction.kind === "navigate") {
-    try {
-      const beforeUrl = page.url()
-      await safeGoto(page, fallbackAction.url)
+    return {
+      ...(await performNavigationAction({
+        bufferedFindings,
+        page,
+        resolvedUrl: fallbackAction.url,
+        targetLabel: fallbackAction.targetLabel,
+        visitedPages,
+      })),
+      fallback: true,
+      note: fallbackAction.reason,
+    }
+  }
 
-      return {
-        toolName: "navigateToUrl",
-        changed: page.url() !== beforeUrl,
-        currentUrl: page.url(),
-        fallback: true,
-        note: fallbackAction.reason,
-        target: fallbackAction.targetLabel,
-      }
-    } catch (error) {
-      return {
-        toolName: "navigateToUrl",
-        changed: false,
-        currentUrl: page.url(),
-        fallback: true,
-        note: `${fallbackAction.reason} Navigation failed: ${error instanceof Error ? error.message : "Unknown navigation error"}`,
-        target: fallbackAction.targetLabel,
-      }
+  if (fallbackAction.kind === "click") {
+    return {
+      ...(await performClickAction({
+        bufferedFindings,
+        page,
+        startUrl,
+        targetId: fallbackAction.id,
+        visitedPages,
+      })),
+      fallback: true,
+      note: fallbackAction.reason,
+    }
+  }
+
+  if (fallbackAction.kind === "fill") {
+    return {
+      ...(await performFillAction({
+        bufferedFindings,
+        page,
+        submitOnEnter: fallbackAction.submitOnEnter ?? false,
+        targetId: fallbackAction.id,
+        value: fallbackAction.value,
+      })),
+      fallback: true,
+      note: fallbackAction.reason,
     }
   }
 
@@ -1574,6 +1549,363 @@ async function executePlannerFallback({
     currentUrl: page.url(),
     fallback: true,
     note: fallbackAction.reason,
+  }
+}
+
+async function performClickAction({
+  bufferedFindings,
+  page,
+  startUrl,
+  targetId,
+  visitedPages,
+}: {
+  bufferedFindings: BufferedFinding[]
+  page: Page
+  startUrl: string
+  targetId: number
+  visitedPages: Set<string>
+}): Promise<ToolOutcome> {
+  const snapshot = await inspectCurrentPage(page)
+  const target = snapshot.interactives.find((item) => item.id === targetId)
+
+  if (!target) {
+    return {
+      actionKey: `click::${snapshot.url}::${targetId}`,
+      toolName: "clickElement",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Element ${targetId} is no longer available.`,
+    }
+  }
+
+  const safetyDecision = getClickSafetyDecision(target)
+
+  if (!safetyDecision.allowed) {
+    return {
+      actionKey: `click::${snapshot.url}::${target.id}`,
+      toolName: "clickElement",
+      changed: false,
+      currentUrl: page.url(),
+      note: safetyDecision.reason,
+      target: target.label,
+    }
+  }
+
+  if (target.href && !isSameHostname(startUrl, new URL(target.href, page.url()).toString())) {
+    return {
+      actionKey: `click::${snapshot.url}::${target.id}`,
+      toolName: "clickElement",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Blocked external link ${target.href}.`,
+      target: target.label,
+    }
+  }
+
+  try {
+    const before = await inspectCurrentPage(page)
+    const resolvedHref = target.href
+      ? new URL(target.href, page.url()).toString()
+      : null
+
+    if (
+      resolvedHref &&
+      wouldExceedPageLimit({
+        visitedPages,
+        nextUrl: resolvedHref,
+        maxPages: MAX_DISCOVERED_PAGES,
+      })
+    ) {
+      return {
+        actionKey: `click::${snapshot.url}::${target.id}`,
+        toolName: "clickElement",
+        changed: false,
+        currentUrl: page.url(),
+        note: `Skipped ${target.label} because it would exceed the page limit.`,
+        target: target.label,
+      }
+    }
+
+    const locator = page.locator(target.selector).first()
+    await locator.scrollIntoViewIfNeeded().catch(() => undefined)
+    await locator.click({ timeout: 5_000 })
+    await settlePage(page)
+
+    if (!isSameHostname(startUrl, page.url())) {
+      await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
+      await settlePage(page)
+      return {
+        actionKey: `click::${snapshot.url}::${target.id}`,
+        toolName: "clickElement",
+        changed: false,
+        currentUrl: page.url(),
+        note: "Blocked navigation outside the starting hostname.",
+        target: target.label,
+      }
+    }
+
+    if (
+      wouldExceedPageLimit({
+        visitedPages,
+        nextUrl: page.url(),
+        maxPages: MAX_DISCOVERED_PAGES,
+      })
+    ) {
+      await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
+      await settlePage(page)
+      return {
+        actionKey: `click::${snapshot.url}::${target.id}`,
+        toolName: "clickElement",
+        changed: false,
+        currentUrl: page.url(),
+        note: `Skipped ${target.label} because it would exceed the page limit.`,
+        target: target.label,
+      }
+    }
+
+    const after = await inspectCurrentPage(page)
+
+    return {
+      actionKey: `click::${snapshot.url}::${target.id}`,
+      toolName: "clickElement",
+      changed: after.signature !== before.signature,
+      currentUrl: after.url,
+      note: `Clicked ${target.label}.`,
+      target: target.label,
+    }
+  } catch (error) {
+    bufferedFindings.push(
+      createActionFailureFinding({
+        action: "click",
+        error,
+        pageUrl: page.url(),
+        target: target.label,
+      }),
+    )
+
+    return {
+      actionKey: `click::${snapshot.url}::${target.id}`,
+      toolName: "clickElement",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Failed to click ${target.label}.`,
+      target: target.label,
+    }
+  }
+}
+
+async function performFillAction({
+  bufferedFindings,
+  page,
+  submitOnEnter,
+  targetId,
+  value,
+}: {
+  bufferedFindings: BufferedFinding[]
+  page: Page
+  submitOnEnter: boolean
+  targetId: number
+  value: string
+}): Promise<ToolOutcome> {
+  const snapshot = await inspectCurrentPage(page)
+  const target = snapshot.interactives.find((item) => item.id === targetId)
+
+  if (!target) {
+    return {
+      actionKey: `fill::${snapshot.url}::${targetId}::${submitOnEnter ? "submit" : "fill"}`,
+      toolName: "fillInput",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Input ${targetId} is no longer available.`,
+    }
+  }
+
+  if (!isSafeInput(target)) {
+    return {
+      actionKey: `fill::${snapshot.url}::${target.id}::${submitOnEnter ? "submit" : "fill"}`,
+      toolName: "fillInput",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Skipped unsafe field ${target.label}.`,
+      target: target.label,
+    }
+  }
+
+  try {
+    const locator = page.locator(target.selector).first()
+    await locator.fill(value, { timeout: 5_000 })
+
+    if (submitOnEnter && isSearchLikeInput(target)) {
+      await locator.press("Enter", { timeout: 5_000 }).catch(() => undefined)
+    }
+
+    await settlePage(page)
+
+    return {
+      actionKey: `fill::${snapshot.url}::${target.id}::${submitOnEnter ? "submit" : "fill"}`,
+      toolName: "fillInput",
+      changed: true,
+      currentUrl: page.url(),
+      note: submitOnEnter ? `Filled and submitted ${target.label}.` : `Filled ${target.label}.`,
+      target: target.label,
+    }
+  } catch (error) {
+    bufferedFindings.push(
+      createActionFailureFinding({
+        action: "fill",
+        error,
+        pageUrl: page.url(),
+        target: target.label,
+      }),
+    )
+
+    return {
+      actionKey: `fill::${snapshot.url}::${target.id}::${submitOnEnter ? "submit" : "fill"}`,
+      toolName: "fillInput",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Failed to fill ${target.label}.`,
+      target: target.label,
+    }
+  }
+}
+
+async function performNavigationAction({
+  bufferedFindings,
+  page,
+  resolvedUrl,
+  targetLabel,
+  visitedPages,
+}: {
+  bufferedFindings: BufferedFinding[]
+  page: Page
+  resolvedUrl: string
+  targetLabel: string
+  visitedPages: Set<string>
+}): Promise<ToolOutcome> {
+  if (
+    wouldExceedPageLimit({
+      visitedPages,
+      nextUrl: resolvedUrl,
+      maxPages: MAX_DISCOVERED_PAGES,
+    })
+  ) {
+    return {
+      actionKey: `navigate::${resolvedUrl}`,
+      toolName: "navigateToUrl",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Blocked navigation to ${resolvedUrl} because it would exceed the page limit.`,
+      target: targetLabel,
+    }
+  }
+
+  try {
+    const beforeUrl = page.url()
+    await safeGoto(page, resolvedUrl)
+
+    return {
+      actionKey: `navigate::${resolvedUrl}`,
+      toolName: "navigateToUrl",
+      changed: page.url() !== beforeUrl,
+      currentUrl: page.url(),
+      note: `Navigated to ${resolvedUrl}.`,
+      target: targetLabel,
+    }
+  } catch (error) {
+    bufferedFindings.push(
+      createActionFailureFinding({
+        action: "navigate",
+        error,
+        pageUrl: page.url(),
+        target: resolvedUrl,
+      }),
+    )
+
+    return {
+      actionKey: `navigate::${resolvedUrl}`,
+      toolName: "navigateToUrl",
+      changed: false,
+      currentUrl: page.url(),
+      note: `Failed to navigate to ${resolvedUrl}.`,
+      target: targetLabel,
+    }
+  }
+}
+
+function parseGoalOutcome(summary: string) {
+  const trimmed = summary.trim()
+
+  if (trimmed.startsWith("TASK_COMPLETE:")) {
+    return {
+      status: "completed",
+      summary: trimmed.replace("TASK_COMPLETE:", "").trim() || "The requested task was completed safely.",
+    } satisfies GoalOutcome
+  }
+
+  if (trimmed.startsWith("TASK_BLOCKED:")) {
+    return {
+      status: "blocked",
+      summary: trimmed.replace("TASK_BLOCKED:", "").trim() || "The task could not be completed safely.",
+    } satisfies GoalOutcome
+  }
+
+  if (trimmed.startsWith("TASK_PARTIAL:")) {
+    return {
+      status: "partially_completed",
+      summary:
+        trimmed.replace("TASK_PARTIAL:", "").trim() ||
+        "The task made meaningful progress but was not fully completed.",
+    } satisfies GoalOutcome
+  }
+
+  return null
+}
+
+function inferTaskOutcome({
+  actionCount,
+  instructions,
+  stopReason,
+  visitedPageCount,
+}: {
+  actionCount: number
+  instructions?: string
+  stopReason:
+    | "goal"
+    | "max_pages"
+    | "max_steps"
+    | "no_ops"
+    | "planner_unavailable"
+    | "repeat_actions"
+    | "time_budget"
+  visitedPageCount: number
+}): GoalOutcome {
+  const taskLabel = instructions ? `Task: ${instructions}` : "The requested task"
+
+  if (actionCount === 0 || stopReason === "planner_unavailable") {
+    return {
+      status: "blocked",
+      summary: `${taskLabel}. The agent could not make reliable progress before the run ended.`,
+    }
+  }
+
+  if (stopReason === "time_budget" || stopReason === "max_steps") {
+    return {
+      status: "partially_completed",
+      summary: `${taskLabel}. The agent explored ${visitedPageCount} page${visitedPageCount === 1 ? "" : "s"} and executed ${actionCount} action${actionCount === 1 ? "" : "s"} before the time budget ended.`,
+    }
+  }
+
+  if (stopReason === "no_ops" || stopReason === "repeat_actions") {
+    return {
+      status: "blocked",
+      summary: `${taskLabel}. The visible UI no longer exposed fresh safe actions that advanced the task.`,
+    }
+  }
+
+  return {
+    status: "partially_completed",
+    summary: `${taskLabel}. The agent made progress but could not confirm full completion before wrapping up.`,
   }
 }
 
@@ -2116,6 +2448,63 @@ function isSafeInput(target: InteractiveElement) {
   }
 
   return ["text", "search", "email", "url", "tel"].includes(type)
+}
+
+function isSearchLikeInput(target: InteractiveElement) {
+  const haystack = target.label.toLowerCase()
+  const type = target.type?.toLowerCase() ?? "text"
+
+  return (
+    type === "search" ||
+    haystack.includes("search") ||
+    haystack.includes("find") ||
+    haystack.includes("filter") ||
+    haystack.includes("query")
+  )
+}
+
+function getClickSafetyDecision(target: InteractiveElement) {
+  const haystack = `${target.label} ${target.href ?? ""}`.toLowerCase()
+
+  const blockedKeywords = [
+    "delete",
+    "remove",
+    "destroy",
+    "purge",
+    "erase",
+    "deactivate",
+    "disable",
+    "revoke",
+    "terminate",
+    "confirm purchase",
+    "complete purchase",
+    "complete order",
+    "place order",
+    "submit payment",
+    "pay now",
+  ]
+
+  if (blockedKeywords.some((keyword) => haystack.includes(keyword))) {
+    return {
+      allowed: false,
+      reason: `Skipped ${target.label} because it looks destructive or irreversible.`,
+    }
+  }
+
+  if (
+    haystack.includes("buy now") ||
+    haystack.includes("confirm") && haystack.includes("order")
+  ) {
+    return {
+      allowed: false,
+      reason: `Skipped ${target.label} because it appears to finalize a purchase.`,
+    }
+  }
+
+  return {
+    allowed: true,
+    reason: "",
+  }
 }
 
 async function settlePage(page: Page) {

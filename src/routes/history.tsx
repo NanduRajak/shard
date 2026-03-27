@@ -1,11 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { convexQuery } from "@convex-dev/react-query"
-import { useQuery } from "@tanstack/react-query"
-import { IconArrowRight, IconTimeline } from "@tabler/icons-react"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { IconArrowRight, IconTimeline, IconTrash } from "@tabler/icons-react"
 import { formatDistanceToNow } from "date-fns"
+import { useState } from "react"
+import { toast } from "sonner"
+import type { Id } from "../../convex/_generated/dataModel"
 import { api } from "../../convex/_generated/api"
 import { Badge } from "@/components/ui/badge"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -14,12 +17,22 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
+import { deleteRun } from "@/lib/delete-run"
+import { formatSessionDuration } from "@/lib/run-report"
 
 export const Route = createFileRoute("/history")({
   component: HistoryPage,
@@ -27,6 +40,29 @@ export const Route = createFileRoute("/history")({
 
 function HistoryPage() {
   const { data: runs } = useQuery(convexQuery(api.runtime.listRuns, {}))
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: Id<"runs">
+    label: string
+  } | null>(null)
+  const deleteMutation = useMutation({
+    mutationFn: deleteRun,
+  })
+
+  const handleDelete = async () => {
+    if (!deleteTarget) {
+      return
+    }
+
+    try {
+      await deleteMutation.mutateAsync({
+        data: { runId: deleteTarget.id },
+      })
+      toast.success("Run report deleted.")
+      setDeleteTarget(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete run report.")
+    }
+  }
 
   if (!runs) {
     return <Card className="min-h-72 border border-border/70 bg-card/70" />
@@ -58,7 +94,7 @@ function HistoryPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 pt-4">
-          {runs.map(({ currentAuditTrend, latestReportArtifact, run, session }) => (
+          {runs.map(({ currentAuditTrend, latestReportArtifact, run, session, sessionDurationMs }) => (
             <article
               key={run._id}
               className="rounded-2xl border border-border/70 bg-background/70 p-4"
@@ -73,20 +109,41 @@ function HistoryPage() {
                   <p className="text-sm text-muted-foreground">
                     Started {formatDistanceToNow(run.startedAt, { addSuffix: true })}
                   </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline">{run.mode}</Badge>
+                    {run.goalStatus && run.goalStatus !== "not_requested" ? (
+                      <Badge variant="outline">{run.goalStatus.replaceAll("_", " ")}</Badge>
+                    ) : null}
+                  </div>
                 </div>
-                <Link
-                  to="/history/$runId"
-                  params={{ runId: run._id }}
-                  className={buttonVariants({
-                    variant: "outline",
-                    className: "rounded-2xl",
-                  })}
-                >
-                  Open report
-                  <IconArrowRight className="size-4" />
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link
+                    to="/history/$runId"
+                    params={{ runId: run._id }}
+                    className={buttonVariants({
+                      variant: "outline",
+                      className: "rounded-2xl",
+                    })}
+                  >
+                    Open report
+                    <IconArrowRight className="size-4" />
+                  </Link>
+                  <Button
+                    variant="destructive"
+                    className="rounded-2xl"
+                    onClick={() => {
+                      setDeleteTarget({
+                        id: run._id,
+                        label: run.url,
+                      })
+                    }}
+                  >
+                    <IconTrash className="size-4" />
+                    Delete
+                  </Button>
+                </div>
               </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div className="mt-4 grid gap-3 md:grid-cols-5">
                 <HistoryMetric
                   label="Performance"
                   value={formatTrendMetric(currentAuditTrend.performance.delta)}
@@ -103,11 +160,46 @@ function HistoryPage() {
                   label="Report artifact"
                   value={latestReportArtifact ? "Available" : "Missing"}
                 />
+                <HistoryMetric
+                  label="Duration"
+                  value={formatSessionDuration(sessionDurationMs)}
+                />
               </div>
+              {run.goalSummary ? (
+                <p className="mt-4 text-sm leading-6 text-muted-foreground">{run.goalSummary}</p>
+              ) : null}
             </article>
           ))}
         </CardContent>
       </Card>
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+          }
+        }}
+      >
+        <DialogContent className="rounded-[1.4rem]">
+          <DialogHeader>
+            <DialogTitle>Delete run report</DialogTitle>
+            <DialogDescription>
+              {deleteTarget
+                ? `This permanently deletes the report, screenshots, session metadata, and related artifacts for ${deleteTarget.label}.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter showCloseButton>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => void handleDelete()}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete report"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

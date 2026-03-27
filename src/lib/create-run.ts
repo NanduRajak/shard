@@ -4,7 +4,7 @@ import { prepareCreateRunPayload } from "./run-request"
 
 export const createRun = createServerFn({ method: "POST" })
   .inputValidator(
-    (data: { credentialNamespace?: string | null; url: string }) => data,
+    (data: { credentialNamespace?: string | null; prompt: string }) => data,
   )
   .handler(async ({ data }) => {
     const payload = prepareCreateRunPayload(data)
