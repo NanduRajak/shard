@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, Link } from "@tanstack/react-router"
 import { convexQuery } from "@convex-dev/react-query"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
@@ -21,6 +21,7 @@ import type { Id } from "../../convex/_generated/dataModel"
 import { api } from "../../convex/_generated/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import {
   Accordion,
   AccordionContent,
@@ -51,7 +52,6 @@ export const Route = createFileRoute("/runs/$runId")({
 
 function RunPage() {
   const { runId } = Route.useParams()
-  const navigate = Route.useNavigate()
   const typedRunId = runId as Id<"runs">
   const { data: report } = useQuery(
     convexQuery(api.runtime.getRunReport, { runId: typedRunId }),
@@ -76,18 +76,6 @@ function RunPage() {
       window.clearInterval(intervalId)
     }
   }, [report, typedRunId])
-
-  useEffect(() => {
-    if (!report || isActiveRunStatus(report.run.status)) {
-      return
-    }
-
-    void navigate({
-      to: "/history/$runId",
-      params: { runId: typedRunId },
-      replace: true,
-    })
-  }, [navigate, report, typedRunId])
 
   useEffect(() => {
     const container = transcriptRef.current
@@ -134,19 +122,18 @@ function RunPage() {
     )
   }
 
-  if (!isActiveRunStatus(report.run.status)) {
-    return (
-      <PanelState
-        icon={<IconLoader3 className="size-5 animate-spin" />}
-        title="Opening archived report"
-        body="This run has ended. Redirecting to the history report."
-      />
-    )
-  }
-
-  const { executionState, run, runEvents, session } = report
+  const { artifacts, executionState, run, runEvents, session } = report
+  const isActive = isActiveRunStatus(run.status)
   const timeline = sortTimelineEvents(runEvents as RunEvent[])
   const liveEmbedUrl = buildSteelEmbedUrl(session?.debugUrl)
+  const latestScreenshot = (artifacts as RunArtifact[]).find(
+    (artifact) => artifact.type === "screenshot",
+  )
+  const snapshotTitle = isActive ? "Live session" : "Final page snapshot"
+  const snapshotDescription = isActive
+    ? "Steel mirrors the exact browser session the Playwright QA worker is controlling in real time."
+    : "The browser session has ended. This snapshot shows the latest page screenshot captured during the run."
+  const runLabel = describeRunLabel(run.status)
 
   return (
     <div className="flex h-[calc(100svh-8.5rem)] min-h-[calc(100svh-8.5rem)] flex-col gap-4 overflow-hidden">
@@ -156,29 +143,42 @@ function RunPage() {
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="tracking-[0.18em] uppercase">
-                  Active run
+                  {runLabel}
                 </Badge>
                 <StatusBadge status={run.status} />
                 <QueueBadge queueState={run.queueState} />
               </div>
               <CardTitle className="text-2xl text-balance">
-                Live autonomous QA session
+                {isActive ? "Live autonomous QA session" : "Autonomous QA run timeline"}
               </CardTitle>
               <CardDescription className="break-all text-sm/6 text-pretty">
                 {run.url}
               </CardDescription>
             </div>
-            <Button
-              variant="destructive"
-              className="rounded-2xl"
-              disabled={stopMutation.isPending || Boolean(run.stopRequestedAt)}
-              onClick={() => {
-                void stopMutation.mutateAsync({ data: { runId: typedRunId } })
-              }}
-            >
-              {stopMutation.isPending || run.stopRequestedAt ? "Stopping..." : "Stop run"}
-              <IconPlayerStop className="size-4" />
-            </Button>
+            {isActive ? (
+              <Button
+                variant="destructive"
+                className="rounded-2xl"
+                disabled={stopMutation.isPending || Boolean(run.stopRequestedAt)}
+                onClick={() => {
+                  void stopMutation.mutateAsync({ data: { runId: typedRunId } })
+                }}
+              >
+                {stopMutation.isPending || run.stopRequestedAt ? "Stopping..." : "Stop run"}
+                <IconPlayerStop className="size-4" />
+              </Button>
+            ) : (
+              <Link
+                to="/history/$runId"
+                params={{ runId: typedRunId }}
+                className={buttonVariants({
+                  className: "rounded-2xl",
+                })}
+              >
+                Open archived report
+                <IconExternalLink className="size-4" />
+              </Link>
+            )}
           </div>
 
           <div className="grid gap-3 rounded-[1.5rem] border border-border/70 bg-background/60 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] md:grid-cols-2 xl:grid-cols-5">
@@ -281,19 +281,24 @@ function RunPage() {
           <CardHeader className="shrink-0 gap-3 border-b border-border/70">
             <CardTitle className="flex items-center gap-2 text-base">
               <IconPlayerPlay className="size-4" />
-              Live session
+              {snapshotTitle}
             </CardTitle>
             <CardDescription className="text-pretty">
-              Steel mirrors the exact browser session the Playwright QA worker is controlling in real time.
+              {snapshotDescription}
             </CardDescription>
           </CardHeader>
           <CardContent className="min-h-0 flex-1 p-4">
-            {executionState === "preview_active" && liveEmbedUrl ? (
+            {isActive && executionState === "preview_active" && liveEmbedUrl ? (
               <iframe
                 title="Steel live session"
                 src={liveEmbedUrl}
                 allow="clipboard-read; clipboard-write"
                 className="h-full min-h-[26rem] w-full rounded-[1.6rem] border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
+              />
+            ) : !isActive ? (
+              <SnapshotState
+                runId={typedRunId}
+                screenshot={latestScreenshot}
               />
             ) : (
               <PreviewState
@@ -381,6 +386,68 @@ function PreviewState({
   )
 }
 
+function SnapshotState({
+  runId,
+  screenshot,
+}: {
+  runId: Id<"runs">
+  screenshot?: RunArtifact
+}) {
+  if (screenshot?.url) {
+    return (
+      <div className="flex h-full min-h-[26rem] flex-col gap-4">
+        <img
+          alt={screenshot.title ?? "Latest run screenshot"}
+          src={screenshot.url}
+          className="h-full min-h-0 w-full rounded-[1.6rem] border border-border/70 bg-background object-cover shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-border/70 bg-background/70 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              {screenshot.title ?? "Latest screenshot"}
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              {screenshot.pageUrl ?? "No page URL recorded"}
+            </p>
+          </div>
+          <Link
+            to="/history/$runId"
+            params={{ runId }}
+            className={buttonVariants({
+              variant: "outline",
+              className: "rounded-2xl",
+            })}
+          >
+            Open archived report
+            <IconExternalLink className="size-4" />
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <PanelState
+      icon={<IconCircleCheck className="size-5" />}
+      title="Run finished"
+      body="The session has ended and no screenshot was stored for the final state. Open the archived report for the replay and captured artifacts."
+      action={
+        <Link
+          to="/history/$runId"
+          params={{ runId }}
+          className={buttonVariants({
+            variant: "outline",
+            className: "mt-4 rounded-2xl",
+          })}
+        >
+          Open archived report
+          <IconExternalLink className="size-4" />
+        </Link>
+      }
+    />
+  )
+}
+
 function RunMetaRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[1.2rem] border border-border/70 bg-background/70 p-4 shadow-[0_16px_40px_-36px_rgba(0,0,0,0.7)]">
@@ -398,10 +465,12 @@ function PanelState({
   body,
   icon,
   title,
+  action,
 }: {
   body: string
   icon: ReactNode
   title: string
+  action?: ReactNode
 }) {
   return (
     <div className="flex min-h-[calc(100svh-20rem)] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-border/70 bg-background/70 p-8 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
@@ -412,6 +481,7 @@ function PanelState({
       <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground text-pretty">
         {body}
       </p>
+      {action}
     </div>
   )
 }
@@ -462,6 +532,22 @@ function eventIcon(kind: string) {
   }
 }
 
+function describeRunLabel(status: RunEvent["status"]) {
+  if (status === "completed") {
+    return "Completed run"
+  }
+
+  if (status === "failed") {
+    return "Failed run"
+  }
+
+  if (status === "cancelled") {
+    return "Cancelled run"
+  }
+
+  return "Live run"
+}
+
 type RunEvent = {
   _id: string
   artifactUrl?: string
@@ -472,4 +558,12 @@ type RunEvent = {
   status?: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
   stepIndex?: number
   title: string
+}
+
+type RunArtifact = {
+  _id: string
+  pageUrl?: string
+  title?: string
+  type: string
+  url?: string
 }

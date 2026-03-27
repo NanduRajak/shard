@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router"
 import {
   IconAlertTriangle,
   IconBolt,
@@ -66,6 +67,18 @@ export function RunReportView({ report }: { report: any }) {
               />
               <MetricCard label="Findings" value={scoreSummary.counts.findings.toString()} />
             </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/runs/$runId"
+              params={{ runId: run._id }}
+              className={buttonVariants({
+                variant: "outline",
+                className: "rounded-2xl",
+              })}
+            >
+              Open run timeline
+            </Link>
           </div>
         </CardHeader>
         <CardContent className="grid gap-4 pt-4 md:grid-cols-5">

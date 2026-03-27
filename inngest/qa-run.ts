@@ -1,5 +1,5 @@
 import lighthouse from "lighthouse"
-import { chromium, type Page } from "playwright"
+import { chromium, type Locator, type Page } from "playwright"
 import SteelClient from "steel-sdk"
 import { NonRetriableError } from "inngest"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
@@ -35,6 +35,7 @@ const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000
 const MAX_AGENT_STEPS = 36
 const MAX_DISCOVERED_PAGES = 12
 const MAX_PAGE_FINDINGS = 2
+const ACTION_HIGHLIGHT_DELAY_MS = 350
 const DEFAULT_MODEL = serverEnv.GEMINI_MODEL ?? "gemini-2.5-flash"
 
 type RunRequestedEvent = {
@@ -1627,7 +1628,7 @@ async function performClickAction({
     }
 
     const locator = page.locator(target.selector).first()
-    await locator.scrollIntoViewIfNeeded().catch(() => undefined)
+    await highlightActionTarget({ locator, page })
     await locator.click({ timeout: 5_000 })
     await settlePage(page)
 
@@ -1733,6 +1734,7 @@ async function performFillAction({
 
   try {
     const locator = page.locator(target.selector).first()
+    await highlightActionTarget({ locator, page })
     await locator.fill(value, { timeout: 5_000 })
 
     if (submitOnEnter && isSearchLikeInput(target)) {
@@ -1831,6 +1833,18 @@ async function performNavigationAction({
       target: targetLabel,
     }
   }
+}
+
+async function highlightActionTarget({
+  locator,
+  page,
+}: {
+  locator: Locator
+  page: Page
+}) {
+  await locator.scrollIntoViewIfNeeded().catch(() => undefined)
+  await locator.highlight().catch(() => undefined)
+  await page.waitForTimeout(ACTION_HIGHLIGHT_DELAY_MS).catch(() => undefined)
 }
 
 function parseGoalOutcome(summary: string) {
