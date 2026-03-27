@@ -3,6 +3,10 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { buildScoreSummary } from "../src/lib/scoring"
 import { buildAuditTrend } from "../src/lib/performance-trends"
+import {
+  buildRawRunModeCapabilities,
+  resolveLocalHelperOverview,
+} from "../src/lib/run-mode-capabilities"
 
 const runStatus = v.union(
   v.literal("queued"),
@@ -517,65 +521,36 @@ export const getRunExecutionState = query({
   },
 })
 
-const LOCAL_HELPER_STALE_MS = 30_000
-
-async function loadLocalHelperOverview(ctx: QueryCtx) {
+async function getLatestLocalHelperOverview(ctx: QueryCtx) {
   const helper = await ctx.db
     .query("localHelpers")
     .withIndex("by_updated_at")
     .order("desc")
     .first()
 
-  if (!helper) {
-    return {
-      available: false,
-      helper: null,
-      lastHeartbeatAt: null,
-    }
-  }
-
-  const isFresh = Date.now() - helper.lastHeartbeatAt < LOCAL_HELPER_STALE_MS
-  const normalizedStatus = isFresh ? helper.status : ("offline" as const)
-
-  return {
-    available:
-      normalizeLocalHelperStatus(normalizedStatus) === "idle" ||
-      normalizeLocalHelperStatus(normalizedStatus) === "busy",
-    helper: {
-      ...helper,
-      status: normalizedStatus,
-    },
-    lastHeartbeatAt: helper.lastHeartbeatAt,
-  }
+  return resolveLocalHelperOverview({
+    helper: helper
+      ? {
+          machineLabel: helper.machineLabel,
+          status: normalizeLocalHelperStatus(helper.status),
+          lastHeartbeatAt: helper.lastHeartbeatAt,
+        }
+      : null,
+  })
 }
 
 export const getLocalHelperOverview = query({
   args: {},
   handler: async (ctx) => {
-    return await loadLocalHelperOverview(ctx)
+    return await getLatestLocalHelperOverview(ctx)
   },
 })
 
-// Compatibility query for older browser sessions that still request the
-// previous runtime capabilities endpoint. Keep this lightweight and derived
-// from the current local helper overview until all clients refresh.
 export const getRunModeCapabilities = query({
   args: {},
   handler: async (ctx) => {
-    const localHelperOverview = await loadLocalHelperOverview(ctx)
-
-    return {
-      cloud: {
-        available: true,
-        provider: "steel" as const,
-      },
-      local: {
-        available: localHelperOverview.available,
-        helper: localHelperOverview.helper,
-        lastHeartbeatAt: localHelperOverview.lastHeartbeatAt,
-        provider: "local_chrome" as const,
-      },
-    }
+    const localHelperOverview = await getLatestLocalHelperOverview(ctx)
+    return buildRawRunModeCapabilities(localHelperOverview)
   },
 })
 

@@ -29,6 +29,9 @@ importers:
       '@fontsource-variable/instrument-sans':
         specifier: ^5.2.8
         version: 5.2.8
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.28.0
+        version: 1.28.0(zod@4.3.6)
       '@t3-oss/env-core':
         specifier: ^0.13.11
         version: 0.13.11(typescript@5.9.3)(zod@4.3.6)
@@ -62,6 +65,9 @@ importers:
       ai:
         specifier: ^6.0.138
         version: 6.0.138(zod@4.3.6)
+      chrome-devtools-mcp:
+        specifier: ^0.20.3
+        version: 0.20.3
       chrome-launcher:
         specifier: ^1.2.1
         version: 1.2.1
@@ -95,6 +101,9 @@ importers:
       lighthouse:
         specifier: ^13.0.3
         version: 13.0.3
+      lucide-react:
+        specifier: ^1.7.0
+        version: 1.7.0(react@19.2.4)
       motion:
         specifier: ^12.38.0
         version: 12.38.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -3358,6 +3367,11 @@ packages:
     resolution: {integrity: sha512-7VT13fmjotKpGipCW9JEQAusEPE+Ei8nl6/g4FBAmIm0GOOLMua9NDDo/DWp0ZAxCr3cPq5ZpBqmPAQgDda2Pw==}
     engines: {node: '>= 8.10.0'}
 
+  chrome-devtools-mcp@0.20.3:
+    resolution: {integrity: sha512-6MlNKlKa+J1FX9w4SUnFERF4MRGWLlrnZvIJGhhsuuMPM7qUG0F4SwheRyjwl0+tsTemxMCBHiib8mXkg5j6og==}
+    engines: {node: ^20.19.0 || ^22.12.0 || >=23}
+    hasBin: true
+
   chrome-launcher@1.2.1:
     resolution: {integrity: sha512-qmFR5PLMzHyuNJHwOloHPAHhbaNglkfeV/xDtt5b7xiFFyU1I+AZZX0PYseMuhenJSSirgxELYIbswcoc+5H4A==}
     engines: {node: '>=12.13.0'}
@@ -4623,6 +4637,11 @@ packages:
   lru-cache@7.18.3:
     resolution: {integrity: sha512-jumlc0BIUrS3qJGgIkWZsyfAM7NCWiBcCDhnd+3NNM5KbBmLTgHVfWBcg6W+rLUsIpzpERPsvwUP7CckAQSOoA==}
     engines: {node: '>=12'}
+
+  lucide-react@1.7.0:
+    resolution: {integrity: sha512-yI7BeItCLZJTXikmK4KNUGCKoGzSvbKlfCvw44bU4fXAL6v3gYS4uHD1jzsLkfwODYwI6Drw5Tu9Z5ulDe0TSg==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
@@ -6762,6 +6781,28 @@ snapshots:
       raw-body: 3.0.2
       zod: 3.25.76
       zod-to-json-schema: 3.25.1(zod@3.25.76)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@modelcontextprotocol/sdk@1.28.0(zod@4.3.6)':
+    dependencies:
+      '@hono/node-server': 1.19.11(hono@4.12.9)
+      ajv: 8.18.0
+      ajv-formats: 3.0.1(ajv@8.18.0)
+      content-type: 1.0.5
+      cors: 2.8.6
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.0.6
+      express: 5.2.1
+      express-rate-limit: 8.3.1(express@5.2.1)
+      hono: 4.12.9
+      jose: 6.2.2
+      json-schema-typed: 8.0.2
+      pkce-challenge: 5.0.1
+      raw-body: 3.0.2
+      zod: 4.3.6
+      zod-to-json-schema: 3.25.1(zod@4.3.6)
     transitivePeerDependencies:
       - supports-color
 
@@ -9382,6 +9423,8 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
 
+  chrome-devtools-mcp@0.20.3: {}
+
   chrome-launcher@1.2.1:
     dependencies:
       '@types/node': 22.19.15
@@ -10585,6 +10628,10 @@ snapshots:
       yallist: 3.1.1
 
   lru-cache@7.18.3: {}
+
+  lucide-react@1.7.0(react@19.2.4):
+    dependencies:
+      react: 19.2.4
 
   lz-string@1.5.0: {}
 
@@ -12137,6 +12184,10 @@ snapshots:
   zod-to-json-schema@3.25.1(zod@3.25.76):
     dependencies:
       zod: 3.25.76
+
+  zod-to-json-schema@3.25.1(zod@4.3.6):
+    dependencies:
+      zod: 4.3.6
 
   zod@3.25.76: {}
 

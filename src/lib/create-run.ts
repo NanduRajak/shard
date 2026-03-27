@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start"
 import { api } from "../../convex/_generated/api"
 import { prepareCreateRunPayload } from "./run-request"
+import { resolveRunModeCapabilities } from "./run-mode-capabilities"
 
 export const createRun = createServerFn({ method: "POST" })
   .inputValidator(
@@ -19,6 +20,16 @@ export const createRun = createServerFn({ method: "POST" })
     ])
 
     const convex = createConvexServerClient()
+    const rawCapabilities = await convex.query(api.runtime.getRunModeCapabilities, {})
+    const capabilities = resolveRunModeCapabilities(rawCapabilities, {
+      hasLocalHelperSecret: Boolean(serverEnv.LOCAL_HELPER_SECRET),
+    })
+    const selectedMode = capabilities[payload.browserProvider]
+
+    if (!selectedMode.runnable) {
+      throw new Error(selectedMode.reason ?? "The selected run mode is not available.")
+    }
+
     const runId = await convex.mutation(api.runs.createRun, payload)
 
     try {

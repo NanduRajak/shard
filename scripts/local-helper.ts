@@ -291,7 +291,7 @@ async function runLocalQaWorkflow({
       status: "starting",
       sessionId: session.sessionId,
       title: "Awaiting Chrome debugging permission",
-      body: "Open Chrome, enable remote debugging in chrome://inspect/#remote-debugging, then allow the incoming debugging connection prompt.",
+      body: "Use this redirect URL to enable the checkbox: chrome://inspect/#remote-debugging. Then allow the incoming debugging connection prompt in Chrome.",
       pageUrl: run.url,
     })
 

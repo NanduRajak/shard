@@ -16,6 +16,7 @@ import {
   IconHistory,
 } from "@tabler/icons-react"
 import { AppProviders } from "@/components/app-providers"
+import { HomeRunGuide } from "@/components/home-run-guide"
 import { Toaster } from "@/components/ui/sonner"
 import { AppSidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -114,6 +115,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                           {title}
                         </h1>
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {pathname === "/" ? <HomeRunGuide /> : null}
                     </div>
                   </div>
                 </header>
