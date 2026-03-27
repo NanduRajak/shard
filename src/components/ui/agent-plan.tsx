@@ -1,240 +1,141 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   IconAlertCircle,
   IconCircle,
   IconCircleCheck,
   IconCircleDashed,
   IconCircleX,
+  IconExternalLink,
 } from "@tabler/icons-react";
 import { motion, AnimatePresence, LayoutGroup } from "motion/react";
+import { formatDistanceToNowStrict } from "date-fns";
+
+export type TimelineEvent = {
+  _id: string;
+  artifactUrl?: string;
+  body?: string;
+  createdAt: number;
+  kind: string;
+  pageUrl?: string;
+  status?: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting";
+  stepIndex?: number;
+  title: string;
+};
 
 interface Subtask {
   id: string;
   title: string;
-  description: string;
-  status: string;
-  priority: string;
-  tools?: string[];
+  description?: string;
+  status: TimelineEvent["status"];
+  kind: string;
+  createdAt: number;
+  pageUrl?: string;
+  artifactUrl?: string;
 }
 
 interface Task {
   id: string;
   title: string;
-  description: string;
-  status: string;
-  priority: string;
-  level: number;
-  dependencies: string[];
+  description?: string;
+  status: TimelineEvent["status"];
+  stepIndex?: number;
   subtasks: Subtask[];
+  createdAt: number;
 }
 
-const initialTasks: Task[] = [
-  {
-    id: "1",
-    title: "Research Project Requirements",
-    description:
-      "Gather all necessary information about project scope and requirements",
-    status: "in-progress",
-    priority: "high",
-    level: 0,
-    dependencies: [],
-    subtasks: [
-      {
-        id: "1.1",
-        title: "Interview stakeholders",
-        description:
-          "Conduct interviews with key stakeholders to understand needs",
-        status: "completed",
-        priority: "high",
-        tools: ["communication-agent", "meeting-scheduler"],
-      },
-      {
-        id: "1.2",
-        title: "Review existing documentation",
-        description:
-          "Go through all available documentation and extract requirements",
-        status: "in-progress",
-        priority: "medium",
-        tools: ["file-system", "browser"],
-      },
-      {
-        id: "1.3",
-        title: "Compile findings report",
-        description:
-          "Create a comprehensive report of all gathered information",
-        status: "need-help",
-        priority: "medium",
-        tools: ["file-system", "markdown-processor"],
-      },
-    ],
-  },
-  {
-    id: "2",
-    title: "Design System Architecture",
-    description: "Create the overall system architecture based on requirements",
-    status: "in-progress",
-    priority: "high",
-    level: 0,
-    dependencies: [],
-    subtasks: [
-      {
-        id: "2.1",
-        title: "Define component structure",
-        description: "Map out all required components and their interactions",
-        status: "pending",
-        priority: "high",
-        tools: ["architecture-planner", "diagramming-tool"],
-      },
-      {
-        id: "2.2",
-        title: "Create data flow diagrams",
-        description:
-          "Design diagrams showing how data will flow through the system",
-        status: "pending",
-        priority: "medium",
-        tools: ["diagramming-tool", "file-system"],
-      },
-      {
-        id: "2.3",
-        title: "Document API specifications",
-        description: "Write detailed specifications for all APIs in the system",
-        status: "pending",
-        priority: "high",
-        tools: ["api-designer", "openapi-generator"],
-      },
-    ],
-  },
-  {
-    id: "3",
-    title: "Implementation Planning",
-    description: "Create a detailed plan for implementing the system",
-    status: "pending",
-    priority: "medium",
-    level: 1,
-    dependencies: ["1", "2"],
-    subtasks: [
-      {
-        id: "3.1",
-        title: "Resource allocation",
-        description: "Determine required resources and allocate them to tasks",
-        status: "pending",
-        priority: "medium",
-        tools: ["project-manager", "resource-calculator"],
-      },
-      {
-        id: "3.2",
-        title: "Timeline development",
-        description: "Create a timeline with milestones and deadlines",
-        status: "pending",
-        priority: "high",
-        tools: ["timeline-generator", "gantt-chart-creator"],
-      },
-      {
-        id: "3.3",
-        title: "Risk assessment",
-        description:
-          "Identify potential risks and develop mitigation strategies",
-        status: "pending",
-        priority: "medium",
-        tools: ["risk-analyzer"],
-      },
-    ],
-  },
-  {
-    id: "4",
-    title: "Development Environment Setup",
-    description: "Set up all necessary tools and environments for development",
-    status: "in-progress",
-    priority: "high",
-    level: 0,
-    dependencies: [],
-    subtasks: [
-      {
-        id: "4.1",
-        title: "Install development tools",
-        description:
-          "Set up IDEs, version control, and other necessary development tools",
-        status: "pending",
-        priority: "high",
-        tools: ["shell", "package-manager"],
-      },
-      {
-        id: "4.2",
-        title: "Configure CI/CD pipeline",
-        description: "Set up continuous integration and deployment pipelines",
-        status: "pending",
-        priority: "medium",
-        tools: ["github-actions", "gitlab-ci", "jenkins-connector"],
-      },
-      {
-        id: "4.3",
-        title: "Set up testing framework",
-        description: "Configure automated testing frameworks for the project",
-        status: "pending",
-        priority: "high",
-        tools: ["test-runner", "shell"],
-      },
-    ],
-  },
-  {
-    id: "5",
-    title: "Initial Development Sprint",
-    description: "Execute the first development sprint based on the plan",
-    status: "pending",
-    priority: "medium",
-    level: 1,
-    dependencies: ["4"],
-    subtasks: [
-      {
-        id: "5.1",
-        title: "Implement core features",
-        description:
-          "Develop the essential features identified in the requirements",
-        status: "pending",
-        priority: "high",
-        tools: ["code-assistant", "github", "file-system", "shell"],
-      },
-      {
-        id: "5.2",
-        title: "Perform unit testing",
-        description: "Create and execute unit tests for implemented features",
-        status: "pending",
-        priority: "medium",
-        tools: ["test-runner", "code-coverage-analyzer"],
-      },
-      {
-        id: "5.3",
-        title: "Document code",
-        description: "Create documentation for the implemented code",
-        status: "pending",
-        priority: "low",
-        tools: ["documentation-generator", "markdown-processor"],
-      },
-    ],
-  },
-];
+function parseBody(body?: string) {
+  if (!body) return null;
+  const isSuspiciouslyJson = body.trim().startsWith("{") || body.trim().startsWith("[");
+  if (isSuspiciouslyJson) {
+    try {
+      const parsed = JSON.parse(body);
+      return (
+        <pre className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap rounded-xl border border-border/50 bg-black/20 p-3 text-xs text-muted-foreground/90 font-mono shadow-inner">
+          {JSON.stringify(parsed, null, 2)}
+        </pre>
+      );
+    } catch {
+      // Not actually JSON, fall through
+    }
+  }
+  return <p className="py-2 text-muted-foreground/90 leading-relaxed whitespace-pre-wrap">{body}</p>;
+}
 
-export default function Plan() {
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
-  const [expandedTasks, setExpandedTasks] = useState<string[]>(["1"]);
-  const [expandedSubtasks, setExpandedSubtasks] = useState<{
-    [key: string]: boolean;
-  }>({});
-  const standardEase = [0.2, 0.65, 0.3, 0.9] as const;
-  const bounceEase = [0.34, 1.56, 0.64, 1] as const;
+export function AgentPlan({ events }: { events: TimelineEvent[] }) {
+  // Group events by stepIndex. 
+  // If an event lacks a stepIndex, we treat it as its own distinct step.
+  const groupedTasks = useMemo(() => {
+    const tasks: Task[] = [];
+    const stepMap = new Map<number, Task>();
 
-  const prefersReducedMotion =
-    typeof window !== "undefined"
-      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      : false;
+    for (const event of events) {
+      if (typeof event.stepIndex === "number") {
+        let task = stepMap.get(event.stepIndex);
+        if (!task) {
+          task = {
+            id: `step-${event.stepIndex}`,
+            title: `Step ${event.stepIndex}`,
+            status: event.status ?? "completed",
+            stepIndex: event.stepIndex,
+            subtasks: [],
+            createdAt: event.createdAt,
+          };
+          stepMap.set(event.stepIndex, task);
+          tasks.push(task);
+        }
+        
+        // Use the primary visual info from the event
+        task.subtasks.push({
+          id: event._id,
+          title: event.title,
+          description: event.body,
+          status: event.status ?? "completed",
+          kind: event.kind,
+          createdAt: event.createdAt,
+          pageUrl: event.pageUrl,
+          artifactUrl: event.artifactUrl,
+        });
+
+        // Update parent task status to worst case scenario or most ongoing
+        if (event.status === "failed" || event.status === "cancelled") {
+          task.status = event.status;
+        } else if (event.status === "running" && task.status !== "failed") {
+          task.status = "running";
+        }
+
+      } else {
+        // Standalone event (e.g. initial navigation)
+        tasks.push({
+          id: event._id,
+          title: event.title,
+          description: event.body,
+          status: event.status ?? "completed",
+          stepIndex: undefined,
+          subtasks: [],
+          createdAt: event.createdAt,
+        });
+      }
+    }
+    
+    // Sort tasks primarily by logical order if we want, or just rely on chronology since events are sorted
+    return tasks;
+  }, [events]);
+
+  const [expandedTasks, setExpandedTasks] = useState<string[]>(
+    Array.from(new Set(events.map(e => e.stepIndex !== undefined ? `step-${e.stepIndex}` : e._id)))
+  );
+  
+  const [expandedSubtasks, setExpandedSubtasks] = useState<{ [key: string]: boolean }>({});
+
+  const prefersReducedMotion = typeof window !== "undefined"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    : false;
 
   const toggleTaskExpansion = (taskId: string) => {
     setExpandedTasks((prev) =>
-      prev.includes(taskId)
-        ? prev.filter((id) => id !== taskId)
-        : [...prev, taskId],
+      prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
     );
   };
 
@@ -246,202 +147,129 @@ export default function Plan() {
     }));
   };
 
-  const toggleTaskStatus = (taskId: string) => {
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.id === taskId) {
-          const statuses = [
-            "completed",
-            "in-progress",
-            "pending",
-            "need-help",
-            "failed",
-          ];
-          const currentIndex = Math.floor(Math.random() * statuses.length);
-          const newStatus = statuses[currentIndex];
-
-          const updatedSubtasks = task.subtasks.map((subtask) => ({
-            ...subtask,
-            status: newStatus === "completed" ? "completed" : subtask.status,
-          }));
-
-          return {
-            ...task,
-            status: newStatus,
-            subtasks: updatedSubtasks,
-          };
-        }
-        return task;
-      }),
-    );
+  const getStatusIcon = (status?: string, className?: string) => {
+    const classes = className ?? "h-4.5 w-4.5";
+    switch (status) {
+      case "completed":
+        return <IconCircleCheck className={`${classes} text-green-500`} />;
+      case "running":
+      case "starting":
+        return <IconCircleDashed className={`${classes} text-blue-500 animate-[spin_4s_linear_infinite]`} />;
+      case "failed":
+      case "cancelled":
+        return <IconCircleX className={`${classes} text-red-500`} />;
+      case "queued":
+        return <IconAlertCircle className={`${classes} text-yellow-500`} />;
+      default:
+        return <IconCircle className={`${classes} text-muted-foreground`} />;
+    }
   };
 
-  const toggleSubtaskStatus = (taskId: string, subtaskId: string) => {
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.id === taskId) {
-          const updatedSubtasks = task.subtasks.map((subtask) => {
-            if (subtask.id === subtaskId) {
-              const newStatus =
-                subtask.status === "completed" ? "pending" : "completed";
-              return { ...subtask, status: newStatus };
-            }
-            return subtask;
-          });
-
-          const allSubtasksCompleted = updatedSubtasks.every(
-            (s) => s.status === "completed",
-          );
-
-          return {
-            ...task,
-            subtasks: updatedSubtasks,
-            status: allSubtasksCompleted ? "completed" : task.status,
-          };
-        }
-        return task;
-      }),
-    );
+  const getStatusBadgeColors = (status?: string) => {
+    if (status === "completed") return "bg-green-500/15 text-green-400 border-green-500/20";
+    if (status === "running" || status === "starting") return "bg-blue-500/15 text-blue-400 border-blue-500/20";
+    if (status === "failed" || status === "cancelled") return "bg-red-500/15 text-red-500 border-red-500/20";
+    if (status === "queued") return "bg-yellow-500/15 text-yellow-400 border-yellow-500/20";
+    return "bg-muted text-muted-foreground border-border/50";
   };
 
+  // Animation variants
   const taskVariants = {
-    hidden: {
-      opacity: 0,
-      y: prefersReducedMotion ? 0 : -5,
-    },
-    visible: {
-      opacity: 1,
+    hidden: { opacity: 0, y: prefersReducedMotion ? 0 : -5 },
+    visible: { 
+      opacity: 1, 
       y: 0,
-      transition: prefersReducedMotion
-        ? { type: "tween" as const, duration: 0.2 }
-        : { type: "spring" as const, stiffness: 500, damping: 30 },
+      transition: { 
+        type: (prefersReducedMotion ? "tween" : "spring") as any, 
+        stiffness: 500, 
+        damping: 30,
+        duration: prefersReducedMotion ? 0.2 : undefined
+      }
     },
-    exit: {
-      opacity: 0,
-      y: prefersReducedMotion ? 0 : -5,
-      transition: { duration: 0.15 },
-    },
+    exit: { opacity: 0, y: prefersReducedMotion ? 0 : -5, transition: { duration: 0.15 } }
   };
 
   const subtaskListVariants = {
-    hidden: {
-      opacity: 0,
-      height: 0,
-      overflow: "hidden",
-    },
-    visible: {
-      height: "auto",
+    hidden: { opacity: 0, height: 0, overflow: "hidden" },
+    visible: { 
+      height: "auto", 
       opacity: 1,
       overflow: "visible",
-      transition: {
-        duration: 0.25,
+      transition: { 
+        duration: 0.25, 
         staggerChildren: prefersReducedMotion ? 0 : 0.05,
-        when: "beforeChildren" as const,
-        ease: standardEase,
-      },
+        when: "beforeChildren",
+        ease: [0.2, 0.65, 0.3, 0.9] as const
+      }
     },
     exit: {
-      height: 0,
-      opacity: 0,
-      overflow: "hidden",
-      transition: {
-        duration: 0.2,
-        ease: standardEase,
-      },
-    },
+      height: 0, opacity: 0, overflow: "hidden",
+      transition: { duration: 0.2, ease: [0.2, 0.65, 0.3, 0.9] as const }
+    }
   };
 
   const subtaskVariants = {
-    hidden: {
-      opacity: 0,
-      x: prefersReducedMotion ? 0 : -10,
+    hidden: { opacity: 0, x: prefersReducedMotion ? 0 : -10 },
+    visible: { 
+      opacity: 1, x: 0,
+      transition: { 
+        type: (prefersReducedMotion ? "tween" : "spring") as any, 
+        stiffness: 500, damping: 25, duration: prefersReducedMotion ? 0.2 : undefined
+      }
     },
-    visible: {
-      opacity: 1,
-      x: 0,
-      transition: prefersReducedMotion
-        ? { type: "tween" as const, duration: 0.2 }
-        : { type: "spring" as const, stiffness: 500, damping: 25 },
-    },
-    exit: {
-      opacity: 0,
-      x: prefersReducedMotion ? 0 : -10,
-      transition: { duration: 0.15 },
-    },
+    exit: { opacity: 0, x: prefersReducedMotion ? 0 : -10, transition: { duration: 0.15 } }
   };
 
   const subtaskDetailsVariants = {
-    hidden: {
-      opacity: 0,
-      height: 0,
-      overflow: "hidden",
-    },
-    visible: {
-      opacity: 1,
-      height: "auto",
-      overflow: "visible",
-      transition: {
-        duration: 0.25,
-        ease: standardEase,
-      },
-    },
+    hidden: { opacity: 0, height: 0, overflow: "hidden" },
+    visible: { 
+      opacity: 1, height: "auto", overflow: "visible",
+      transition: { duration: 0.25, ease: [0.2, 0.65, 0.3, 0.9] as const }
+    }
   };
 
   const statusBadgeVariants = {
     initial: { scale: 1 },
-    animate: {
-      scale: prefersReducedMotion ? 1 : [1, 1.08, 1],
-      transition: {
-        duration: 0.35,
-        ease: bounceEase,
-      },
-    },
+    animate: { 
+      scale: prefersReducedMotion ? 1 : [1, 1.05, 1],
+      transition: { duration: 0.35, ease: [0.34, 1.56, 0.64, 1] as const }
+    }
   };
 
-  return (
-    <div className="bg-background text-foreground h-full overflow-auto p-2">
-      <motion.div
-        className="bg-card border-border rounded-lg border shadow overflow-hidden"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{
-          opacity: 1,
-          y: 0,
-          transition: {
-            duration: 0.3,
-            ease: standardEase,
-          },
-        }}
-      >
-        <LayoutGroup>
-          <div className="p-4 overflow-hidden">
-            <ul className="space-y-1 overflow-hidden">
-              {tasks.map((task, index) => {
-                const isExpanded = expandedTasks.includes(task.id);
-                const isCompleted = task.status === "completed";
+  if (!events.length) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-32 text-center text-muted-foreground p-4">
+        <IconCircleDashed className="animate-spin mb-3 text-muted-foreground/50" />
+        <p>Waiting for runtime events...</p>
+      </div>
+    );
+  }
 
-                return (
-                  <motion.li
-                    key={task.id}
-                    className={` ${index !== 0 ? "mt-1 pt-2" : ""} `}
-                    initial="hidden"
-                    animate="visible"
-                    variants={taskVariants}
+  return (
+    <div className="text-foreground w-full p-2">
+      <LayoutGroup>
+        <div>
+          <ul className="space-y-1">
+            {groupedTasks.map((task, index) => {
+              const isExpanded = expandedTasks.includes(task.id);
+              const isCompleted = task.status === "completed";
+
+              return (
+                <motion.li
+                  key={task.id}
+                  className={` ${index !== 0 ? "mt-1 pt-2" : ""} `}
+                  initial="hidden"
+                  animate="visible"
+                  variants={taskVariants}
+                >
+                  {/* Task row */}
+                  <motion.div 
+                    className="group flex flex-col md:flex-row md:items-center px-3 py-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                    onClick={() => toggleTaskExpansion(task.id)}
                   >
-                    {}
-                    <motion.div
-                      className="group flex items-center px-3 py-1.5 rounded-md"
-                      whileHover={{
-                        backgroundColor: "rgba(0,0,0,0.03)",
-                        transition: { duration: 0.2 },
-                      }}
-                    >
+                    <div className="flex flex-1 items-center">
                       <motion.div
-                        className="mr-2 flex-shrink-0 cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleTaskStatus(task.id);
-                        }}
-                        whileTap={{ scale: 0.9 }}
+                        className="mr-3 flex-shrink-0"
                         whileHover={{ scale: 1.1 }}
                       >
                         <AnimatePresence mode="wait">
@@ -450,257 +278,183 @@ export default function Plan() {
                             initial={{ opacity: 0, scale: 0.8, rotate: -10 }}
                             animate={{ opacity: 1, scale: 1, rotate: 0 }}
                             exit={{ opacity: 0, scale: 0.8, rotate: 10 }}
-                            transition={{
-                              duration: 0.2,
-                              ease: standardEase,
-                            }}
+                            transition={{ duration: 0.2, ease: [0.2, 0.65, 0.3, 0.9] as const }}
                           >
-                            {task.status === "completed" ? (
-                              <IconCircleCheck className="h-4.5 w-4.5 text-green-500" />
-                            ) : task.status === "in-progress" ? (
-                              <IconCircleDashed className="h-4.5 w-4.5 text-blue-500" />
-                            ) : task.status === "need-help" ? (
-                              <IconAlertCircle className="h-4.5 w-4.5 text-yellow-500" />
-                            ) : task.status === "failed" ? (
-                              <IconCircleX className="h-4.5 w-4.5 text-red-500" />
-                            ) : (
-                              <IconCircle className="text-muted-foreground h-4.5 w-4.5" />
-                            )}
+                            {getStatusIcon(task.status, "h-5 w-5")}
                           </motion.div>
                         </AnimatePresence>
                       </motion.div>
 
-                      <motion.div
-                        className="flex min-w-0 flex-grow cursor-pointer items-center justify-between"
-                        onClick={() => toggleTaskExpansion(task.id)}
-                      >
-                        <div className="mr-2 flex-1 truncate">
-                          <span
-                            className={`${isCompleted ? "text-muted-foreground line-through" : ""}`}
-                          >
-                            {task.title}
-                          </span>
+                      <div className="mr-2 flex-1">
+                        <span className={`font-medium ${isCompleted ? "text-muted-foreground line-through" : "text-foreground"}`}>
+                          {task.title}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-shrink-0 items-center justify-start mt-2 md:mt-0 space-x-2 text-xs ml-[2.25rem] md:ml-0">
+                      {task.stepIndex !== undefined && (
+                        <div className="rounded border border-border/40 bg-secondary/40 text-secondary-foreground px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
+                          Index {task.stepIndex}
                         </div>
+                      )}
 
-                        <div className="flex flex-shrink-0 items-center space-x-2 text-xs">
-                          {task.dependencies.length > 0 && (
-                            <div className="flex items-center mr-2">
-                              <div className="flex flex-wrap gap-1">
-                                {task.dependencies.map((dep, idx) => (
-                                  <motion.span
-                                    key={idx}
-                                    className="bg-secondary/40 text-secondary-foreground rounded px-1.5 py-0.5 text-[10px] font-medium shadow-sm"
-                                    initial={{ opacity: 0, scale: 0.9 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    transition={{
-                                      duration: 0.2,
-                                      delay: idx * 0.05,
-                                    }}
-                                    whileHover={{
-                                      y: -1,
-                                      backgroundColor: "rgba(0,0,0,0.1)",
-                                      transition: { duration: 0.2 },
-                                    }}
-                                  >
-                                    {dep}
-                                  </motion.span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                      {task.status && (
+                        <motion.span
+                          className={`rounded px-1.5 py-0.5 border ${getStatusBadgeColors(task.status)} font-medium text-[10px]`}
+                          variants={statusBadgeVariants}
+                          initial="initial"
+                          animate="animate"
+                          key={task.status}
+                        >
+                          {task.status}
+                        </motion.span>
+                      )}
+                    </div>
+                  </motion.div>
 
-                          <motion.span
-                            className={`rounded px-1.5 py-0.5 ${
-                              task.status === "completed"
-                                ? "bg-green-100 text-green-700"
-                                : task.status === "in-progress"
-                                  ? "bg-blue-100 text-blue-700"
-                                  : task.status === "need-help"
-                                    ? "bg-yellow-100 text-yellow-700"
-                                    : task.status === "failed"
-                                      ? "bg-red-100 text-red-700"
-                                      : "bg-muted text-muted-foreground"
-                            }`}
-                            variants={statusBadgeVariants}
-                            initial="initial"
-                            animate="animate"
-                            key={task.status}
-                          >
-                            {task.status}
-                          </motion.span>
+                  {/* Root single-event expansion (if task has no subtasks) */}
+                  <AnimatePresence mode="wait">
+                    {isExpanded && task.subtasks.length === 0 && task.description && (
+                      <motion.div
+                        variants={subtaskListVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="hidden"
+                        className="relative overflow-hidden"
+                        layout
+                      >
+                        <div className="border-l-2 border-dashed border-muted-foreground/30 mt-1 ml-[1.125rem] pl-4 text-sm text-foreground overflow-hidden">
+                          <div className="py-2 pr-2">
+                           {parseBody(task.description)}
+                          </div>
                         </div>
                       </motion.div>
-                    </motion.div>
+                    )}
+                  </AnimatePresence>
 
-                    {}
-                    <AnimatePresence mode="wait">
-                      {isExpanded && task.subtasks.length > 0 && (
-                        <motion.div
-                          className="relative overflow-hidden"
-                          variants={subtaskListVariants}
-                          initial="hidden"
-                          animate="visible"
-                          exit="hidden"
-                          layout
-                        >
-                          {}
-                          <div className="absolute top-0 bottom-0 left-[20px] border-l-2 border-dashed border-muted-foreground/30" />
-                          <ul className="border-muted mt-1 mr-2 mb-1.5 ml-3 space-y-0.5">
-                            {task.subtasks.map((subtask) => {
-                              const subtaskKey = `${task.id}-${subtask.id}`;
-                              const isSubtaskExpanded =
-                                expandedSubtasks[subtaskKey];
+                  {/* Subtasks - staggered */}
+                  <AnimatePresence mode="wait">
+                    {isExpanded && task.subtasks.length > 0 && (
+                      <motion.div 
+                        className="relative overflow-hidden"
+                        variants={subtaskListVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="hidden"
+                        layout
+                      >
+                        {/* Vertical connecting line aligned with task icon */}
+                        <div className="absolute top-0 bottom-0 left-[1.125rem] border-l-2 border-dashed border-muted-foreground/30" />
+                        <ul className="mt-1 mr-2 mb-1.5 ml-3 space-y-0.5 pt-1">
+                          {task.subtasks.map((subtask) => {
+                            const subtaskKey = `${task.id}-${subtask.id}`;
+                            const isSubtaskExpanded = expandedSubtasks[subtaskKey] ?? false;
+                            const isSubCompleted = subtask.status === "completed";
 
-                              return (
-                                <motion.li
-                                  key={subtask.id}
-                                  className="group flex flex-col py-0.5 pl-6"
-                                  onClick={() =>
-                                    toggleSubtaskExpansion(task.id, subtask.id)
-                                  }
-                                  variants={subtaskVariants}
-                                  initial="hidden"
-                                  animate="visible"
-                                  exit="exit"
+                            return (
+                              <motion.li
+                                key={subtask.id}
+                                className="group flex flex-col py-0.5 pl-5 relative z-10"
+                                variants={subtaskVariants}
+                                initial="hidden"
+                                animate="visible"
+                                exit="exit"
+                                layout
+                              >
+                                <motion.div 
+                                  className="flex flex-1 items-start sm:items-center rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer gap-3 max-w-full"
+                                  onClick={() => toggleSubtaskExpansion(task.id, subtask.id)}
                                   layout
                                 >
                                   <motion.div
-                                    className="flex flex-1 items-center rounded-md p-1"
-                                    whileHover={{
-                                      backgroundColor: "rgba(0,0,0,0.03)",
-                                      transition: { duration: 0.2 },
-                                    }}
+                                    className="flex-shrink-0 mt-0.5 sm:mt-0"
+                                    whileTap={{ scale: 0.9 }}
+                                    whileHover={{ scale: 1.1 }}
                                     layout
                                   >
-                                    <motion.div
-                                      className="mr-2 flex-shrink-0 cursor-pointer"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleSubtaskStatus(
-                                          task.id,
-                                          subtask.id,
-                                        );
-                                      }}
-                                      whileTap={{ scale: 0.9 }}
-                                      whileHover={{ scale: 1.1 }}
-                                      layout
-                                    >
-                                      <AnimatePresence mode="wait">
-                                        <motion.div
-                                          key={subtask.status}
-                                          initial={{
-                                            opacity: 0,
-                                            scale: 0.8,
-                                            rotate: -10,
-                                          }}
-                                          animate={{
-                                            opacity: 1,
-                                            scale: 1,
-                                            rotate: 0,
-                                          }}
-                                          exit={{
-                                            opacity: 0,
-                                            scale: 0.8,
-                                            rotate: 10,
-                                          }}
-                                          transition={{
-                                            duration: 0.2,
-                                            ease: standardEase,
-                                          }}
-                                        >
-                                          {subtask.status === "completed" ? (
-                                            <IconCircleCheck className="h-3.5 w-3.5 text-green-500" />
-                                          ) : subtask.status ===
-                                            "in-progress" ? (
-                                            <IconCircleDashed className="h-3.5 w-3.5 text-blue-500" />
-                                          ) : subtask.status === "need-help" ? (
-                                            <IconAlertCircle className="h-3.5 w-3.5 text-yellow-500" />
-                                          ) : subtask.status === "failed" ? (
-                                            <IconCircleX className="h-3.5 w-3.5 text-red-500" />
-                                          ) : (
-                                            <IconCircle className="text-muted-foreground h-3.5 w-3.5" />
-                                          )}
-                                        </motion.div>
-                                      </AnimatePresence>
-                                    </motion.div>
-
-                                    <span
-                                      className={`cursor-pointer text-sm ${subtask.status === "completed" ? "text-muted-foreground line-through" : ""}`}
-                                    >
-                                      {subtask.title}
-                                    </span>
+                                    <AnimatePresence mode="wait">
+                                      <motion.div
+                                        key={subtask.status}
+                                        initial={{ opacity: 0, scale: 0.8, rotate: -10 }}
+                                        animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                                        exit={{ opacity: 0, scale: 0.8, rotate: 10 }}
+                                        transition={{ duration: 0.2, ease: [0.2, 0.65, 0.3, 0.9] as const }}
+                                      >
+                                        {getStatusIcon(subtask.status, "h-4 w-4")}
+                                      </motion.div>
+                                    </AnimatePresence>
                                   </motion.div>
 
-                                  <AnimatePresence mode="wait">
-                                    {isSubtaskExpanded && (
-                                      <motion.div
-                                        className="text-muted-foreground border-foreground/20 mt-1 ml-1.5 border-l border-dashed pl-5 text-xs overflow-hidden"
-                                        variants={subtaskDetailsVariants}
-                                        initial="hidden"
-                                        animate="visible"
-                                        exit="hidden"
-                                        layout
-                                      >
-                                        <p className="py-1">
-                                          {subtask.description}
-                                        </p>
-                                        {subtask.tools &&
-                                          subtask.tools.length > 0 && (
-                                            <div className="mt-0.5 mb-1 flex flex-wrap items-center gap-1.5">
-                                              <span className="text-muted-foreground font-medium">
-                                                MCP Servers:
-                                              </span>
-                                              <div className="flex flex-wrap gap-1">
-                                                {subtask.tools.map(
-                                                  (tool, idx) => (
-                                                    <motion.span
-                                                      key={idx}
-                                                      className="bg-secondary/40 text-secondary-foreground rounded px-1.5 py-0.5 text-[10px] font-medium shadow-sm"
-                                                      initial={{
-                                                        opacity: 0,
-                                                        y: -5,
-                                                      }}
-                                                      animate={{
-                                                        opacity: 1,
-                                                        y: 0,
-                                                        transition: {
-                                                          duration: 0.2,
-                                                          delay: idx * 0.05,
-                                                        },
-                                                      }}
-                                                      whileHover={{
-                                                        y: -1,
-                                                        backgroundColor:
-                                                          "rgba(0,0,0,0.1)",
-                                                        transition: {
-                                                          duration: 0.2,
-                                                        },
-                                                      }}
-                                                    >
-                                                      {tool}
-                                                    </motion.span>
-                                                  ),
-                                                )}
-                                              </div>
-                                            </div>
-                                          )}
-                                      </motion.div>
-                                    )}
-                                  </AnimatePresence>
-                                </motion.li>
-                              );
-                            })}
-                          </ul>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </motion.li>
-                );
-              })}
-            </ul>
-          </div>
-        </LayoutGroup>
-      </motion.div>
+                                  <div className="flex flex-col min-w-0 flex-1">
+                                    <span className={`text-sm truncate ${isSubCompleted ? "text-muted-foreground line-through" : "text-foreground"}`}>
+                                      {subtask.title}
+                                    </span>
+                                    <span className="text-[10px] text-muted-foreground mt-0.5">
+                                      {formatDistanceToNowStrict(subtask.createdAt, { addSuffix: true })}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex shrink-0 items-center justify-end gap-1.5 ml-auto">
+                                      {subtask.kind && (
+                                        <span className="bg-secondary/40 text-secondary-foreground border border-border/40 rounded px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
+                                          {subtask.kind}
+                                        </span>
+                                      )}
+                                      {subtask.status && (
+                                        <motion.span
+                                          className={`rounded px-1.5 py-0.5 border ${getStatusBadgeColors(subtask.status)} font-medium text-[10px]`}
+                                          variants={statusBadgeVariants}
+                                          initial="initial"
+                                          animate="animate"
+                                          key={subtask.status}
+                                        >
+                                          {subtask.status}
+                                        </motion.span>
+                                      )}
+                                  </div>
+                                </motion.div>
+
+                                <AnimatePresence mode="wait">
+                                  {isSubtaskExpanded && (
+                                    <motion.div 
+                                      className="border-muted-foreground/30 mt-1 ml-1.5 border-l-2 border-dashed pl-4 text-sm overflow-hidden"
+                                      variants={subtaskDetailsVariants}
+                                      initial="hidden"
+                                      animate="visible"
+                                      exit="hidden"
+                                      layout
+                                    >
+                                      <div className="py-1 pr-2">
+                                        {parseBody(subtask.description)}
+                                        {subtask.artifactUrl && (
+                                          <a
+                                              href={subtask.artifactUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="inline-flex items-center gap-1 mt-2 text-xs text-primary hover:underline hover:text-primary/80 transition-colors"
+                                            >
+                                              Open saved artifact
+                                              <IconExternalLink className="size-3" />
+                                          </a>
+                                        )}
+                                      </div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </motion.li>
+                            );
+                          })}
+                        </ul>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.li>
+              );
+            })}
+          </ul>
+        </div>
+      </LayoutGroup>
     </div>
   );
 }

@@ -13,7 +13,6 @@ import {
   IconRadar2,
   IconSatellite,
   IconSparkles,
-  IconWorld,
 } from "@tabler/icons-react"
 import { formatDistanceToNow } from "date-fns"
 import { useEffect, useRef } from "react"
@@ -23,12 +22,7 @@ import { api } from "../../convex/_generated/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button"
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
+import { AgentPlan } from "@/components/ui/agent-plan"
 import {
   Card,
   CardContent,
@@ -153,7 +147,7 @@ function RunPage() {
   const runLabel = describeRunLabel(run.status)
 
   return (
-    <div className="flex h-[calc(100svh-8.5rem)] min-h-[calc(100svh-8.5rem)] flex-col gap-4 overflow-hidden">
+    <div className="flex min-h-[calc(100svh-8.5rem)] flex-col gap-4">
       <Card className="border border-border/70 bg-card/85">
         <CardHeader className="gap-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -218,79 +212,20 @@ function RunPage() {
         </CardHeader>
       </Card>
 
-      <div className="grid h-0 min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(18rem,0.34fr)_minmax(0,0.66fr)]">
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden border border-border/70 bg-card/85">
+      <div className="grid min-h-[32rem] flex-1 gap-4 xl:grid-cols-[minmax(18rem,0.34fr)_minmax(0,0.66fr)]">
+        <Card className="flex flex-col border border-border/70 bg-card/85">
           <CardHeader className="shrink-0 gap-2 border-b border-border/70 bg-card/95">
             <CardTitle className="text-base">Agent output</CardTitle>
             <CardDescription className="text-pretty">
               Playwright actions, QA decisions, findings, and citations from the live runner session.
             </CardDescription>
           </CardHeader>
-          <CardContent ref={transcriptRef} className="h-0 min-h-0 flex-1 overflow-y-auto p-4">
+          <CardContent
+            ref={transcriptRef}
+            className="flex-1 overflow-y-auto p-4 max-h-[48rem] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
             {timeline.length ? (
-              <Accordion
-                defaultValue={timeline[timeline.length - 1]?._id ? [timeline[timeline.length - 1]._id] : []}
-                multiple
-                className="space-y-4"
-              >
-                {timeline.map((event, index) => (
-                  <article key={event._id} className="group relative pl-11">
-                    {index < timeline.length - 1 ? (
-                      <div className="absolute top-11 left-[1.1rem] bottom-[-1rem] w-px bg-linear-to-b from-border via-border/70 to-transparent" />
-                    ) : null}
-                    <div className="absolute top-1 left-0 flex size-9 items-center justify-center rounded-2xl border border-border/70 bg-background shadow-[0_10px_30px_-18px_rgba(0,0,0,0.6)] transition-transform duration-200 group-hover:scale-[1.02]">
-                      {eventIcon(event.kind)}
-                    </div>
-                    <AccordionItem
-                      value={event._id}
-                      className="rounded-[1.4rem] border border-border/70 bg-background/70 px-4 shadow-[0_16px_40px_-34px_rgba(0,0,0,0.65)]"
-                    >
-                      <AccordionTrigger className="py-4 hover:no-underline">
-                        <div className="pr-4 text-left">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-medium text-foreground">{event.title}</p>
-                            {event.status ? <StatusBadge status={event.status} /> : null}
-                            {event.stepIndex !== undefined ? (
-                              <Badge variant="outline">Step {event.stepIndex}</Badge>
-                            ) : null}
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground [font-variant-numeric:tabular-nums]">
-                            <span>{formatDistanceToNow(event.createdAt, { addSuffix: true })}</span>
-                            {event.pageUrl ? (
-                              <span className="max-w-[14rem] truncate">{event.pageUrl}</span>
-                            ) : null}
-                          </div>
-                        </div>
-                      </AccordionTrigger>
-                      <AccordionContent className="pb-4">
-                        {event.body ? (
-                          <p className="text-sm leading-6 text-muted-foreground whitespace-pre-wrap text-pretty">
-                            {event.body}
-                          </p>
-                        ) : (
-                          <p className="text-sm text-muted-foreground">
-                            No additional details were recorded for this event.
-                          </p>
-                        )}
-                        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground [font-variant-numeric:tabular-nums]">
-                          {event.pageUrl ? <span className="break-all">{event.pageUrl}</span> : null}
-                          {event.artifactUrl ? (
-                            <a
-                              href={event.artifactUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-foreground"
-                            >
-                              Open artifact
-                              <IconExternalLink className="size-3" />
-                            </a>
-                          ) : null}
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  </article>
-                ))}
-              </Accordion>
+              <AgentPlan events={timeline} />
             ) : (
               <PanelState
                 icon={<IconRadar2 className="size-4" />}
@@ -301,8 +236,8 @@ function RunPage() {
           </CardContent>
         </Card>
 
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden border border-border/70 bg-card/85">
-          <CardHeader className="shrink-0 gap-3 border-b border-border/70">
+        <Card className="flex flex-col border border-border/70 bg-card/85">
+          <CardHeader className="shrink-0 gap-3 border-b border-border/70 bg-card/95">
             <CardTitle className="flex items-center gap-2 text-base">
               <IconPlayerPlay className="size-4" />
               {snapshotTitle}
@@ -311,7 +246,7 @@ function RunPage() {
               {snapshotDescription}
             </CardDescription>
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 p-4">
+          <CardContent className="flex-1 p-4">
             {isActive && executionState === "preview_active" && liveEmbedUrl ? (
               <iframe
                 title="Steel live session"
@@ -480,11 +415,11 @@ function SnapshotState({
 }) {
   if (screenshot?.url) {
     return (
-      <div className="flex h-full min-h-[26rem] flex-col gap-4">
+      <div className="flex flex-col gap-4">
         <img
           alt={screenshot.title ?? "Latest run screenshot"}
           src={screenshot.url}
-          className="h-full min-h-0 w-full rounded-[1.6rem] border border-border/70 bg-background object-cover shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
+          className="w-full rounded-none border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
         />
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-border/70 bg-background/70 px-4 py-3">
           <div className="min-w-0">
@@ -550,11 +485,11 @@ function LocalSessionState({
 }) {
   if (screenshot?.url) {
     return (
-      <div className="flex h-full min-h-[26rem] flex-col gap-4">
+      <div className="flex flex-col gap-4">
         <img
           alt={screenshot.title ?? "Latest local session screenshot"}
           src={screenshot.url}
-          className="h-full min-h-0 w-full rounded-[1.6rem] border border-border/70 bg-background object-cover shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
+          className="w-full rounded-none border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
         />
         <div className="rounded-[1.4rem] border border-border/70 bg-background/70 px-4 py-3 text-sm text-muted-foreground">
           {browserProvider === "playwright"
@@ -659,18 +594,7 @@ function QueueBadge({
   return <Badge variant="outline">{label}</Badge>
 }
 
-function eventIcon(kind: string) {
-  switch (kind) {
-    case "navigation":
-      return <IconWorld className="size-4" />
-    case "session":
-      return <IconSatellite className="size-4" />
-    case "status":
-      return <IconSparkles className="size-4" />
-    default:
-      return <IconRadar2 className="size-4" />
-  }
-}
+
 
 function describeRunLabel(status: RunEvent["status"]) {
   if (status === "completed") {
