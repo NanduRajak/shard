@@ -716,7 +716,7 @@ export const getRunReport = query({
 
     const scoreSummary = buildScoreSummary({
       findings: findings.map((finding) => ({
-        score: finding.score,
+        score: finding.score ?? 0,
         source: finding.source,
       })),
       performanceAudits: performanceAudits.length,

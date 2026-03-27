@@ -48,7 +48,7 @@ export function SteelReplayPlayer({ sessionId }: { sessionId: string }) {
           enableWorker: true,
         })
 
-        instance.on(Hls.Events.ERROR, (_, event) => {
+        instance.on(Hls.Events.ERROR, (_: unknown, event: { fatal: boolean }) => {
           if (event.fatal) {
             setError("Replay video is unavailable right now.")
           }

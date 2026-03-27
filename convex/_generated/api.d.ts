@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as reviewBot from "../reviewBot.js";
 import type * as credentials from "../credentials.js";
 import type * as runs from "../runs.js";
 import type * as runtime from "../runtime.js";
@@ -19,6 +20,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  reviewBot: typeof reviewBot;
   credentials: typeof credentials;
   runs: typeof runs;
   runtime: typeof runtime;

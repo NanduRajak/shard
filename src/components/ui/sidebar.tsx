@@ -8,8 +8,8 @@ import {
   IconHistory,
   IconHome2,
   IconLayoutDashboard,
+  IconLayoutSidebarLeftExpand,
   IconMessage2Bolt,
-  IconSparkles,
 } from "@tabler/icons-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -263,7 +263,7 @@ function SidebarTrigger({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar()
+  const { state, toggleSidebar } = useSidebar()
 
   return (
     <Button
@@ -278,7 +278,11 @@ function SidebarTrigger({
       }}
       {...props}
     >
-      <IconLayoutSidebarLeftCollapse />
+      {state === "collapsed" ? (
+        <IconLayoutSidebarLeftExpand />
+      ) : (
+        <IconLayoutSidebarLeftCollapse />
+      )}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   )
@@ -482,7 +486,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
+  "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 group-data-[collapsible=icon]:[&_svg]:size-5! [&_svg]:shrink-0 [&>span:last-child]:truncate",
   {
     variants: {
       variant: {
@@ -731,23 +735,51 @@ const appNavigation = [
 ]
 
 function AppSidebar() {
+  const { state, toggleSidebar } = useSidebar()
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
 
   return (
     <Sidebar collapsible="icon" variant="inset">
-      <SidebarHeader className="gap-3 p-3">
-        <div className="flex items-center gap-3 rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-3">
-          <div className="flex size-10 items-center justify-center rounded-2xl bg-sidebar-primary text-sidebar-primary-foreground">
-            <IconSparkles className="size-4" />
+      <SidebarHeader className="flex flex-row items-center p-0 h-[72px] overflow-hidden transition-all">
+        <div className={cn(
+          "flex items-center h-[52px] ml-[5px] transition-all duration-200 ease-linear overflow-hidden cursor-pointer group/branding",
+          "rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/40 pl-[2px] pr-4 w-[230px] group-hover:bg-transparent",
+          "group-data-[collapsible=icon]:w-[40px] group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:pr-0 group-data-[collapsible=icon]:gap-0"
+        )}>
+          {/* Logo Container */}
+          <div className="relative shrink-0 flex items-center justify-center size-9 rounded-xl overflow-hidden cursor-pointer">
+            <img
+              src="/shard-profile.jpeg"
+              alt="Shard"
+              className="absolute inset-0 size-9 rounded-xl object-cover ring-1 ring-sidebar-border/60 transition-opacity duration-200 group-hover:opacity-0"
+            />
+            <Button
+              variant="ghost" 
+              size="icon"
+              onClick={toggleSidebar}
+              className="absolute inset-0 z-10 hidden h-9 w-9 items-center justify-center bg-transparent text-white opacity-0 transition-opacity duration-200 hover:text-white/80 focus-visible:opacity-100 group-hover:opacity-100 md:flex p-0 shadow-none hover:bg-transparent" 
+            >
+              {state === "collapsed" ? (
+                <IconLayoutSidebarLeftExpand size={38} stroke={1.5} />
+              ) : (
+                <IconLayoutSidebarLeftCollapse size={38} stroke={1.5} />
+              )}
+              <span className="sr-only">Toggle Sidebar</span>
+            </Button>
           </div>
-          <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-            <div className="text-[0.7rem] font-medium tracking-[0.28em] text-sidebar-foreground/60 uppercase">
+          
+          {/* Text Container */}
+          <div className={cn(
+            "ml-3 min-w-0 flex flex-col justify-center transition-all duration-200 ease-linear",
+            "group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:ml-0 group-data-[collapsible=icon]:min-w-0"
+          )}>
+            <div className="text-[0.7rem] font-medium tracking-[0.28em] text-sidebar-foreground/60 uppercase whitespace-nowrap">
               Shard
             </div>
-            <p className="truncate text-sm text-sidebar-foreground">
-              QA command center
+            <p className="truncate text-sm text-sidebar-foreground whitespace-nowrap">
+              AI review assistant
             </p>
           </div>
         </div>
