@@ -4,12 +4,13 @@ import { useEffect, useRef, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
-    ArrowUpIcon,
-    Cloud,
-    MonitorIcon,
-    PlusIcon,
-} from "lucide-react";
-import { IconPlugConnected, IconPlugConnectedX } from "@tabler/icons-react";
+    IconArrowUp,
+    IconCloud,
+    IconDeviceDesktop,
+    IconPlus,
+    IconPlugConnected,
+    IconPlugConnectedX,
+} from "@tabler/icons-react";
 import { motion } from "motion/react";
 
 interface UseAutoResizeTextareaProps {
@@ -173,7 +174,7 @@ export function VercelV0Chat({
                                             transition={{ type: "spring", stiffness: 300, damping: 30 }}
                                         />
                                     )}
-                                    <Cloud className="w-3.5 h-3.5 relative z-10" />
+                                    <IconCloud className="w-3.5 h-3.5 relative z-10" />
                                     <span className="relative z-10">Cloud</span>
                                 </button>
                                 <button
@@ -191,7 +192,7 @@ export function VercelV0Chat({
                                             transition={{ type: "spring", stiffness: 300, damping: 30 }}
                                         />
                                     )}
-                                    <MonitorIcon className="w-3.5 h-3.5 relative z-10" />
+                                    <IconDeviceDesktop className="w-3.5 h-3.5 relative z-10" />
                                     <span className="relative z-10">Local</span>
                                 </button>
                             </div>
@@ -206,7 +207,7 @@ export function VercelV0Chat({
                                 onClick={onAddCredentials}
                                 className="px-2 py-1.5 rounded-lg text-sm text-zinc-400 transition-colors border border-dashed border-zinc-700 hover:border-zinc-600 hover:bg-zinc-800 flex items-center justify-between gap-1"
                             >
-                                <PlusIcon className="w-4 h-4" />
+                                <IconPlus className="w-4 h-4" />
                                 <span className="hidden sm:inline">Add credentials</span>
                                 <span className="sm:hidden">Add</span>
                             </button>
@@ -224,7 +225,7 @@ export function VercelV0Chat({
                                 {isPending ? (
                                     <span className="text-xs px-1 text-zinc-400">...</span>
                                 ) : (
-                                    <ArrowUpIcon
+                                    <IconArrowUp
                                         className={cn(
                                             "w-4 h-4",
                                             value.trim() && canSubmit
