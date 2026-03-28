@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { convexQuery } from "@convex-dev/react-query"
 import { useMutation, useQuery } from "@tanstack/react-query"
+import { motion, type Variants } from "motion/react"
 import {
   IconBrowser,
   IconClock,
@@ -23,6 +24,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button"
 import { AgentPlan } from "@/components/ui/agent-plan"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Card,
   CardContent,
@@ -45,6 +47,19 @@ import {
   isActiveRunStatus,
   sortTimelineEvents,
 } from "@/lib/run-report"
+
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.05 },
+  },
+}
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 15 },
+  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } },
+}
 
 export const Route = createFileRoute("/runs/$runId")({
   component: RunPage,
@@ -114,12 +129,7 @@ function RunPage() {
   }
 
   if (!report) {
-    return (
-      <div className="grid gap-4 xl:grid-cols-[0.34fr_0.66fr]">
-        <Card className="min-h-72 border border-border/70 bg-card/70" />
-        <Card className="min-h-72 border border-border/70 bg-card/70" />
-      </div>
-    )
+    return <RunPageSkeleton />
   }
 
   const { artifacts, executionState, run, runEvents, session } = report
@@ -147,53 +157,72 @@ function RunPage() {
   const runLabel = describeRunLabel(run.status)
 
   return (
-    <div className="flex min-h-[calc(100svh-8.5rem)] flex-col gap-4">
-      <Card className="border border-border/70 bg-card/85">
-        <CardHeader className="gap-4">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="tracking-[0.18em] uppercase">
-                  {runLabel}
-                </Badge>
-                <StatusBadge status={run.status} />
-                <QueueBadge queueState={run.queueState} />
-                {run.executionMode === "background" ? (
-                  <Badge variant="secondary">Background agent</Badge>
-                ) : null}
+    <motion.div 
+      className="flex min-h-[calc(100svh-8.5rem)] flex-col gap-4"
+      variants={containerVariants}
+      initial="hidden"
+      animate="show"
+    >
+      <motion.div variants={itemVariants}>
+        <Card className="border border-border/70 bg-card/85">
+          <CardHeader className="gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="tracking-[0.18em] uppercase">
+                    {runLabel}
+                  </Badge>
+                  <StatusBadge status={run.status} />
+                  <QueueBadge queueState={run.queueState} />
+                  {run.executionMode === "background" ? (
+                    <Badge variant="secondary">Background agent</Badge>
+                  ) : null}
+                </div>
+                <CardTitle className="text-2xl text-balance">
+                  {isActive ? "Live autonomous QA session" : "Autonomous QA run timeline"}
+                </CardTitle>
+                <CardDescription className="break-all text-sm/6 text-pretty">
+                  {run.url}
+                </CardDescription>
               </div>
-              <CardTitle className="text-2xl text-balance">
-                {isActive ? "Live autonomous QA session" : "Autonomous QA run timeline"}
-              </CardTitle>
-              <CardDescription className="break-all text-sm/6 text-pretty">
-                {run.url}
-              </CardDescription>
+
+              <div className="flex flex-col items-end gap-3 mt-1 sm:mt-0 relative z-10 shrink-0">
+                {isActive && (
+                  <Button
+                    variant="destructive"
+                    className="rounded-[0.85rem] h-9 px-4 text-xs tracking-wide uppercase font-semibold border-0 shadow-sm"
+                    disabled={stopMutation.isPending || Boolean(run.stopRequestedAt)}
+                    onClick={() => {
+                      void stopMutation.mutateAsync({ data: { runId: typedRunId } })
+                    }}
+                  >
+                    {stopMutation.isPending || run.stopRequestedAt ? "Stopping..." : "Stop run"}
+                    <IconPlayerStop className="size-3.5 ml-1.5" />
+                  </Button>
+                )}
+                
+                <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground shadow-sm w-fit mt-auto">
+                  <Link
+                    to="/history/$runId"
+                    params={{ runId: typedRunId }}
+                    className="inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-muted/80 data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                    activeProps={{ "data-state": "active" }}
+                    inactiveProps={{ "data-state": "inactive" }}
+                  >
+                    QA Report
+                  </Link>
+                  <Link
+                    to="/runs/$runId"
+                    params={{ runId: typedRunId }}
+                    className="inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-muted/80 data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                    activeProps={{ "data-state": "active" }}
+                    inactiveProps={{ "data-state": "inactive" }}
+                  >
+                    Timeline
+                  </Link>
+                </div>
+              </div>
             </div>
-            {isActive ? (
-              <Button
-                variant="destructive"
-                className="rounded-2xl"
-                disabled={stopMutation.isPending || Boolean(run.stopRequestedAt)}
-                onClick={() => {
-                  void stopMutation.mutateAsync({ data: { runId: typedRunId } })
-                }}
-              >
-                {stopMutation.isPending || run.stopRequestedAt ? "Stopping..." : "Stop run"}
-                <IconPlayerStop className="size-4" />
-              </Button>
-            ) : (
-              <Link
-                to="/history/$runId"
-                params={{ runId: typedRunId }}
-                className={buttonVariants({
-                  className: "rounded-2xl",
-                })}
-              >
-                Open archived report
-                <IconExternalLink className="size-4" />
-              </Link>
-            )}
-          </div>
 
           <div className="grid gap-3 rounded-[1.5rem] border border-border/70 bg-background/60 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] md:grid-cols-2 xl:grid-cols-5">
             <RunMetaRow label="Step" value={run.currentStep ?? "Queued for scan"} />
@@ -209,10 +238,11 @@ function RunPage() {
               value={formatDistanceToNow(run.updatedAt, { addSuffix: true })}
             />
           </div>
-        </CardHeader>
-      </Card>
+          </CardHeader>
+        </Card>
+      </motion.div>
 
-      <div className="grid min-h-[32rem] flex-1 gap-4 xl:grid-cols-[minmax(18rem,0.34fr)_minmax(0,0.66fr)]">
+      <motion.div variants={itemVariants} className="grid min-h-[32rem] flex-1 gap-4 xl:grid-cols-[minmax(18rem,0.34fr)_minmax(0,0.66fr)]">
         <Card className="flex flex-col border border-border/70 bg-card/85">
           <CardHeader className="shrink-0 gap-2 border-b border-border/70 bg-card/95">
             <CardTitle className="text-base">Agent output</CardTitle>
@@ -274,6 +304,53 @@ function RunPage() {
               />
             )}
           </CardContent>
+        </Card>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function RunPageSkeleton() {
+  return (
+    <div className="flex min-h-[calc(100svh-8.5rem)] flex-col gap-4 animate-pulse">
+      <Card className="border border-border/70 bg-card/40">
+        <CardHeader className="gap-4">
+           <div className="flex flex-wrap items-start justify-between gap-4">
+             <div className="space-y-3 w-full max-w-lg">
+               <div className="flex gap-2">
+                 <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
+                 <Skeleton className="h-6 w-20 rounded-md bg-border/40" />
+               </div>
+               <Skeleton className="h-8 w-64 bg-border/40 mt-2" />
+               <Skeleton className="h-5 w-3/4 bg-border/40" />
+             </div>
+             <Skeleton className="h-9 w-40 rounded-lg bg-border/30 mt-1 sm:mt-0" />
+           </div>
+           <div className="grid gap-3 rounded-[1.5rem] border border-border/70 bg-background/30 p-4 md:grid-cols-2 xl:grid-cols-5 mt-2">
+             {Array.from({length: 5}).map((_, i) => (
+                <Skeleton key={i} className="h-16 w-full rounded-[1.2rem] bg-border/30" />
+             ))}
+           </div>
+        </CardHeader>
+      </Card>
+      <div className="grid min-h-[32rem] flex-1 gap-4 xl:grid-cols-[minmax(18rem,0.34fr)_minmax(0,0.66fr)]">
+        <Card className="flex flex-col border border-border/70 bg-card/40 min-h-[32rem]">
+           <CardHeader className="border-b border-border/70">
+             <Skeleton className="h-6 w-32 bg-border/40" />
+             <Skeleton className="h-4 w-64 bg-border/30 mt-2" />
+           </CardHeader>
+           <CardContent className="p-4 space-y-4">
+             {Array.from({length: 4}).map((_, i) => <Skeleton key={i} className="h-24 w-full rounded-2xl bg-border/30" /> )}
+           </CardContent>
+        </Card>
+        <Card className="flex flex-col border border-border/70 bg-card/40 min-h-[32rem]">
+           <CardHeader className="border-b border-border/70">
+             <Skeleton className="h-6 w-40 bg-border/40" />
+             <Skeleton className="h-4 w-64 bg-border/30 mt-2" />
+           </CardHeader>
+           <CardContent className="p-4">
+             <Skeleton className="h-full min-h-[26rem] w-full rounded-[1.6rem] bg-border/30" />
+           </CardContent>
         </Card>
       </div>
     </div>
