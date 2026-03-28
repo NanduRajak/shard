@@ -111,6 +111,27 @@ export const updateCredential = createServerFn({ method: "POST" })
     })
   })
 
+export const makeCredentialDefault = createServerFn({ method: "POST" })
+  .inputValidator((data: { credentialId: Id<"credentials"> }) => data)
+  .handler(async ({ data }) => {
+    const { createConvexServerClient } = await import("~/server/convex")
+    const convex = createConvexServerClient()
+    const credential = await convex.query(api.credentials.getCredentialForServer, data)
+
+    if (!credential) {
+      throw new Error("Credential not found.")
+    }
+
+    await convex.mutation(api.credentials.updateCredential, {
+      credentialId: credential._id,
+      isDefault: true,
+      login: credential.login,
+      origin: credential.origin,
+      passwordEncrypted: credential.passwordEncrypted,
+      website: credential.website,
+    })
+  })
+
 export const deleteCredential = createServerFn({ method: "POST" })
   .inputValidator((data: { credentialId: Id<"credentials"> }) => data)
   .handler(async ({ data }) => {

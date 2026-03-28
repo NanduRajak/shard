@@ -6,6 +6,7 @@ export const createRun = mutation({
     url: v.string(),
     mode: v.union(v.literal("explore"), v.literal("task")),
     browserProvider: v.union(v.literal("steel"), v.literal("local_chrome")),
+    credentialId: v.optional(v.id("credentials")),
     instructions: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -16,6 +17,7 @@ export const createRun = mutation({
       url: args.url,
       mode: args.mode,
       browserProvider: args.browserProvider,
+      credentialId: args.credentialId,
       instructions: args.instructions,
       status: "queued",
       queueState: "pending",

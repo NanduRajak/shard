@@ -1,8 +1,10 @@
 import { validateRunUrl } from "@/lib/run-url"
+import type { Id } from "../../convex/_generated/dataModel"
 
 const RUN_URL_PATTERN = /https?:\/\/\S+/i
 
 export function prepareCreateRunPayload(data: {
+  credentialId?: Id<"credentials">
   prompt: string
   browserProvider?: "local_chrome" | "steel" | null
 }) {
@@ -26,6 +28,7 @@ export function prepareCreateRunPayload(data: {
     url,
     mode: instructions ? ("task" as const) : ("explore" as const),
     browserProvider,
+    credentialId: data.credentialId,
     instructions: instructions || undefined,
   }
 }

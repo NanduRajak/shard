@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start"
 import { api } from "../../convex/_generated/api"
+import type { Id } from "../../convex/_generated/dataModel"
 import { prepareCreateRunPayload } from "./run-request"
 import { resolveRunModeCapabilities } from "./run-mode-capabilities"
 
@@ -7,6 +8,7 @@ export const createRun = createServerFn({ method: "POST" })
   .inputValidator(
     (data: {
       browserProvider?: "local_chrome" | "steel" | null
+      credentialId?: Id<"credentials">
       prompt: string
     }) => data,
   )

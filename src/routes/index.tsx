@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { convexQuery } from "@convex-dev/react-query"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useState } from "react"
+import type { Id } from "../../convex/_generated/dataModel"
+import { api } from "../../convex/_generated/api"
 import { VercelV0Chat } from "@/components/ui/v0-ai-chat"
 import {
   getStoredHomeBrowserProvider,
@@ -9,11 +12,17 @@ import {
   useHomeBrowserProviderSync,
 } from "@/components/home-run-guide"
 import { createRun } from "@/lib/create-run"
+import { normalizeCredentialWebsite } from "@/lib/credential-url"
+import { makeCredentialDefault } from "@/lib/credentials-server"
 import { readStoredHomeRunDraft, writeStoredHomeRunDraft } from "@/lib/home-run-drafts"
 import { getRunModeCapabilities } from "@/lib/get-run-mode-capabilities"
 import { validateRunUrl } from "@/lib/run-url"
 
 export const Route = createFileRoute("/")({ component: App })
+
+const RUN_URL_PATTERN = /https?:\/\/\S+/i
+const LAST_SELECTED_CREDENTIAL_KEY = "last-selected-credential-id"
+const NO_CREDENTIAL_SELECTED = "__none__"
 
 function App() {
   const navigate = Route.useNavigate()
@@ -21,14 +30,25 @@ function App() {
     queryKey: ["home-run-mode-capabilities"],
     queryFn: async () => await getRunModeCapabilities(),
   })
-  const [prompt, setPrompt] = useState("")
-  const [browserProvider, setBrowserProvider] = useState<BrowserProvider>("steel")
+  const { data: credentials } = useQuery(convexQuery(api.credentials.listCredentials, {}))
+  const [browserProvider, setBrowserProvider] = useState<BrowserProvider | null>(
+    () => (typeof window !== "undefined" ? getStoredHomeBrowserProvider() : null),
+  )
+  const [prompt, setPrompt] = useState(() =>
+    typeof window !== "undefined"
+      ? readStoredHomeRunDraft(getStoredHomeBrowserProvider(), window.localStorage)
+      : "",
+  )
   const [error, setError] = useState<string | null>(null)
-  const { mutateAsync, isPending } = useMutation({
+  const [selectedCredentialId, setSelectedCredentialId] = useState<Id<"credentials"> | null>(null)
+  const createRunMutation = useMutation({
     mutationFn: createRun,
   })
+  const makeDefaultMutation = useMutation({
+    mutationFn: makeCredentialDefault,
+  })
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const provider = getStoredHomeBrowserProvider()
     setBrowserProvider(provider)
     setPrompt(readStoredHomeRunDraft(provider, window.localStorage))
@@ -42,17 +62,137 @@ function App() {
     }
   })
 
+  useEffect(() => {
+    if (!runModeCapabilities || browserProvider !== "local_chrome") {
+      return
+    }
+
+    if (runModeCapabilities.local_chrome.runnable) {
+      return
+    }
+
+    setStoredHomeBrowserProvider("steel")
+    setBrowserProvider("steel")
+    setPrompt(readStoredHomeRunDraft("steel", window.localStorage))
+    if (error) {
+      setError(null)
+    }
+  }, [browserProvider, error, runModeCapabilities])
+
   const normalizedPrompt = useMemo(() => prompt.trim(), [prompt])
-  const selectedCapability = runModeCapabilities?.[browserProvider]
+  const matchedUrl = useMemo(() => normalizedPrompt.match(RUN_URL_PATTERN)?.[0] ?? "", [normalizedPrompt])
+  const validUrl = useMemo(() => validateRunUrl(matchedUrl), [matchedUrl])
+  const normalizedWebsite = useMemo(
+    () => (validUrl ? normalizeCredentialWebsite(validUrl) : null),
+    [validUrl],
+  )
+  const hasValidUrl = Boolean(validUrl)
+  const siteOrigin = normalizedWebsite?.origin ?? null
+  const availableCredentials = credentials ?? []
+  const selectedCredential = useMemo(
+    () =>
+      availableCredentials.find((credential) => credential._id === selectedCredentialId) ?? null,
+    [availableCredentials, selectedCredentialId],
+  )
+  const credentialOptions = useMemo(
+    () =>
+      availableCredentials.map((credential) => ({
+        label: credential.login,
+        value: credential._id,
+        domain: credential.origin.replace(/^https?:\/\//, ""),
+        isDefault: credential.isDefault,
+      })),
+    [availableCredentials],
+  )
+  const selectedCapability = browserProvider ? runModeCapabilities?.[browserProvider] : null
   const submitDisabledReason =
     selectedCapability?.reason ??
     (browserProvider === "local_chrome" && !runModeCapabilities
       ? "Checking local helper availability..."
       : null)
-  const canSubmit = selectedCapability ? !selectedCapability.reason : browserProvider === "steel"
+  const credentialDisabled = !hasValidUrl
+  const canSubmit =
+    browserProvider === "steel" || (selectedCapability ? !selectedCapability.reason : false)
+  const selectedCredentialMatchesPrompt =
+    Boolean(selectedCredential && siteOrigin && selectedCredential.origin === siteOrigin)
+  const credentialActionMode =
+    credentials === undefined
+      ? ("loading" as const)
+      : availableCredentials.length > 0
+        ? ("select" as const)
+        : ("add" as const)
+
+  useEffect(() => {
+    if (!availableCredentials.length) {
+      setSelectedCredentialId(null)
+      return
+    }
+
+    const storedId =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(LAST_SELECTED_CREDENTIAL_KEY)
+        : null
+
+    if (storedId === NO_CREDENTIAL_SELECTED) {
+      setSelectedCredentialId(null)
+      return
+    }
+
+    const restoredCredential = storedId
+      ? availableCredentials.find((credential) => credential._id === storedId)
+      : null
+
+    if (restoredCredential) {
+      setSelectedCredentialId(restoredCredential._id)
+    } else {
+      const nextDefault =
+        availableCredentials.find((credential) => credential.isDefault) ??
+        availableCredentials[0] ??
+        null
+      setSelectedCredentialId(nextDefault?._id ?? null)
+    }
+  }, [availableCredentials])
+
+  useEffect(() => {
+    if (!hasValidUrl) {
+      setSelectedCredentialId(null)
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, NO_CREDENTIAL_SELECTED)
+      }
+      return
+    }
+
+    if (!siteOrigin || !availableCredentials.length) {
+      return
+    }
+
+    const matchingCredentials = availableCredentials.filter(
+      (credential) => credential.origin === siteOrigin,
+    )
+
+    if (!matchingCredentials.length) {
+      return
+    }
+
+    const nextCredential =
+      matchingCredentials.find((credential) => credential.isDefault) ?? matchingCredentials[0]
+
+    if (!nextCredential || nextCredential._id === selectedCredentialId) {
+      return
+    }
+
+    setSelectedCredentialId(nextCredential._id)
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, nextCredential._id)
+    }
+  }, [availableCredentials, hasValidUrl, selectedCredentialId, siteOrigin])
 
   const handleSubmit = async () => {
-    if (!validateRunUrl(normalizedPrompt.match(/https?:\/\/\S+/i)?.[0] ?? "")) {
+    if (!browserProvider) {
+      return
+    }
+
+    if (!validUrl) {
       setError("Enter a prompt that includes a full URL starting with http:// or https://.")
       return
     }
@@ -65,9 +205,10 @@ function App() {
     setError(null)
 
     try {
-      const { runId } = await mutateAsync({
+      const { runId } = await createRunMutation.mutateAsync({
         data: {
           browserProvider,
+          credentialId: selectedCredentialMatchesPrompt ? selectedCredential?._id : undefined,
           prompt: normalizedPrompt,
         },
       })
@@ -75,9 +216,62 @@ function App() {
       void navigate({ to: "/runs/$runId", params: { runId } })
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Failed to create the run.",
+        submitError instanceof Error ? submitError.message : "Failed to create the run.",
+      )
+    }
+  }
+
+  const handleCredentialChange = async (credentialId: string | null) => {
+    if (!credentialId) {
+      setSelectedCredentialId(null)
+      setPrompt("")
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, NO_CREDENTIAL_SELECTED)
+        if (browserProvider) {
+          writeStoredHomeRunDraft(browserProvider, "", window.localStorage)
+        }
+      }
+      return
+    }
+
+    const nextCredential =
+      availableCredentials.find((credential) => credential._id === credentialId) ?? null
+
+    if (!nextCredential || nextCredential._id === selectedCredentialId) {
+      return
+    }
+
+    const previousCredentialId = selectedCredentialId
+    const nextPrompt = nextCredential.website
+    setSelectedCredentialId(nextCredential._id)
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, nextCredential._id)
+    }
+    setPrompt(nextPrompt)
+
+    if (browserProvider) {
+      writeStoredHomeRunDraft(browserProvider, nextPrompt, window.localStorage)
+    }
+
+    try {
+      await makeDefaultMutation.mutateAsync({
+        data: {
+          credentialId: nextCredential._id,
+        },
+      })
+      if (error) {
+        setError(null)
+      }
+    } catch (credentialError) {
+      setSelectedCredentialId(previousCredentialId)
+      setPrompt(normalizedPrompt)
+      if (browserProvider) {
+        writeStoredHomeRunDraft(browserProvider, normalizedPrompt, window.localStorage)
+      }
+      setError(
+        credentialError instanceof Error
+          ? credentialError.message
+          : "Failed to update the default credential.",
       )
     }
   }
@@ -97,7 +291,9 @@ function App() {
             value={prompt}
             onChange={(value) => {
               setPrompt(value)
-              writeStoredHomeRunDraft(browserProvider, value, window.localStorage)
+              if (browserProvider) {
+                writeStoredHomeRunDraft(browserProvider, value, window.localStorage)
+              }
               if (error) {
                 setError(null)
               }
@@ -105,33 +301,51 @@ function App() {
             onSubmit={() => {
               void handleSubmit()
             }}
-            isPending={isPending}
+            isPending={createRunMutation.isPending}
             browserProvider={browserProvider}
             onBrowserProviderChange={switchProvider}
             onAddCredentials={() => {
-              void navigate({ to: "/credentials" })
+              if (hasValidUrl) {
+                void navigate({ to: "/credentials" })
+              }
             }}
             helperLabel={
-              browserProvider === "local_chrome" 
-                ? (!runModeCapabilities ? "Checking..." : selectedCapability?.statusLabel)
+              browserProvider === "local_chrome"
+                ? !runModeCapabilities
+                  ? "Checking..."
+                  : selectedCapability?.statusLabel
                 : undefined
             }
             helperAvailable={runModeCapabilities ? selectedCapability?.runnable : false}
             placeholder={
               selectedCapability?.placeholder ??
-              "Paste a URL and optional instructions..."
+              (browserProvider === "steel"
+                ? "Paste a URL for a hosted Steel run, then add optional instructions..."
+                : browserProvider === "local_chrome"
+                  ? "Paste a URL for your own Chrome window, then add optional instructions..."
+                  : "Paste a URL for your website, then add optional instructions...")
             }
             modeDescription={
               selectedCapability?.detail ??
-              "Cloud mode runs in Steel. Local mode runs through your own Chrome helper."
+              (browserProvider === "steel"
+                ? "Cloud mode runs in a hosted Steel browser session with live replay in the run view."
+                : browserProvider === "local_chrome"
+                  ? "Local mode uses your own Chrome through the local helper."
+                  : "Select a browser provider to begin.")
             }
+            hasValidUrl={hasValidUrl}
+            credentialActionMode={credentialActionMode}
+            credentialValue={selectedCredential?._id}
+            credentialOptions={credentialOptions}
+            credentialDisabled={credentialDisabled}
+            onCredentialChange={(value) => {
+              void handleCredentialChange(value)
+            }}
             canSubmit={canSubmit}
           />
 
-
-
           {error ? (
-            <p className="text-center text-sm text-destructive mt-4">{error}</p>
+            <p className="mt-4 text-center text-sm text-destructive">{error}</p>
           ) : null}
         </div>
       </div>

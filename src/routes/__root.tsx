@@ -137,7 +137,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                 },
               ]}
             />
-            <Toaster richColors />
+            <Toaster richColors position="top-right" />
             <Scripts />
           </AppProviders>
         </ThemeProvider>
