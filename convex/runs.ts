@@ -8,6 +8,7 @@ export const createRun = mutation({
     browserProvider: v.union(v.literal("steel"), v.literal("local_chrome")),
     credentialId: v.optional(v.id("credentials")),
     instructions: v.optional(v.string()),
+    credentialId: v.optional(v.id("credentials")),
   },
   handler: async (ctx, args) => {
     const now = Date.now()
@@ -19,6 +20,7 @@ export const createRun = mutation({
       browserProvider: args.browserProvider,
       credentialId: args.credentialId,
       instructions: args.instructions,
+      credentialId: args.credentialId,
       status: "queued",
       queueState: "pending",
       currentStep: "Queued for scan",

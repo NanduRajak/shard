@@ -33,6 +33,9 @@ const MAX_DISCOVERED_PAGES = 12
 const MAX_PAGE_FINDINGS = 2
 const POLL_INTERVAL_MS = Number(process.env.LOCAL_HELPER_POLL_INTERVAL_MS ?? 3_000)
 const HEARTBEAT_INTERVAL_MS = Number(process.env.LOCAL_HELPER_HEARTBEAT_MS ?? 10_000)
+const STOP_POLL_INTERVAL_MS = Number(
+  process.env.LOCAL_HELPER_STOP_POLL_INTERVAL_MS ?? 500,
+)
 const DEFAULT_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash"
 
 type BrowserProvider = "local_chrome" | "steel"
@@ -258,6 +261,13 @@ async function runLocalQaWorkflow({
   const externalSessionId = `local:${helperId}:${run._id}`
   let session: SessionRecord | null = null
   let finalStatus: "cancelled" | "completed" | "failed" = "completed"
+  const stopWatcher = createImmediateRunStopWatcher({
+    api,
+    runId: run._id,
+    onStop: async () => {
+      await browser.close().catch(() => undefined)
+    },
+  })
 
   try {
     await api.progress({
@@ -371,12 +381,41 @@ async function runLocalQaWorkflow({
       sessionStatus: "closed",
     })
   } catch (error) {
-    finalStatus =
+    const stopState =
       error instanceof RunCancelledError || error instanceof QaRunCancelledError
+        ? {
+            currentUrl: error.currentUrl ?? run.url,
+            stopRequestedAt: Date.now(),
+          }
+        : stopWatcher.wasTriggered()
+          ? {
+              currentUrl: stopWatcher.currentUrl() ?? run.url,
+              stopRequestedAt: Date.now(),
+            }
+          : await api.state({ runId: run._id }).catch(() => null)
+
+    finalStatus =
+      error instanceof RunCancelledError ||
+      error instanceof QaRunCancelledError ||
+      stopState?.stopRequestedAt
         ? "cancelled"
         : "failed"
+
+    if (
+      finalStatus === "cancelled" &&
+      !(error instanceof RunCancelledError) &&
+      !(error instanceof QaRunCancelledError)
+    ) {
+      throw new RunCancelledError(
+        "Stop requested, shutting down local Chrome run",
+        stopState?.currentUrl ?? run.url,
+      )
+    }
+
     throw error
   } finally {
+    stopWatcher.stop()
+
     if (session && finalStatus !== "completed") {
       await api
         .session({
@@ -1490,6 +1529,55 @@ async function throwIfStopRequested({
   }
 
   throw new RunCancelledError(currentStep, pageUrl ?? state.currentUrl ?? undefined)
+}
+
+function createImmediateRunStopWatcher({
+  api,
+  onStop,
+  runId,
+}: {
+  api: LocalHelperApi
+  onStop: () => Promise<void>
+  runId: string
+}) {
+  let timer: ReturnType<typeof setInterval> | null = null
+  let stopTriggered = false
+  let stopInFlight = false
+  let latestCurrentUrl: string | undefined
+
+  const poll = async () => {
+    if (stopInFlight) {
+      return
+    }
+
+    const state = await api.state({ runId }).catch(() => null)
+
+    if (!state?.stopRequestedAt) {
+      return
+    }
+
+    stopTriggered = true
+    stopInFlight = true
+    latestCurrentUrl = state.currentUrl ?? undefined
+    await onStop().catch(() => undefined)
+  }
+
+  timer = setInterval(() => {
+    void poll()
+  }, STOP_POLL_INTERVAL_MS)
+
+  void poll()
+
+  return {
+    currentUrl: () => latestCurrentUrl,
+    stop: () => {
+      if (timer) {
+        clearInterval(timer)
+        timer = null
+      }
+    },
+    wasTriggered: () => stopTriggered,
+  }
 }
 
 function buildAgentPrompt({

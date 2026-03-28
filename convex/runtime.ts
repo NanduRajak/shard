@@ -323,6 +323,28 @@ export const requestRunStop = mutation({
 
     const stopRequestedAt = run.stopRequestedAt ?? Date.now()
 
+    if (run.status === "queued") {
+      await ctx.db.patch(args.runId, {
+        stopRequestedAt,
+        status: "cancelled",
+        currentStep: "Run cancelled before execution started",
+        finishedAt: stopRequestedAt,
+        updatedAt: stopRequestedAt,
+      })
+
+      await ctx.db.insert("runEvents", {
+        runId: args.runId,
+        kind: "status",
+        title: "Run cancelled",
+        body: "The run was cancelled before a worker started executing it.",
+        status: "cancelled",
+        pageUrl: run.currentUrl ?? run.url,
+        createdAt: stopRequestedAt,
+      })
+
+      return { ok: true as const, stopRequestedAt }
+    }
+
     await ctx.db.patch(args.runId, {
       stopRequestedAt,
       currentStep: "Stop requested, shutting down run",

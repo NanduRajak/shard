@@ -283,7 +283,7 @@ function RunPage() {
                 title="Steel live session"
                 src={liveEmbedUrl}
                 allow="clipboard-read; clipboard-write"
-                sandbox="allow-downloads allow-forms allow-popups allow-scripts"
+                sandbox="allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
                 className="h-full min-h-[26rem] w-full rounded-[1.6rem] border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
               />
             ) : !isActive ? (

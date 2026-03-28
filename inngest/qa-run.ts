@@ -1,6 +1,4 @@
 import { readFile, unlink } from "node:fs/promises"
-import { createRequire } from "node:module"
-import { dirname, join } from "node:path"
 import { chromium, type BrowserContext, type Locator, type Page } from "playwright"
 import SteelClient from "steel-sdk"
 import { NonRetriableError } from "inngest"
@@ -52,12 +50,8 @@ const BACKGROUND_QA_CONFIG = {
   sessionTimeoutMs: 24 * 60 * 1000,
 } as const
 const PLAYWRIGHT_TRACE_PATH_PREFIX = "/tmp/shard-background-trace"
-const STEEL_SESSION_DOWNLOADS_PATH = "/files"
 const STEEL_CONNECT_TIMEOUT_MS = 30_000
-const STEEL_CONNECT_OPTIONS = {
-  downloadsPath: STEEL_SESSION_DOWNLOADS_PATH,
-  timeout: STEEL_CONNECT_TIMEOUT_MS,
-} as const
+const STOP_POLL_INTERVAL_MS = 500
 
 type RunRequestedEvent = {
   data: {
@@ -153,56 +147,6 @@ const pageReviewSchema = z.object({
 const steel = new SteelClient({
   steelAPIKey: serverEnv.STEEL_API_KEY,
 })
-
-const require = createRequire(import.meta.url)
-const playwrightValidatorPatchedKey = "__shardSteelConnectOverCdpPatched"
-
-function patchPlaywrightCdpValidatorForSteel() {
-  const globalState = globalThis as Record<string, unknown>
-  if (globalState[playwrightValidatorPatchedKey]) {
-    return
-  }
-
-  const playwrightCoreRoot = dirname(require.resolve("playwright-core"))
-  const validatorPrimitives = require(
-    join(playwrightCoreRoot, "lib/protocol/validatorPrimitives.js"),
-  )
-  const playwrightValidator = require(
-    join(playwrightCoreRoot, "lib/protocol/validator.js"),
-  )
-  void playwrightValidator
-
-  const {
-    scheme,
-    tArray,
-    tBoolean,
-    tFloat,
-    tObject,
-    tOptional,
-    tString,
-    tType,
-  } = validatorPrimitives as {
-    scheme: Record<string, unknown>
-    tArray: (validator: unknown) => unknown
-    tBoolean: unknown
-    tFloat: unknown
-    tObject: (shape: Record<string, unknown>) => unknown
-    tOptional: (validator: unknown) => unknown
-    tString: unknown
-    tType: (name: string) => unknown
-  }
-
-  scheme.BrowserTypeConnectOverCDPParams = tObject({
-    endpointURL: tString,
-    headers: tOptional(tArray(tType("NameValue"))),
-    slowMo: tOptional(tFloat),
-    timeout: tFloat,
-    isLocal: tOptional(tBoolean),
-    downloadsPath: tOptional(tString),
-  })
-
-  globalState[playwrightValidatorPatchedKey] = true
-}
 
 export const qaRun = inngest.createFunction(
   {
@@ -321,6 +265,7 @@ export async function runQaWorkflow({
   let workflowError: Error | null = null
   let lastKnownUrl = url
   let failureStage = "Queued"
+  let stopWatcher: ReturnType<typeof createImmediateRunStopWatcher> | null = null
 
   try {
       await convex.mutation(api.runtime.resetRunState, {
@@ -441,10 +386,9 @@ export async function runQaWorkflow({
       })
 
       if (browserProvider === "steel") {
-        patchPlaywrightCdpValidatorForSteel()
         browser = await chromium.connectOverCDP(
           `wss://connect.steel.dev?apiKey=${serverEnv.STEEL_API_KEY}&sessionId=${currentSessionId}`,
-          STEEL_CONNECT_OPTIONS as any,
+          { timeout: STEEL_CONNECT_TIMEOUT_MS },
         )
         context = browser.contexts()[0] ?? (await browser.newContext())
         await convex.mutation(api.runtime.updateSession, {
@@ -480,6 +424,19 @@ export async function runQaWorkflow({
           sessionId: sessionDocId,
         })
       }
+
+      stopWatcher = createImmediateRunStopWatcher({
+        pollStopState: async () =>
+          await convex.query(api.runtime.getRunExecutionState, { runId }),
+        onStop: async () => {
+          await context?.close().catch(() => undefined)
+          await browser?.close().catch(() => undefined)
+
+          if (currentSessionId && browserProvider === "steel") {
+            await steel.sessions.release(currentSessionId).catch(() => undefined)
+          }
+        },
+      })
 
       const page = context.pages()[0] ?? (await context.newPage())
 
@@ -578,15 +535,41 @@ export async function runQaWorkflow({
         sessionId: sessionDocId,
       })
   } catch (error) {
-      if (error instanceof RunCancelledError || error instanceof QaRunCancelledError) {
+      const stopState =
+        error instanceof RunCancelledError || error instanceof QaRunCancelledError
+          ? {
+              currentUrl: error.currentUrl ?? lastKnownUrl,
+              stopRequestedAt: Date.now(),
+            }
+          : stopWatcher?.wasTriggered()
+            ? {
+                currentUrl: stopWatcher.currentUrl() ?? lastKnownUrl,
+                stopRequestedAt: Date.now(),
+              }
+            : await convex
+                .query(api.runtime.getRunExecutionState, { runId })
+                .catch(() => null)
+
+      if (
+        error instanceof RunCancelledError ||
+        error instanceof QaRunCancelledError ||
+        stopState?.stopRequestedAt
+      ) {
         finalRunStatus = "cancelled"
         const finalScore = await computePersistedRunScore(convex, runId)
+        const cancelledUrl =
+          error instanceof RunCancelledError || error instanceof QaRunCancelledError
+            ? error.currentUrl ?? stopState?.currentUrl ?? url
+            : stopState?.currentUrl ?? lastKnownUrl
 
         await convex.mutation(api.runtime.updateRun, {
           runId,
           status: "cancelled",
-          currentStep: error.message,
-          currentUrl: error.currentUrl ?? url,
+          currentStep:
+            error instanceof RunCancelledError || error instanceof QaRunCancelledError
+              ? error.message
+              : "Stop requested, shutting down run",
+          currentUrl: cancelledUrl,
           errorMessage: null,
           finalScore,
           finishedAt: Date.now(),
@@ -597,7 +580,7 @@ export async function runQaWorkflow({
           title: "Run cancelled",
           body: `Shutdown completed. Partial quality score: ${finalScore}/100.`,
           status: "cancelled",
-          pageUrl: error.currentUrl ?? url,
+          pageUrl: cancelledUrl,
           sessionId: sessionDocId,
         })
 
@@ -650,6 +633,8 @@ export async function runQaWorkflow({
 
       throw workflowError
   } finally {
+      stopWatcher?.stop()
+
       if (browserProvider === "playwright" && context) {
         const tracePath = `${PLAYWRIGHT_TRACE_PATH_PREFIX}-${runId}.zip`
 
@@ -719,6 +704,56 @@ export async function runQaWorkflow({
           })
           .catch(() => undefined)
       }
+  }
+}
+
+function createImmediateRunStopWatcher({
+  onStop,
+  pollStopState,
+}: {
+  onStop: () => Promise<void>
+  pollStopState: () => Promise<{
+    currentUrl: string | null
+    stopRequestedAt: number | null
+  } | null>
+}) {
+  let timer: ReturnType<typeof setInterval> | null = null
+  let stopTriggered = false
+  let stopInFlight = false
+  let latestCurrentUrl: string | undefined
+
+  const poll = async () => {
+    if (stopInFlight) {
+      return
+    }
+
+    const state = await pollStopState().catch(() => null)
+
+    if (!state?.stopRequestedAt) {
+      return
+    }
+
+    stopTriggered = true
+    stopInFlight = true
+    latestCurrentUrl = state.currentUrl ?? undefined
+    await onStop().catch(() => undefined)
+  }
+
+  timer = setInterval(() => {
+    void poll()
+  }, STOP_POLL_INTERVAL_MS)
+
+  void poll()
+
+  return {
+    currentUrl: () => latestCurrentUrl,
+    stop: () => {
+      if (timer) {
+        clearInterval(timer)
+        timer = null
+      }
+    },
+    wasTriggered: () => stopTriggered,
   }
 }
 
