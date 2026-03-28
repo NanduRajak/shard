@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
   IconArrowUp,
-  IconCheck,
   IconChevronDown,
   IconCloud,
   IconDeviceDesktop,
@@ -139,32 +138,26 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
         }}
         disabled={disabled}
         className={cn(
-          "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg border px-3 text-sm transition-all duration-200 sm:min-w-72",
+          "flex h-10 w-full min-w-0 items-center justify-between gap-3 rounded-lg border px-3.5 text-sm transition-all duration-200 sm:min-w-40 sm:max-w-44",
           disabled && "cursor-not-allowed opacity-50",
           open
-            ? "border-zinc-600 bg-zinc-800 text-zinc-100"
-            : "border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800",
+            ? "border-neutral-600 bg-neutral-800 text-neutral-100"
+            : "border-neutral-700 bg-neutral-900 text-neutral-100 hover:bg-neutral-800",
         )}
       >
-        <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-left">
+        <span className="flex min-w-0 flex-1 items-center overflow-hidden text-left">
           {selected ? (
-            <>
-              <span className="truncate font-medium">{selected.label}</span>
-              <span className="shrink-0 text-[10px] text-zinc-500">·</span>
-              {selected.domain && (
-                <span className="truncate text-xs text-zinc-500">
-                  {selected.domain}
-                </span>
-              )}
-            </>
+            <span className="block min-w-0 flex-1 truncate font-medium tracking-[-0.01em]">
+              {selected.label}
+            </span>
           ) : (
-            <span className="text-zinc-500">Select login</span>
+            <span className="block min-w-0 flex-1 truncate text-neutral-500">Select login</span>
           )}
         </span>
         <motion.span
           animate={{ rotate: open ? 180 : 0 }}
           transition={{ type: "spring", stiffness: 300, damping: 25 }}
-          className="shrink-0 text-zinc-500"
+          className="shrink-0 text-neutral-500"
         >
           <IconChevronDown className="size-4" />
         </motion.span>
@@ -178,8 +171,11 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
             animate={{ opacity: 1, y: 0, scaleY: 1 }}
             exit={{ opacity: 0, y: -4, scaleY: 0.96 }}
             transition={{ type: "spring", stiffness: 400, damping: 30, mass: 0.8 }}
-            style={{ width: triggerWidth > 0 ? triggerWidth : undefined, transformOrigin: "top" }}
-            className="absolute left-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-zinc-800 bg-neutral-950 p-2 shadow-2xl shadow-black/50"
+            style={{
+              width: triggerWidth > 0 ? Math.max(triggerWidth, 320) : 320,
+              transformOrigin: "top",
+            }}
+            className="absolute left-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 p-2 shadow-2xl shadow-black/50"
           >
             <div className="flex flex-col gap-1">
             {options.map((option, idx) => {
@@ -204,27 +200,27 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
                       onChange?.(isSelected ? null : option.value)
                       setOpen(false)
                     }}
+                    title={option.label}
                     className={cn(
-                      "group relative flex w-full cursor-pointer items-center rounded-lg px-3.5 py-3.5 pr-10 text-left outline-none transition-all duration-150",
+                      "group relative mx-auto flex min-h-12 w-full cursor-pointer items-center rounded-xl px-3 py-1.5 pr-10 text-left outline-none transition-all duration-150",
                       isSelected
-                        ? "bg-zinc-800/70 text-zinc-100"
-                        : "text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100",
+                        ? "bg-neutral-800/70 text-neutral-100"
+                        : "text-neutral-300 hover:bg-neutral-800/50 hover:text-neutral-100",
                     )}
                   >
                     <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                        <span className="truncate text-sm font-medium">
+                      <div className="min-w-0 flex-1 pr-2">
+                        <div className="truncate text-[15px] font-medium tracking-[-0.01em] text-inherit">
                           {option.label}
-                        </span>
-                        <span className="shrink-0 text-[10px] text-zinc-500">·</span>
-                        {option.domain && (
-                          <span className="truncate text-xs text-zinc-500 transition-colors group-hover:text-zinc-400">
+                        </div>
+                        {option.domain ? (
+                          <div className="truncate text-[10px] leading-3.5 text-neutral-500 transition-colors group-hover:text-neutral-400">
                             {option.domain}
-                          </span>
-                        )}
+                          </div>
+                        ) : null}
                       </div>
                       {option.isDefault && (
-                        <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-emerald-400 uppercase ring-1 ring-emerald-500/20">
+                        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-black uppercase">
                           Default
                         </span>
                       )}
@@ -234,10 +230,8 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
                         initial={{ scale: 0 }}
                         animate={{ scale: 1 }}
                         transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                        className="absolute right-3 flex size-4 items-center justify-center text-emerald-400"
-                      >
-                        <IconCheck className="size-4" />
-                      </motion.span>
+                        className="absolute right-4 size-2 rounded-full bg-emerald-400"
+                      />
                     )}
                   </button>
                 </motion.div>
@@ -294,14 +288,12 @@ export function VercelV0Chat({
   helperAvailable,
   placeholder,
   modeDescription,
-  hasValidUrl,
   credentialActionMode,
   credentialLabel,
   credentialValue,
   credentialOptions,
   credentialDisabled = false,
   onCredentialChange,
-  canSubmit,
 }: VercelV0ChatProps) {
   const [hasMounted, setHasMounted] = useState(false)
 
@@ -317,7 +309,7 @@ export function VercelV0Chat({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      if (value.trim() && !isPending && hasValidUrl && canSubmit) {
+      if (value.trim() && !isPending) {
         onSubmit()
         adjustHeight(true)
       }
@@ -331,7 +323,7 @@ export function VercelV0Chat({
   const renderCredentialControl = () => {
     if (credentialActionMode === "loading") {
       return (
-        <div className="h-9 w-full min-w-0 animate-pulse rounded-lg border border-zinc-800 bg-zinc-900 sm:min-w-72" />
+        <div className="h-10 w-full min-w-0 animate-pulse rounded-lg border border-neutral-800 bg-neutral-900 sm:min-w-72" />
       )
     }
 
@@ -348,8 +340,8 @@ export function VercelV0Chat({
 
     if (credentialActionMode === "selected") {
       return (
-        <div className="flex h-9 max-w-56 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-200">
-          <IconKey className="h-4 w-4 shrink-0 text-zinc-400" />
+        <div className="flex h-10 max-w-56 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 text-sm text-neutral-200">
+          <IconKey className="h-4 w-4 shrink-0 text-neutral-400" />
           <span className="truncate">{credentialLabel}</span>
         </div>
       )
@@ -361,10 +353,10 @@ export function VercelV0Chat({
         onClick={onAddCredentials}
         disabled={credentialActionMode === "disabled-add"}
         className={cn(
-          "flex h-9 items-center justify-between gap-1 rounded-lg border border-dashed px-3 text-sm transition-colors",
+          "flex h-10 items-center justify-between gap-1 rounded-lg border border-dashed px-3 text-sm transition-colors",
           credentialActionMode === "add"
-            ? "border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800"
-            : "cursor-not-allowed border-zinc-800 text-zinc-600",
+            ? "border-neutral-700 text-neutral-400 hover:border-neutral-600 hover:bg-neutral-800"
+            : "cursor-not-allowed border-neutral-800 text-neutral-600",
         )}
       >
         <IconPlus className="h-4 w-4" />
@@ -378,7 +370,7 @@ export function VercelV0Chat({
     <div className="mx-auto flex w-full max-w-4xl flex-col items-center space-y-4 p-4">
       <div className="relative w-full">
         {helperLabel && (
-          <div className="absolute -top-10 right-0 flex items-center justify-center gap-1.5 rounded-full border border-border/50 bg-background/50 px-3 py-1 text-xs">
+          <div className="absolute -top-10 right-0 flex items-center justify-center gap-1.5 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-xs shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
             {helperAvailable ? (
               <IconPlugConnected className="size-3 text-emerald-500" />
             ) : (
@@ -416,12 +408,12 @@ export function VercelV0Chat({
           <div className="p-3">
             <div className="flex flex-col gap-2 sm:gap-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex w-fit items-center rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+                <div className="flex h-10 w-fit items-center rounded-lg border border-neutral-800 bg-neutral-950 p-1">
                   <button
                     type="button"
                     onClick={() => onBrowserProviderChange("steel")}
                     className={cn(
-                      "relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                      "relative flex h-full items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors",
                       hasMounted && browserProvider === "steel"
                         ? "text-white"
                         : "text-neutral-500 hover:text-neutral-300",
@@ -441,7 +433,7 @@ export function VercelV0Chat({
                     type="button"
                     onClick={() => onBrowserProviderChange("local_chrome")}
                     className={cn(
-                      "relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                      "relative flex h-full items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors",
                       hasMounted && browserProvider === "local_chrome"
                         ? "text-white"
                         : "text-neutral-500 hover:text-neutral-300",
@@ -470,23 +462,40 @@ export function VercelV0Chat({
                   <button
                     type="button"
                     onClick={onSubmit}
-                    disabled={isPending || !value.trim() || !hasValidUrl || !canSubmit}
+                    disabled={isPending || !value.trim()}
                     className={cn(
-                      "flex h-9 items-center justify-center rounded-lg border px-2.5 text-sm transition-colors",
-                      value.trim() && !isPending && hasValidUrl && canSubmit
-                        ? "border-zinc-200 bg-white text-black hover:bg-zinc-100"
-                        : "border-zinc-800 bg-neutral-900 text-zinc-600",
+                      "flex h-10 w-10 items-center justify-center rounded-lg border text-sm transition-colors",
+                      value.trim() && !isPending
+                        ? "border-neutral-200 bg-white text-black hover:bg-neutral-100"
+                        : "border-neutral-800 bg-neutral-900 text-neutral-600",
                     )}
                   >
                     {isPending ? (
-                      <span className="px-1 text-xs text-zinc-400">...</span>
+                      <svg
+                        className="h-4 w-4 animate-spin text-neutral-500"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                        />
+                      </svg>
                     ) : (
                       <IconArrowUp
                         className={cn(
                           "h-4 w-4",
-                          value.trim() && hasValidUrl && canSubmit
-                            ? "text-black"
-                            : "text-zinc-600",
+                          value.trim() ? "text-black" : "text-neutral-600",
                         )}
                       />
                     )}

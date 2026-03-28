@@ -14,7 +14,6 @@ import {
 import { createRun } from "@/lib/create-run"
 import { normalizeCredentialWebsite } from "@/lib/credential-url"
 import { makeCredentialDefault } from "@/lib/credentials-server"
-import { readStoredHomeRunDraft, writeStoredHomeRunDraft } from "@/lib/home-run-drafts"
 import { getRunModeCapabilities } from "@/lib/get-run-mode-capabilities"
 import { validateRunUrl } from "@/lib/run-url"
 
@@ -34,11 +33,7 @@ function App() {
   const [browserProvider, setBrowserProvider] = useState<BrowserProvider | null>(
     () => (typeof window !== "undefined" ? getStoredHomeBrowserProvider() : null),
   )
-  const [prompt, setPrompt] = useState(() =>
-    typeof window !== "undefined"
-      ? readStoredHomeRunDraft(getStoredHomeBrowserProvider(), window.localStorage)
-      : "",
-  )
+  const [prompt, setPrompt] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [selectedCredentialId, setSelectedCredentialId] = useState<Id<"credentials"> | null>(null)
   const createRunMutation = useMutation({
@@ -51,33 +46,14 @@ function App() {
   useLayoutEffect(() => {
     const provider = getStoredHomeBrowserProvider()
     setBrowserProvider(provider)
-    setPrompt(readStoredHomeRunDraft(provider, window.localStorage))
   }, [])
 
   useHomeBrowserProviderSync((provider) => {
     setBrowserProvider(provider)
-    setPrompt(readStoredHomeRunDraft(provider, window.localStorage))
     if (error) {
       setError(null)
     }
   })
-
-  useEffect(() => {
-    if (!runModeCapabilities || browserProvider !== "local_chrome") {
-      return
-    }
-
-    if (runModeCapabilities.local_chrome.runnable) {
-      return
-    }
-
-    setStoredHomeBrowserProvider("steel")
-    setBrowserProvider("steel")
-    setPrompt(readStoredHomeRunDraft("steel", window.localStorage))
-    if (error) {
-      setError(null)
-    }
-  }, [browserProvider, error, runModeCapabilities])
 
   const normalizedPrompt = useMemo(() => prompt.trim(), [prompt])
   const matchedUrl = useMemo(() => normalizedPrompt.match(RUN_URL_PATTERN)?.[0] ?? "", [normalizedPrompt])
@@ -94,15 +70,22 @@ function App() {
       availableCredentials.find((credential) => credential._id === selectedCredentialId) ?? null,
     [availableCredentials, selectedCredentialId],
   )
+  const matchingCredentials = useMemo(
+    () =>
+      siteOrigin
+        ? availableCredentials.filter((credential) => credential.origin === siteOrigin)
+        : [],
+    [availableCredentials, siteOrigin],
+  )
   const credentialOptions = useMemo(
     () =>
-      availableCredentials.map((credential) => ({
+      matchingCredentials.map((credential) => ({
         label: credential.login,
         value: credential._id,
         domain: credential.origin.replace(/^https?:\/\//, ""),
         isDefault: credential.isDefault,
       })),
-    [availableCredentials],
+    [matchingCredentials],
   )
   const selectedCapability = browserProvider ? runModeCapabilities?.[browserProvider] : null
   const submitDisabledReason =
@@ -118,7 +101,9 @@ function App() {
   const credentialActionMode =
     credentials === undefined
       ? ("loading" as const)
-      : availableCredentials.length > 0
+      : !hasValidUrl
+        ? ("disabled-add" as const)
+        : matchingCredentials.length > 0
         ? ("select" as const)
         : ("add" as const)
 
@@ -166,11 +151,13 @@ function App() {
       return
     }
 
-    const matchingCredentials = availableCredentials.filter(
-      (credential) => credential.origin === siteOrigin,
-    )
-
     if (!matchingCredentials.length) {
+      if (selectedCredentialId !== null) {
+        setSelectedCredentialId(null)
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, NO_CREDENTIAL_SELECTED)
+        }
+      }
       return
     }
 
@@ -185,7 +172,7 @@ function App() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, nextCredential._id)
     }
-  }, [availableCredentials, hasValidUrl, selectedCredentialId, siteOrigin])
+  }, [hasValidUrl, matchingCredentials, selectedCredentialId, siteOrigin])
 
   const handleSubmit = async () => {
     if (!browserProvider) {
@@ -227,9 +214,6 @@ function App() {
       setPrompt("")
       if (typeof window !== "undefined") {
         window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, NO_CREDENTIAL_SELECTED)
-        if (browserProvider) {
-          writeStoredHomeRunDraft(browserProvider, "", window.localStorage)
-        }
       }
       return
     }
@@ -249,10 +233,6 @@ function App() {
     }
     setPrompt(nextPrompt)
 
-    if (browserProvider) {
-      writeStoredHomeRunDraft(browserProvider, nextPrompt, window.localStorage)
-    }
-
     try {
       await makeDefaultMutation.mutateAsync({
         data: {
@@ -265,9 +245,6 @@ function App() {
     } catch (credentialError) {
       setSelectedCredentialId(previousCredentialId)
       setPrompt(normalizedPrompt)
-      if (browserProvider) {
-        writeStoredHomeRunDraft(browserProvider, normalizedPrompt, window.localStorage)
-      }
       setError(
         credentialError instanceof Error
           ? credentialError.message
@@ -279,7 +256,6 @@ function App() {
   const switchProvider = (provider: BrowserProvider) => {
     setStoredHomeBrowserProvider(provider)
     setBrowserProvider(provider)
-    setPrompt(readStoredHomeRunDraft(provider, window.localStorage))
     setError(null)
   }
 
@@ -291,9 +267,6 @@ function App() {
             value={prompt}
             onChange={(value) => {
               setPrompt(value)
-              if (browserProvider) {
-                writeStoredHomeRunDraft(browserProvider, value, window.localStorage)
-              }
               if (error) {
                 setError(null)
               }
