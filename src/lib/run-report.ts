@@ -8,6 +8,8 @@ export type RunStatus =
 
 export type TimelineEvent = {
   createdAt: number
+  kind?: string
+  title?: string
 }
 
 export type QueueState =
@@ -60,6 +62,63 @@ export function formatSessionDuration(durationMs: number | null | undefined) {
 
 export function sortTimelineEvents<T extends TimelineEvent>(events: T[]) {
   return events.slice().sort((left, right) => left.createdAt - right.createdAt)
+}
+
+const hiddenTimelineTitles = new Set([
+  "Awaiting Chrome debugging permission",
+  "Autonomous QA agent booted",
+  "Background Playwright session active",
+  "Background Playwright session created",
+  "Background worker picked up run",
+  "Local Chrome attached",
+  "Local helper picked up run",
+  "Local run starting",
+  "Opening target page",
+  "Run starting",
+  "Steel live preview ready",
+  "Steel session created",
+  "Steel session released",
+  "Target page loaded",
+])
+
+export function filterTimelineEventsForQaView<
+  T extends TimelineEvent & {
+    artifactUrl?: string
+    body?: string
+    kind?: string
+    status?: string
+    title?: string
+  },
+>(events: T[]) {
+  return events.filter((event) => {
+    if (
+      event.kind === "finding" ||
+      event.kind === "agent" ||
+      event.kind === "navigation" ||
+      event.kind === "audit"
+    ) {
+      return true
+    }
+
+    if (event.kind === "artifact") {
+      return event.title === "Lighthouse report saved" || event.title === "Playwright trace saved"
+    }
+
+    if (event.kind === "status") {
+      return (
+        event.title === "Run completed" ||
+        event.title === "Run failed" ||
+        event.title === "Run cancelled" ||
+        event.title === "Stop requested"
+      )
+    }
+
+    if (event.kind === "session") {
+      return false
+    }
+
+    return !hiddenTimelineTitles.has(event.title ?? "")
+  })
 }
 
 export function describeExecutionState(executionState: ExecutionState) {

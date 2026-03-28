@@ -990,6 +990,15 @@ export const getRunReport = query({
       performanceAudits: performanceAudits.length,
       screenshots: artifacts.filter((artifact) => artifact.type === "screenshot").length,
     })
+    const coverageUrls = Array.from(
+      new Set(
+        [
+          run.url,
+          ...runEvents.map((event) => event.pageUrl),
+          ...findings.map((finding) => finding.pageOrFlow),
+        ].filter((value): value is string => Boolean(value)),
+      ),
+    )
 
     return {
       run: {
@@ -1017,6 +1026,7 @@ export const getRunReport = query({
       artifacts,
       runEvents,
       findings,
+      coverageUrls,
       performanceAudits,
       latestReportArtifact,
       currentAuditTrend: buildAuditTrend({

@@ -44,6 +44,7 @@ import { requestRunStop } from "@/lib/request-run-stop"
 import {
   buildSteelEmbedUrl,
   describeBrowserProvider,
+  filterTimelineEventsForQaView,
   isActiveRunStatus,
   sortTimelineEvents,
 } from "@/lib/run-report"
@@ -134,7 +135,7 @@ function RunPage() {
 
   const { artifacts, executionState, run, runEvents, session } = report
   const isActive = isActiveRunStatus(run.status)
-  const timeline = sortTimelineEvents(runEvents as RunEvent[])
+  const timeline = sortTimelineEvents(filterTimelineEventsForQaView(runEvents as RunEvent[]))
   const isSteelRun = (run.browserProvider ?? "steel") === "steel"
   const liveEmbedUrl = isSteelRun ? buildSteelEmbedUrl(session?.debugUrl) : null
   const latestScreenshot = (artifacts as RunArtifact[]).find(
@@ -282,6 +283,7 @@ function RunPage() {
                 title="Steel live session"
                 src={liveEmbedUrl}
                 allow="clipboard-read; clipboard-write"
+                sandbox="allow-downloads allow-forms allow-popups allow-scripts"
                 className="h-full min-h-[26rem] w-full rounded-[1.6rem] border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
               />
             ) : !isActive ? (

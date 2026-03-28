@@ -1,12 +1,17 @@
 import { createServerFn } from "@tanstack/react-start"
 import type { Id } from "../../convex/_generated/dataModel"
 import { api } from "../../convex/_generated/api"
-import { prepareCreateBackgroundBatchPayload, type BackgroundAssignmentInput } from "./background-run-request"
+import {
+  prepareCreateBackgroundBatchPayload,
+  type BackgroundAssignmentInput,
+  type SiteBatchInput,
+} from "./background-run-request"
 
 export const createBackgroundBatch = createServerFn({ method: "POST" })
   .inputValidator(
     (data: {
-      assignments: BackgroundAssignmentInput[]
+      assignments?: BackgroundAssignmentInput[]
+      siteBatch?: SiteBatchInput | null
     }) => data,
   )
   .handler(async ({ data }) => {

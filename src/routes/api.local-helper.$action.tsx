@@ -5,6 +5,7 @@ import {
   appendFindingRequestSchema,
   appendRunEventRequestSchema,
   claimLocalRunRequestSchema,
+  createPerformanceAuditRequestSchema,
   finalizeLocalRunRequestSchema,
   getLocalRunStateRequestSchema,
   registerLocalHelperRequestSchema,
@@ -156,6 +157,20 @@ export const Route = createFileRoute("/api/local-helper/$action")({
             })
 
             return json({ artifactId, ok: true })
+          }
+
+          case "performance-audit": {
+            const payload = createPerformanceAuditRequestSchema.parse(body)
+            const performanceAuditId = await convex.mutation(
+              api.runtime.createPerformanceAudit,
+              {
+                ...payload,
+                runId: payload.runId as Id<"runs">,
+                reportArtifactId: payload.reportArtifactId as Id<"artifacts"> | undefined,
+              },
+            )
+
+            return json({ ok: true, performanceAuditId })
           }
 
           case "finalize": {

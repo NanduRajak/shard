@@ -66,6 +66,32 @@ describe("prepareCreateBackgroundBatchPayload", () => {
     })
   })
 
+  it("expands a site-first batch into auto-sharded assignments", () => {
+    const result = prepareCreateBackgroundBatchPayload(
+      {
+        siteBatch: {
+          agentCount: 3,
+          siteUrl: "https://shop.example.com",
+          task: "Add a Sony headset to cart and validate the cart flow",
+        },
+      },
+      {
+        credentialProfiles: [],
+      },
+    )
+
+    expect(result.title).toBe("Background batch · 3 assignments")
+    expect(result.assignments).toHaveLength(3)
+    expect(result.assignments.map((assignment) => assignment.url)).toEqual([
+      "https://shop.example.com/",
+      "https://shop.example.com/",
+      "https://shop.example.com/",
+    ])
+    expect(result.assignments[0]?.instructions).toContain("Coverage lane 1 of 3")
+    expect(result.assignments[1]?.instructions).toContain("Coverage lane 2 of 3")
+    expect(result.assignments[2]?.instructions).toContain("Coverage lane 3 of 3")
+  })
+
   it("rejects invalid URLs", () => {
     expect(() =>
       prepareCreateBackgroundBatchPayload({

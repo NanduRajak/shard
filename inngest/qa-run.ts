@@ -1,11 +1,12 @@
-import lighthouse from "lighthouse"
 import { readFile, unlink } from "node:fs/promises"
+import { createRequire } from "node:module"
+import { dirname, join } from "node:path"
 import { chromium, type BrowserContext, type Locator, type Page } from "playwright"
 import SteelClient from "steel-sdk"
 import { NonRetriableError } from "inngest"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
 import { google } from "@ai-sdk/google"
-import { Launcher, launch } from "chrome-launcher"
+import { Launcher } from "chrome-launcher"
 import { z } from "zod"
 import type { Id } from "../convex/_generated/dataModel"
 import { api } from "../convex/_generated/api"
@@ -13,7 +14,6 @@ import { createConvexServerClient } from "~/server/convex"
 import { serverEnv } from "~/server-env"
 import { inngest } from "./core"
 import { isTransientWorkflowError } from "@/lib/workflow-errors"
-import { scoreLighthouseFinding } from "@/lib/lighthouse-audits"
 import { pickQaFallbackAction } from "@/lib/qa-fallback"
 import {
   getDecryptedCredentialById,
@@ -31,6 +31,10 @@ import {
   computeFindingScore,
   impactWeightForSource,
 } from "@/lib/scoring"
+import {
+  QaRunCancelledError,
+  runQaSession,
+} from "@/lib/qa-engine"
 
 const MAX_PAGE_FINDINGS = 2
 const ACTION_HIGHLIGHT_DELAY_MS = 350
@@ -48,6 +52,12 @@ const BACKGROUND_QA_CONFIG = {
   sessionTimeoutMs: 24 * 60 * 1000,
 } as const
 const PLAYWRIGHT_TRACE_PATH_PREFIX = "/tmp/shard-background-trace"
+const STEEL_SESSION_DOWNLOADS_PATH = "/files"
+const STEEL_CONNECT_TIMEOUT_MS = 30_000
+const STEEL_CONNECT_OPTIONS = {
+  downloadsPath: STEEL_SESSION_DOWNLOADS_PATH,
+  timeout: STEEL_CONNECT_TIMEOUT_MS,
+} as const
 
 type RunRequestedEvent = {
   data: {
@@ -143,6 +153,56 @@ const pageReviewSchema = z.object({
 const steel = new SteelClient({
   steelAPIKey: serverEnv.STEEL_API_KEY,
 })
+
+const require = createRequire(import.meta.url)
+const playwrightValidatorPatchedKey = "__shardSteelConnectOverCdpPatched"
+
+function patchPlaywrightCdpValidatorForSteel() {
+  const globalState = globalThis as Record<string, unknown>
+  if (globalState[playwrightValidatorPatchedKey]) {
+    return
+  }
+
+  const playwrightCoreRoot = dirname(require.resolve("playwright-core"))
+  const validatorPrimitives = require(
+    join(playwrightCoreRoot, "lib/protocol/validatorPrimitives.js"),
+  )
+  const playwrightValidator = require(
+    join(playwrightCoreRoot, "lib/protocol/validator.js"),
+  )
+  void playwrightValidator
+
+  const {
+    scheme,
+    tArray,
+    tBoolean,
+    tFloat,
+    tObject,
+    tOptional,
+    tString,
+    tType,
+  } = validatorPrimitives as {
+    scheme: Record<string, unknown>
+    tArray: (validator: unknown) => unknown
+    tBoolean: unknown
+    tFloat: unknown
+    tObject: (shape: Record<string, unknown>) => unknown
+    tOptional: (validator: unknown) => unknown
+    tString: unknown
+    tType: (name: string) => unknown
+  }
+
+  scheme.BrowserTypeConnectOverCDPParams = tObject({
+    endpointURL: tString,
+    headers: tOptional(tArray(tType("NameValue"))),
+    slowMo: tOptional(tFloat),
+    timeout: tFloat,
+    isLocal: tOptional(tBoolean),
+    downloadsPath: tOptional(tString),
+  })
+
+  globalState[playwrightValidatorPatchedKey] = true
+}
 
 export const qaRun = inngest.createFunction(
   {
@@ -249,27 +309,18 @@ export async function runQaWorkflow({
   }
 
   const convex = createConvexServerClient()
-  const runRecord = await convex.query(api.runs.getRun, { runId })
   const qaConfig = getQaRuntimeConfig(browserProvider)
 
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
   let context: BrowserContext | null = null
-  let chrome: Awaited<ReturnType<typeof launch>> | null = null
   let currentSessionId: string | null = null
   let sessionDocId: Id<"sessions"> | null = null
   let sessionDebugUrl: string | undefined
   let sessionReplayUrl: string | undefined
   let finalRunStatus: "cancelled" | "completed" | "failed" = "completed"
   let workflowError: Error | null = null
-  let screenshotCount = 0
-  let performanceAuditCount = 0
   let lastKnownUrl = url
   let failureStage = "Queued"
-
-  const savedFindings: SavedFinding[] = []
-  const findingSignatures = new Set<string>()
-  const bufferedFindings: BufferedFinding[] = []
-  const pageCandidates = new Map<string, PageCandidate>()
 
   try {
       await convex.mutation(api.runtime.resetRunState, {
@@ -390,8 +441,10 @@ export async function runQaWorkflow({
       })
 
       if (browserProvider === "steel") {
+        patchPlaywrightCdpValidatorForSteel()
         browser = await chromium.connectOverCDP(
           `wss://connect.steel.dev?apiKey=${serverEnv.STEEL_API_KEY}&sessionId=${currentSessionId}`,
+          STEEL_CONNECT_OPTIONS as any,
         )
         context = browser.contexts()[0] ?? (await browser.newContext())
         await convex.mutation(api.runtime.updateSession, {
@@ -429,12 +482,6 @@ export async function runQaWorkflow({
       }
 
       const page = context.pages()[0] ?? (await context.newPage())
-
-      attachBrowserSignalCapture({
-        bufferedFindings,
-        page,
-        startUrl: url,
-      })
 
       await convex.mutation(api.runtime.updateRun, {
         runId,
@@ -480,280 +527,42 @@ export async function runQaWorkflow({
         pageUrl: page.url(),
         sessionId: sessionDocId,
       })
-
-      screenshotCount += await throwIfStopRequested({
-        convex,
-        runId,
-        bufferedFindings,
-        currentStep: "QA run stopped after loading the target page",
-        pageCandidates,
-        pageUrl: page.url(),
-        runIdForFindings: runId,
-        savedFindings,
-        stepIndex: 0,
-        findingSignatures,
-      })
-
-      screenshotCount += await runSnapshotStage({
-        convex,
-        findingSignatures,
-        bufferedFindings,
-        sessionId: sessionDocId,
-        page,
-        pageCandidates,
-        runId,
-        savedFindings,
-        stepIndex: 0,
-      })
-
-      screenshotCount += await throwIfStopRequested({
-        convex,
-        runId,
-        bufferedFindings,
-        sessionId: sessionDocId,
-        currentStep: "QA run stopped during exploration",
-        pageCandidates,
-        pageUrl: page.url(),
-        runIdForFindings: runId,
-        savedFindings,
-        stepIndex: 0,
-        findingSignatures,
-      })
-
-      const agentLoopResult = await runAgentLoop({
-        agentOrdinal: runRecord?.agentOrdinal,
-        convex,
-        credentialId,
-        config: qaConfig,
-        findingSignatures,
-        bufferedFindings,
+      const sessionResult = await runQaSession({
+        browser: createPlaywrightQaBrowser(page),
+        config: {
+          agentTimeBudgetMs: qaConfig.agentTimeBudgetMs,
+          maxAgentSteps: qaConfig.maxAgentSteps,
+          maxDiscoveredPages: qaConfig.maxDiscoveredPages,
+        },
+        getStoredCredential: credentialId
+          ? async () =>
+              await getDecryptedCredentialById({
+                convex,
+                credentialId,
+              })
+          : undefined,
         instructions,
         mode,
-        page,
-        pageCandidates,
-        runId,
-        savedFindings,
-        sessionId: sessionDocId,
+        model: google(DEFAULT_MODEL),
+        runtime: createConvexQaRuntime({
+          convex,
+          runId,
+          sessionId: sessionDocId,
+        }),
         startUrl: url,
       })
-      screenshotCount += agentLoopResult.screenshotCount
+
       lastKnownUrl = page.url()
-
-      screenshotCount += await throwIfStopRequested({
-        convex,
-        runId,
-        bufferedFindings,
-        sessionId: sessionDocId,
-        currentStep: "QA run stopped before Lighthouse",
-        pageCandidates,
-        pageUrl: page.url(),
-        runIdForFindings: runId,
-        savedFindings,
-        stepIndex: qaConfig.maxAgentSteps,
-        findingSignatures,
-      })
-
-      const auditUrls = selectAuditUrls({
-        maxAuditUrls: qaConfig.maxDiscoveredPages,
-        pageCandidates,
-        startUrl: url,
-      })
-
-      chrome = await launch({
-        chromeFlags: ["--headless=new", "--no-sandbox", "--disable-gpu"],
-      })
-
-      for (const [index, auditUrl] of auditUrls.entries()) {
-        failureStage = `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`
-        lastKnownUrl = auditUrl
-        screenshotCount += await throwIfStopRequested({
-          convex,
-          runId,
-          bufferedFindings,
-          sessionId: sessionDocId,
-          currentStep: "QA run stopped during Lighthouse",
-          pageCandidates,
-          pageUrl: auditUrl,
-          runIdForFindings: runId,
-          savedFindings,
-          stepIndex: qaConfig.maxAgentSteps + index,
-          findingSignatures,
-        })
-
-        await convex.mutation(api.runtime.updateRun, {
-          runId,
-          currentStep: `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`,
-          currentUrl: auditUrl,
-        })
-        await emitRunEvent(convex, {
-          runId,
-          kind: "audit",
-          title: `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`,
-          body: auditUrl,
-          status: "running",
-          pageUrl: auditUrl,
-          sessionId: sessionDocId,
-        })
-
-        const auditResult = await lighthouse(auditUrl, {
-          output: "html",
-          onlyCategories: [
-            "performance",
-            "accessibility",
-            "best-practices",
-            "seo",
-          ],
-          port: chrome.port,
-        })
-
-        if (!auditResult) {
-          continue
-        }
-
-        const reportHtml = Array.isArray(auditResult.report)
-          ? auditResult.report.join("\n")
-          : auditResult.report
-
-        const reportArtifactId = await uploadArtifact({
-          body: new TextEncoder().encode(reportHtml),
-          contentType: "text/html; charset=utf-8",
-          convex,
-          pageUrl: auditUrl,
-          runId,
-          title: `Lighthouse report for ${auditUrl}`,
-          type: "html-report",
-        })
-        performanceAuditCount += 1
-        await emitRunEvent(convex, {
-          runId,
-          kind: "artifact",
-          title: "Lighthouse report saved",
-          body: `Stored HTML report for ${auditUrl}.`,
-          status: "running",
-          pageUrl: auditUrl,
-          sessionId: sessionDocId,
-          artifactId: reportArtifactId,
-        })
-
-        const categories = auditResult.lhr.categories
-
-        await convex.mutation(api.runtime.createPerformanceAudit, {
-          runId,
-          pageUrl: auditUrl,
-          performanceScore: categories.performance.score ?? 0,
-          accessibilityScore: categories.accessibility.score ?? 0,
-          bestPracticesScore: categories["best-practices"].score ?? 0,
-          seoScore: categories.seo.score ?? 0,
-          reportArtifactId,
-        })
-
-        const perfFindings = [
-          scoreLighthouseFinding({
-            category: "performance",
-            isStartPage: auditUrl === url,
-            pageUrl: auditUrl,
-            score: categories.performance.score ?? 0,
-          }),
-          scoreLighthouseFinding({
-            category: "accessibility",
-            isStartPage: auditUrl === url,
-            pageUrl: auditUrl,
-            score: categories.accessibility.score ?? 0,
-          }),
-          scoreLighthouseFinding({
-            category: "best-practices",
-            isStartPage: auditUrl === url,
-            pageUrl: auditUrl,
-            score: categories["best-practices"].score ?? 0,
-          }),
-          scoreLighthouseFinding({
-            category: "seo",
-            isStartPage: auditUrl === url,
-            pageUrl: auditUrl,
-            score: categories.seo.score ?? 0,
-          }),
-        ]
-
-        for (const perfFinding of perfFindings) {
-          if (!perfFinding) {
-            continue
-          }
-
-          const perfSignature = `perf::${auditUrl}::${perfFinding.title}`
-
-          if (findingSignatures.has(perfSignature)) {
-            continue
-          }
-
-          findingSignatures.add(perfSignature)
-
-          await convex.mutation(api.runtime.createFinding, {
-            runId,
-            source: "perf",
-            title: perfFinding.title,
-            description: perfFinding.description,
-            severity: perfFinding.severity,
-            confidence: perfFinding.confidence,
-            impact: perfFinding.impact,
-            score: perfFinding.score,
-            pageOrFlow: auditUrl,
-            artifactId: reportArtifactId,
-            suggestedFix: perfFinding.suggestedFix,
-          })
-
-          savedFindings.push({
-            source: "perf",
-            score: perfFinding.score,
-          })
-          await emitRunEvent(convex, {
-            runId,
-            kind: "finding",
-            title: perfFinding.title,
-            body: perfFinding.description,
-            status: "running",
-            pageUrl: auditUrl,
-            sessionId: sessionDocId,
-            artifactId: reportArtifactId,
-          })
-        }
-      }
-
-      screenshotCount += await throwIfStopRequested({
-        convex,
-        runId,
-        bufferedFindings,
-        sessionId: sessionDocId,
-        currentStep: "QA run stopped before final scoring",
-        pageCandidates,
-        pageUrl: page.url(),
-        runIdForFindings: runId,
-        savedFindings,
-        stepIndex: qaConfig.maxAgentSteps + auditUrls.length,
-        findingSignatures,
-      })
-
-      await convex.mutation(api.runtime.updateRun, {
-        runId,
-        currentStep: "Computing final quality score",
-        currentUrl: url,
-      })
-      failureStage = "Computing final quality score"
-
-      const scoreSummary = buildScoreSummary({
-        findings: savedFindings,
-        performanceAudits: performanceAuditCount,
-        screenshots: screenshotCount,
-      })
 
       await convex.mutation(api.runtime.updateRun, {
         runId,
         status: "completed",
         currentStep: "QA run completed",
         currentUrl: page.url(),
-        finalScore: scoreSummary.overall,
+        finalScore: sessionResult.finalScore,
         finishedAt: Date.now(),
-        goalStatus: agentLoopResult.goalOutcome?.status ?? null,
-        goalSummary: agentLoopResult.goalOutcome?.summary ?? null,
+        goalStatus: sessionResult.goalOutcome?.status ?? null,
+        goalSummary: sessionResult.goalOutcome?.summary ?? null,
         errorMessage: null,
       })
       await emitRunEvent(convex, {
@@ -761,21 +570,17 @@ export async function runQaWorkflow({
         kind: "status",
         title: "Run completed",
         body:
-          mode === "task" && agentLoopResult.goalOutcome
-            ? `Final quality score: ${scoreSummary.overall}/100.\nTask outcome: ${agentLoopResult.goalOutcome.status}.\n${agentLoopResult.goalOutcome.summary}`
-            : `Final quality score: ${scoreSummary.overall}/100.`,
+          mode === "task" && sessionResult.goalOutcome
+            ? `Final quality score: ${sessionResult.finalScore}/100.\nTask outcome: ${sessionResult.goalOutcome.status}.\n${sessionResult.goalOutcome.summary}`
+            : `Final quality score: ${sessionResult.finalScore}/100.`,
         status: "completed",
         pageUrl: page.url(),
         sessionId: sessionDocId,
       })
   } catch (error) {
-      if (error instanceof RunCancelledError) {
+      if (error instanceof RunCancelledError || error instanceof QaRunCancelledError) {
         finalRunStatus = "cancelled"
-        const finalScore = computeRunFinalScore({
-          findings: savedFindings,
-          performanceAudits: performanceAuditCount,
-          screenshots: screenshotCount,
-        })
+        const finalScore = await computePersistedRunScore(convex, runId)
 
         await convex.mutation(api.runtime.updateRun, {
           runId,
@@ -886,14 +691,6 @@ export async function runQaWorkflow({
         await browser.close().catch(() => undefined)
       }
 
-      if (chrome) {
-        try {
-          await chrome.kill()
-        } catch {
-          // Ignore Chrome shutdown failures during cleanup.
-        }
-      }
-
       if (currentSessionId && browserProvider === "steel") {
         await steel.sessions.release(currentSessionId).catch(() => undefined)
         await emitRunEvent(convex, {
@@ -924,6 +721,173 @@ export async function runQaWorkflow({
       }
   }
 }
+
+function createPlaywrightQaBrowser(page: Page) {
+  return {
+    captureRuntimeFindings: async () => {},
+    click: async (ref: string) => {
+      const locator = page.locator(ref).first()
+      await highlightActionTarget({ locator, page })
+      await locator.click({ timeout: 5_000 })
+      await settlePage(page)
+    },
+    fill: async (ref: string, value: string) => {
+      const locator = page.locator(ref).first()
+      await highlightActionTarget({ locator, page })
+      await locator.fill(value, { timeout: 5_000 })
+      await settlePage(page)
+    },
+    getCurrentUrl: async () => page.url(),
+    goBack: async () => {
+      await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
+      await settlePage(page)
+    },
+    inspectCurrentPage: async () => {
+      const snapshot = await inspectCurrentPage(page)
+      return {
+        ...snapshot,
+        interactives: snapshot.interactives.map((item) => ({
+          ...item,
+          ref: item.selector,
+        })),
+      }
+    },
+    navigate: async (targetUrl: string) => {
+      await safeGoto(page, targetUrl)
+    },
+    pressKey: async (key: string) => {
+      await page.keyboard.press(key).catch(() => undefined)
+      await settlePage(page)
+    },
+    startRuntimeCapture: async (startUrl: string, bufferedFindings: BufferedFinding[]) => {
+      attachBrowserSignalCapture({
+        bufferedFindings,
+        page,
+        startUrl,
+      })
+    },
+    takeScreenshot: async () =>
+      new Uint8Array(
+        await page.screenshot({
+          fullPage: true,
+          type: "png",
+        }),
+      ),
+    useStoredLogin: async (credential: {
+      login: string
+      origin: string
+      password: string
+    }) => await applyCredentialToPage(page, credential),
+  }
+}
+
+function createConvexQaRuntime({
+  convex,
+  runId,
+  sessionId,
+}: {
+  convex: ReturnType<typeof createConvexServerClient>
+  runId: Id<"runs">
+  sessionId: Id<"sessions"> | null
+}) {
+  return {
+    createArtifact: async (payload: {
+      body: Uint8Array
+      contentType: string
+      pageUrl?: string
+      title?: string
+      type: "html-report" | "replay" | "screenshot" | "trace"
+    }) =>
+      await uploadArtifact({
+        body: payload.body,
+        contentType: payload.contentType,
+        convex,
+        pageUrl: payload.pageUrl ?? "",
+        runId,
+        title: payload.title ?? payload.type,
+        type: payload.type === "replay" ? "trace" : payload.type,
+      }),
+    createFinding: async (payload: {
+      artifactId?: string
+      browserSignal?: "console" | "network" | "pageerror"
+      confidence: number
+      description: string
+      impact: number
+      pageOrFlow?: string
+      score: number
+      severity: "critical" | "high" | "low" | "medium"
+      source: "browser" | "perf"
+      stepIndex?: number
+      suggestedFix?: string
+      title: string
+    }) => {
+      await convex.mutation(api.runtime.createFinding, {
+        ...payload,
+        artifactId: payload.artifactId as Id<"artifacts"> | undefined,
+        runId,
+      })
+    },
+    createPerformanceAudit: async (payload: {
+      accessibilityScore: number
+      bestPracticesScore: number
+      pageUrl: string
+      performanceScore: number
+      reportArtifactId?: string
+      seoScore: number
+    }) => {
+      await convex.mutation(api.runtime.createPerformanceAudit, {
+        ...payload,
+        reportArtifactId: payload.reportArtifactId as Id<"artifacts"> | undefined,
+        runId,
+      })
+    },
+    emitEvent: async (payload: {
+      artifactId?: string
+      body?: string
+      kind: "agent" | "artifact" | "audit" | "finding" | "navigation" | "session" | "status" | "system"
+      pageUrl?: string
+      status?: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
+      stepIndex?: number
+      title: string
+    }) => {
+      await emitRunEvent(convex, {
+        ...payload,
+        artifactId: payload.artifactId as Id<"artifacts"> | undefined,
+        runId,
+        sessionId,
+      })
+    },
+    getStopState: async () => await convex.query(api.runtime.getRunExecutionState, { runId }),
+    updateRun: async (payload: {
+      currentStep?: string
+      currentUrl?: string | null
+      errorMessage?: string | null
+      finalScore?: number
+      finishedAt?: number
+      goalStatus?: "blocked" | "completed" | "not_requested" | "partially_completed" | null
+      goalSummary?: string | null
+      queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
+      status?: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
+    }) => {
+      await convex.mutation(api.runtime.updateRun, {
+        ...payload,
+        runId,
+      })
+    },
+  }
+}
+
+async function computePersistedRunScore(
+  convex: ReturnType<typeof createConvexServerClient>,
+  runId: Id<"runs">,
+) {
+  const report = await convex.query(api.runtime.getRunReport, { runId })
+  return report?.scoreSummary.overall ?? 0
+}
+
+void runAgentLoop
+void computeRunFinalScore
+void selectAuditUrls
 
 async function runAgentLoop({
   agentOrdinal,

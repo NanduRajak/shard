@@ -51,9 +51,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { AgentPlan } from "@/components/ui/agent-plan"
 import { createBackgroundBatch } from "@/lib/create-background-batch"
 import { getBackgroundTaskLabel } from "@/lib/background-agent-task"
 import { requestRunStop } from "@/lib/request-run-stop"
+import { filterTimelineEventsForQaView, sortTimelineEvents } from "@/lib/run-report"
 import { isActiveRunStatus } from "@/lib/run-report"
 
 export const Route = createFileRoute("/background-agents")({
@@ -82,7 +84,14 @@ function BackgroundAgentsPage() {
     convexQuery(api.backgroundAgents.listCredentialsForBackgroundRuns, {}),
   )
   const [rows, setRows] = useState<AssignmentRow[]>([EMPTY_ROW()])
+  const [siteBatch, setSiteBatch] = useState({
+    agentCount: 3,
+    credentialId: "none",
+    siteUrl: "",
+    task: "",
+  })
   const [selectedRunId, setSelectedRunId] = useState<Id<"runs"> | null>(null)
+  const [detailTab, setDetailTab] = useState<"report" | "timeline">("report")
   const createMutation = useMutation({
     mutationFn: createBackgroundBatch,
   })
@@ -94,6 +103,12 @@ function BackgroundAgentsPage() {
       runId: selectedRunId ?? undefined,
     }),
     enabled: Boolean(selectedRunId),
+  })
+  const { data: batchReport } = useQuery({
+    ...convexQuery(api.backgroundAgents.getBackgroundBatchReport, {
+      batchId: detail?.batch?._id,
+    }),
+    enabled: Boolean(detail?.batch?._id),
   })
 
   const totalAgentsRequested = useMemo(
@@ -118,6 +133,33 @@ function BackgroundAgentsPage() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create background batch.",
+      )
+    }
+  }
+
+  const handleCreateSiteBatch = async () => {
+    try {
+      await createMutation.mutateAsync({
+        data: {
+          siteBatch: {
+            agentCount: siteBatch.agentCount,
+            credentialId: siteBatch.credentialId !== "none" ? siteBatch.credentialId : undefined,
+            siteUrl: siteBatch.siteUrl,
+            task: siteBatch.task,
+          },
+        },
+      })
+
+      setSiteBatch({
+        agentCount: 3,
+        credentialId: "none",
+        siteUrl: "",
+        task: "",
+      })
+      toast.success("Site batch queued.")
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create site batch.",
       )
     }
   }
@@ -183,12 +225,117 @@ function BackgroundAgentsPage() {
                   variant="secondary"
                   className="w-fit rounded-full px-3 py-1 text-[11px] tracking-[0.16em] uppercase"
                 >
+                  Site-first launcher
+                </Badge>
+                <CardTitle>Launch one site with multiple agents</CardTitle>
+                <CardDescription className="max-w-2xl text-pretty">
+                  Enter a single site once, choose how many agents you want, and let Shard
+                  auto-shard coverage across different routes and flows.
+                </CardDescription>
+              </div>
+              <Badge variant="outline" className="tabular-nums">
+                {siteBatch.agentCount} agent{siteBatch.agentCount === 1 ? "" : "s"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-4 pt-5">
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Site URL">
+                <Input
+                  value={siteBatch.siteUrl}
+                  placeholder="https://app.example.com"
+                  className="h-11 rounded-2xl border-border/70 bg-background/80 shadow-none"
+                  onChange={(event) =>
+                    setSiteBatch((current) => ({ ...current, siteUrl: event.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Credential">
+                <Select
+                  value={siteBatch.credentialId}
+                  onValueChange={(value) =>
+                    setSiteBatch((current) => ({ ...current, credentialId: value ?? "none" }))
+                  }
+                >
+                  <SelectTrigger className="h-11 rounded-2xl border-border/70 bg-background/80">
+                    <SelectValue placeholder="No credential" />
+                  </SelectTrigger>
+                  <SelectContent align="start">
+                    <SelectItem value="none">No credential</SelectItem>
+                    {(credentials ?? []).map((credential) => (
+                      <SelectItem key={credential._id} value={credential._id}>
+                        {credential.website} · {credential.login}
+                        {credential.isDefault ? " · default" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Agent Count">
+                <Select
+                  value={String(siteBatch.agentCount)}
+                  onValueChange={(value) =>
+                    setSiteBatch((current) => ({
+                      ...current,
+                      agentCount: Number(value),
+                    }))
+                  }
+                >
+                  <SelectTrigger className="h-11 rounded-2xl border-border/70 bg-background/80">
+                    <SelectValue placeholder="3" />
+                  </SelectTrigger>
+                  <SelectContent align="start">
+                    {[1, 2, 3, 4, 5, 6].map((count) => (
+                      <SelectItem key={count} value={String(count)}>
+                        {count}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+            <Field label="Shared Task">
+              <Textarea
+                value={siteBatch.task}
+                placeholder="Optional. Leave blank for the default end-to-end QA audit."
+                className="min-h-24 rounded-[1.45rem] border-border/70 bg-background/80 shadow-none"
+                onChange={(event) =>
+                  setSiteBatch((current) => ({ ...current, task: event.target.value }))
+                }
+              />
+            </Field>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-border/60 bg-muted/20 p-3">
+              <p className="text-sm text-muted-foreground">
+                Shard will create one merged site audit and keep each agent’s steps visible.
+              </p>
+              <Button
+                className="min-h-11 rounded-2xl"
+                disabled={createMutation.isPending}
+                onClick={() => {
+                  void handleCreateSiteBatch()
+                }}
+              >
+                {createMutation.isPending ? "Starting..." : "Start site batch"}
+                <IconPlayerPlay className="size-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_20px_55px_-42px_rgba(0,0,0,0.78)]">
+          <CardHeader className="gap-4 border-b border-border/60 bg-muted/15">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-2">
+                <Badge
+                  variant="secondary"
+                  className="w-fit rounded-full px-3 py-1 text-[11px] tracking-[0.16em] uppercase"
+                >
                   Launch agents
                 </Badge>
-                <CardTitle>Create background agents</CardTitle>
+                <CardTitle>Advanced multi-site launcher</CardTitle>
                 <CardDescription className="max-w-2xl text-pretty">
-                  Keep it lightweight: one row is one agent. Leave the task blank to run the
-                  built-in end-to-end QA pass.
+                  One row is one agent. Use this mode when you want different websites or
+                  fully custom per-agent tasks.
                 </CardDescription>
               </div>
               <Badge variant="outline" className="tabular-nums">
@@ -336,6 +483,12 @@ function BackgroundAgentsPage() {
                         label="Artifacts"
                         value={`${detail.artifacts.length} saved`}
                       />
+                      {batchReport?.isSingleSiteBatch ? (
+                        <InfoMetric
+                          label="Merged findings"
+                          value={`${batchReport.mergedFindings.length} deduped`}
+                        />
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {isActiveRunStatus(detail.run.status) ? (
@@ -390,63 +543,170 @@ function BackgroundAgentsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
-                  <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
-                    <CardTitle className="text-base">Agent output</CardTitle>
-                    <CardDescription className="text-pretty">
-                      Step-by-step status from the background worker.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-3 p-4">
-                    {detail.runEvents.map((event: any) => (
-                      <article
-                        key={event._id}
-                        className="rounded-[1.35rem] border border-border/60 bg-background/75 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-medium text-foreground">{event.title}</p>
-                          {event.stepIndex !== undefined ? (
-                            <Badge variant="outline">Step {event.stepIndex}</Badge>
-                          ) : null}
+                {batchReport?.isSingleSiteBatch ? (
+                  <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
+                    <CardHeader className="gap-3 border-b border-border/60 bg-muted/10">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <CardTitle className="text-base">Merged site audit</CardTitle>
+                          <CardDescription className="text-pretty">
+                            One deduped QA report for this site, with separate agent lanes underneath.
+                          </CardDescription>
                         </div>
-                        {event.body ? (
-                          <p className="mt-2 text-sm leading-6 text-muted-foreground whitespace-pre-wrap">
-                            {event.body}
-                          </p>
-                        ) : null}
-                      </article>
-                    ))}
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
-                  <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
-                    <CardTitle className="text-base">Findings snapshot</CardTitle>
-                    <CardDescription className="text-pretty">
-                      Browser issues and QA findings captured during the run.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-3 p-4">
-                    {detail.findings.slice(0, 8).map((finding: any) => (
-                      <article
-                        key={finding._id}
-                        className="rounded-[1.35rem] border border-border/60 bg-background/75 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">{finding.source}</Badge>
-                          <Badge variant="secondary">{finding.severity}</Badge>
-                          {finding.browserSignal ? (
-                            <Badge variant="outline">{finding.browserSignal}</Badge>
-                          ) : null}
+                        <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground shadow-sm w-fit">
+                          <button
+                            onClick={() => setDetailTab("report")}
+                            className={`inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${detailTab === "report" ? "bg-muted/80 text-foreground" : "hover:text-foreground"}`}
+                          >
+                            QA Report
+                          </button>
+                          <button
+                            onClick={() => setDetailTab("timeline")}
+                            className={`inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${detailTab === "timeline" ? "bg-muted/80 text-foreground" : "hover:text-foreground"}`}
+                          >
+                            Timeline
+                          </button>
                         </div>
-                        <p className="mt-2 text-sm font-medium text-foreground">{finding.title}</p>
-                        <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                          {finding.description}
-                        </p>
-                      </article>
-                    ))}
-                  </CardContent>
-                </Card>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="grid gap-4 p-4">
+                      {detailTab === "report" ? (
+                        <>
+                          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                            <InfoMetric
+                              label="Overall score"
+                              value={`${batchReport.scoreSummary?.overall.toFixed(0) ?? "0"}/100`}
+                            />
+                            <InfoMetric
+                              label="Deduped findings"
+                              value={`${batchReport.mergedFindings.length}`}
+                            />
+                            <InfoMetric
+                              label="Covered routes"
+                              value={`${batchReport.coverageUrls.length}`}
+                            />
+                            <InfoMetric
+                              label="Performance audits"
+                              value={`${batchReport.mergedPerformanceAudits.length}`}
+                            />
+                          </div>
+                          <div className="grid gap-3">
+                            {batchReport.mergedFindings.slice(0, 8).map((finding: any) => (
+                              <article
+                                key={finding._id}
+                                className="rounded-[1.35rem] border border-border/60 bg-background/75 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline">{finding.source}</Badge>
+                                  <Badge variant="secondary">{finding.severity}</Badge>
+                                  {finding.browserSignal ? (
+                                    <Badge variant="outline">{finding.browserSignal}</Badge>
+                                  ) : null}
+                                </div>
+                                <p className="mt-2 text-sm font-medium text-foreground">{finding.title}</p>
+                                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                  {finding.description}
+                                </p>
+                                {finding.pageOrFlow ? (
+                                  <p className="mt-2 text-xs text-muted-foreground">{finding.pageOrFlow}</p>
+                                ) : null}
+                              </article>
+                            ))}
+                          </div>
+                          <div className="rounded-[1.35rem] border border-border/60 bg-background/75 p-4">
+                            <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
+                              Coverage
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {batchReport.coverageUrls.slice(0, 18).map((route: string) => (
+                                <Badge key={route} variant="outline" className="max-w-full truncate">
+                                  {route}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="grid gap-4">
+                          {batchReport.agentRuns.map((agentRun: any) => (
+                            <Card
+                              key={agentRun.run._id}
+                              className="border border-border/60 bg-background/70 shadow-none"
+                            >
+                              <CardHeader className="gap-2 border-b border-border/60 bg-background/80">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline">Agent {agentRun.run.agentOrdinal ?? "?"}</Badge>
+                                  <StatusBadge status={agentRun.run.status} />
+                                </div>
+                                <CardDescription>{agentRun.run.currentStep ?? "Queued for background QA"}</CardDescription>
+                              </CardHeader>
+                              <CardContent className="p-3">
+                                <AgentPlan
+                                  events={sortTimelineEvents(
+                                    filterTimelineEventsForQaView(agentRun.runEvents),
+                                  )}
+                                />
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ) : batchReport ? (
+                  <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
+                    <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
+                      <CardTitle className="text-base">Batch agent lanes</CardTitle>
+                      <CardDescription className="text-pretty">
+                        This batch spans multiple sites, so Shard keeps each agent report separate instead of merging them into one QA summary.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-4 p-4">
+                      {batchReport.agentRuns.map((agentRun: any) => (
+                        <Card
+                          key={agentRun.run._id}
+                          className="border border-border/60 bg-background/70 shadow-none"
+                        >
+                          <CardHeader className="gap-2 border-b border-border/60 bg-background/80">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">Agent {agentRun.run.agentOrdinal ?? "?"}</Badge>
+                              <StatusBadge status={agentRun.run.status} />
+                            </div>
+                            <CardDescription className="text-pretty">
+                              {agentRun.run.url}
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-3 p-3">
+                            <p className="text-sm text-muted-foreground">
+                              {agentRun.run.currentStep ?? "Queued for background QA"}
+                            </p>
+                            <AgentPlan
+                              events={sortTimelineEvents(
+                                filterTimelineEventsForQaView(agentRun.runEvents),
+                              )}
+                            />
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
+                    <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
+                      <CardTitle className="text-base">Agent output</CardTitle>
+                      <CardDescription className="text-pretty">
+                        Step-by-step status from the background worker.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                      <AgentPlan
+                        events={sortTimelineEvents(
+                          filterTimelineEventsForQaView(detail.runEvents),
+                        )}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
 
                 <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
                   <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">

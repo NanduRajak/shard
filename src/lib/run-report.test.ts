@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildSteelEmbedUrl,
   describeExecutionState,
+  filterTimelineEventsForQaView,
   formatSessionDuration,
   isActiveRunStatus,
   sortTimelineEvents,
@@ -55,5 +56,20 @@ describe("run report helpers", () => {
     expect(formatSessionDuration(45_000)).toBe("45s")
     expect(formatSessionDuration(120_000)).toBe("2m")
     expect(formatSessionDuration(125_000)).toBe("2m 5s")
+  })
+
+  it("filters low-signal runtime plumbing from QA timelines", () => {
+    expect(
+      filterTimelineEventsForQaView([
+        { createdAt: 1, kind: "session", title: "Steel session created" },
+        { createdAt: 2, kind: "agent", title: "Clicked Add to cart" },
+        { createdAt: 3, kind: "finding", title: "Cart badge never updated" },
+        { createdAt: 4, kind: "status", title: "Run completed" },
+      ]),
+    ).toEqual([
+      { createdAt: 2, kind: "agent", title: "Clicked Add to cart" },
+      { createdAt: 3, kind: "finding", title: "Cart badge never updated" },
+      { createdAt: 4, kind: "status", title: "Run completed" },
+    ])
   })
 })

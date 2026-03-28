@@ -3,14 +3,11 @@ import { tmpdir } from "node:os"
 import { hostname } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
-import lighthouse from "lighthouse"
-import { launch } from "chrome-launcher"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
 import { google } from "@ai-sdk/google"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { z } from "zod"
-import { scoreLighthouseFinding } from "../src/lib/lighthouse-audits.ts"
 import {
   buildActionSignature,
   isSameHostname,
@@ -21,15 +18,18 @@ import {
 } from "../src/lib/qa-guards.ts"
 import { pickQaFallbackAction } from "../src/lib/qa-fallback.ts"
 import {
-  buildScoreSummary,
   computeFindingScore,
   impactWeightForSource,
 } from "../src/lib/scoring.ts"
+import {
+  QaRunCancelledError,
+  runQaSession,
+} from "../src/lib/qa-engine.ts"
 
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000
 const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000
-const MAX_AGENT_STEPS = 24
-const MAX_DISCOVERED_PAGES = 10
+const MAX_AGENT_STEPS = 36
+const MAX_DISCOVERED_PAGES = 12
 const MAX_PAGE_FINDINGS = 2
 const POLL_INTERVAL_MS = Number(process.env.LOCAL_HELPER_POLL_INTERVAL_MS ?? 3_000)
 const HEARTBEAT_INTERVAL_MS = Number(process.env.LOCAL_HELPER_HEARTBEAT_MS ?? 10_000)
@@ -216,16 +216,22 @@ async function main() {
         .finalize({
           helperId,
           runId: claim.run._id,
-          status: error instanceof RunCancelledError ? "cancelled" : "failed",
+          status:
+            error instanceof RunCancelledError || error instanceof QaRunCancelledError
+              ? "cancelled"
+              : "failed",
           currentStep:
-            error instanceof RunCancelledError
+            error instanceof RunCancelledError || error instanceof QaRunCancelledError
               ? error.message
               : "Local Chrome QA run failed",
           currentUrl:
-            error instanceof RunCancelledError
+            error instanceof RunCancelledError || error instanceof QaRunCancelledError
               ? error.currentUrl ?? claim.run.url
               : claim.run.url,
-          errorMessage: error instanceof RunCancelledError ? undefined : message,
+          errorMessage:
+            error instanceof RunCancelledError || error instanceof QaRunCancelledError
+              ? undefined
+              : message,
         })
         .catch(() => undefined)
     } finally {
@@ -249,16 +255,9 @@ async function runLocalQaWorkflow({
   run: RunRecord
 }) {
   const browser = new LocalChromeMcpBrowser()
-  const bufferedFindings: BufferedFinding[] = []
-  const pageCandidates = new Map<string, PageCandidate>()
-  const findingSignatures = new Set<string>()
-  const savedFindings: SavedFinding[] = []
   const externalSessionId = `local:${helperId}:${run._id}`
   let session: SessionRecord | null = null
-  let screenshotCount = 0
-  let performanceAuditCount = 0
   let finalStatus: "cancelled" | "completed" | "failed" = "completed"
-  let lastKnownUrl = run.url
 
   try {
     await api.progress({
@@ -297,10 +296,8 @@ async function runLocalQaWorkflow({
 
     await browser.connect()
     await browser.open(run.url)
-    await browser.collectRuntimeFindings(run.url, bufferedFindings)
 
     const openedUrl = await browser.getCurrentUrl()
-    lastKnownUrl = openedUrl
 
     await api.progress({
       runId: run._id,
@@ -328,191 +325,25 @@ async function runLocalQaWorkflow({
       pageUrl: openedUrl,
     })
 
-    screenshotCount += await runSnapshotStage({
-      analyzedSnapshots: new Set<string>(),
-      api,
-      browser,
-      bufferedFindings,
-      findingSignatures,
-      pageCandidates,
-      runId: run._id,
-      savedFindings,
-      sessionId: session.sessionId,
-      stepIndex: 0,
-    })
-
-    const agentLoopResult = await runAgentLoop({
-      api,
-      browser,
-      bufferedFindings,
-      findingSignatures,
+    const sessionResult = await runQaSession({
+      browser: createLocalQaBrowser(browser),
+      config: {
+        agentTimeBudgetMs: AGENT_TIME_BUDGET_MS,
+        maxAgentSteps: MAX_AGENT_STEPS,
+        maxDiscoveredPages: MAX_DISCOVERED_PAGES,
+      },
       instructions: run.instructions,
       mode: run.mode ?? "explore",
-      pageCandidates,
-      runId: run._id,
-      savedFindings,
-      sessionId: session.sessionId,
-      startUrl: run.url,
-    })
-    screenshotCount += agentLoopResult.screenshotCount
-    lastKnownUrl = await browser.getCurrentUrl()
-
-    await throwIfStopRequested({
-      api,
-      currentStep: "Local run stopped before Lighthouse",
-      pageUrl: lastKnownUrl,
-      runId: run._id,
-    })
-
-    const auditUrls = selectAuditUrls({
-      pageCandidates,
+      model: google(DEFAULT_MODEL),
+      runtime: createLocalQaRuntime({
+        api,
+        runId: run._id,
+        sessionId: session.sessionId,
+      }),
       startUrl: run.url,
     })
 
-    const chrome = await launch({
-      chromeFlags: ["--headless=new", "--no-sandbox", "--disable-gpu"],
-    })
-
-    try {
-      for (const [index, auditUrl] of auditUrls.entries()) {
-        await throwIfStopRequested({
-          api,
-          currentStep: "Local run stopped during Lighthouse",
-          pageUrl: auditUrl,
-          runId: run._id,
-        })
-
-        await api.progress({
-          runId: run._id,
-          currentStep: `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`,
-          currentUrl: auditUrl,
-          status: "running",
-        })
-        await api.event({
-          runId: run._id,
-          kind: "audit",
-          status: "running",
-          sessionId: session.sessionId,
-          title: `Running Lighthouse audit ${index + 1} of ${auditUrls.length}`,
-          body: auditUrl,
-          pageUrl: auditUrl,
-        })
-
-        const auditResult = await lighthouse(auditUrl, {
-          output: "html",
-          onlyCategories: ["performance", "accessibility", "best-practices", "seo"],
-          port: chrome.port,
-        })
-
-        if (!auditResult) {
-          continue
-        }
-
-        const reportHtml = Array.isArray(auditResult.report)
-          ? auditResult.report.join("\n")
-          : auditResult.report
-        const reportArtifact = await api.artifact({
-          runId: run._id,
-          type: "html-report",
-          contentType: "text/html; charset=utf-8",
-          base64: Buffer.from(reportHtml, "utf8").toString("base64"),
-          pageUrl: auditUrl,
-          title: `Lighthouse report for ${auditUrl}`,
-        })
-
-        performanceAuditCount += 1
-        await api.event({
-          runId: run._id,
-          kind: "artifact",
-          status: "running",
-          sessionId: session.sessionId,
-          artifactId: reportArtifact.artifactId,
-          title: "Lighthouse report saved",
-          body: `Stored HTML report for ${auditUrl}.`,
-          pageUrl: auditUrl,
-        })
-
-        const categories = auditResult.lhr.categories
-        const perfFindings = [
-          scoreLighthouseFinding({
-            category: "performance",
-            isStartPage: auditUrl === run.url,
-            pageUrl: auditUrl,
-            score: categories.performance.score ?? 0,
-          }),
-          scoreLighthouseFinding({
-            category: "accessibility",
-            isStartPage: auditUrl === run.url,
-            pageUrl: auditUrl,
-            score: categories.accessibility.score ?? 0,
-          }),
-          scoreLighthouseFinding({
-            category: "best-practices",
-            isStartPage: auditUrl === run.url,
-            pageUrl: auditUrl,
-            score: categories["best-practices"].score ?? 0,
-          }),
-          scoreLighthouseFinding({
-            category: "seo",
-            isStartPage: auditUrl === run.url,
-            pageUrl: auditUrl,
-            score: categories.seo.score ?? 0,
-          }),
-        ]
-
-        for (const perfFinding of perfFindings) {
-          if (!perfFinding) {
-            continue
-          }
-
-          const perfSignature = `perf::${auditUrl}::${perfFinding.title}`
-          if (findingSignatures.has(perfSignature)) {
-            continue
-          }
-
-          findingSignatures.add(perfSignature)
-          await api.finding({
-            runId: run._id,
-            source: "perf",
-            title: perfFinding.title,
-            description: perfFinding.description,
-            severity: perfFinding.severity,
-            confidence: perfFinding.confidence,
-            impact: perfFinding.impact,
-            score: perfFinding.score,
-            pageOrFlow: auditUrl,
-            artifactId: reportArtifact.artifactId,
-            suggestedFix: perfFinding.suggestedFix,
-          })
-          await api.event({
-            runId: run._id,
-            kind: "finding",
-            status: "running",
-            sessionId: session.sessionId,
-            artifactId: reportArtifact.artifactId,
-            title: perfFinding.title,
-            body: perfFinding.description,
-            pageUrl: auditUrl,
-          })
-          savedFindings.push({
-            source: "perf",
-            score: perfFinding.score,
-          })
-        }
-      }
-    } finally {
-      try {
-        await chrome.kill()
-      } catch {
-        // Ignore Chrome shutdown failures during cleanup.
-      }
-    }
-
-    const finalScore = buildScoreSummary({
-      findings: savedFindings,
-      performanceAudits: performanceAuditCount,
-      screenshots: screenshotCount,
-    }).overall
+    const finalScore = sessionResult.finalScore
 
     await api.event({
       runId: run._id,
@@ -521,8 +352,8 @@ async function runLocalQaWorkflow({
       sessionId: session.sessionId,
       title: "Run completed",
       body:
-        run.mode === "task" && agentLoopResult.goalOutcome
-          ? `Final quality score: ${finalScore}/100.\nTask outcome: ${agentLoopResult.goalOutcome.status}.\n${agentLoopResult.goalOutcome.summary}`
+        run.mode === "task" && sessionResult.goalOutcome
+          ? `Final quality score: ${finalScore}/100.\nTask outcome: ${sessionResult.goalOutcome.status}.\n${sessionResult.goalOutcome.summary}`
           : `Final quality score: ${finalScore}/100.`,
       pageUrl: await browser.getCurrentUrl(),
     })
@@ -534,13 +365,16 @@ async function runLocalQaWorkflow({
       currentStep: "QA run completed",
       currentUrl: await browser.getCurrentUrl(),
       finalScore,
-      goalStatus: agentLoopResult.goalOutcome?.status,
-      goalSummary: agentLoopResult.goalOutcome?.summary,
+      goalStatus: sessionResult.goalOutcome?.status,
+      goalSummary: sessionResult.goalOutcome?.summary,
       sessionId: session.sessionId,
       sessionStatus: "closed",
     })
   } catch (error) {
-    finalStatus = error instanceof RunCancelledError ? "cancelled" : "failed"
+    finalStatus =
+      error instanceof RunCancelledError || error instanceof QaRunCancelledError
+        ? "cancelled"
+        : "failed"
     throw error
   } finally {
     if (session && finalStatus !== "completed") {
@@ -559,6 +393,142 @@ async function runLocalQaWorkflow({
     await browser.close().catch(() => undefined)
   }
 }
+
+function createLocalQaBrowser(browser: LocalChromeMcpBrowser) {
+  return {
+    captureRuntimeFindings: async (startUrl: string, bufferedFindings: BufferedFinding[]) => {
+      await browser.collectRuntimeFindings(startUrl, bufferedFindings)
+    },
+    click: async (ref: string) => {
+      await browser.click(ref)
+    },
+    fill: async (ref: string, value: string) => {
+      await browser.fill(ref, value)
+    },
+    getCurrentUrl: async () => await browser.getCurrentUrl(),
+    goBack: async () => {
+      await browser.goBack()
+    },
+    inspectCurrentPage: async () => {
+      const snapshot = await browser.inspectCurrentPage()
+      return {
+        ...snapshot,
+        interactives: snapshot.interactives.map((item) => ({
+          ...item,
+          ref: item.uid,
+        })),
+      }
+    },
+    navigate: async (url: string) => {
+      await browser.navigate(url)
+    },
+    pressKey: async (key: string) => {
+      await browser.pressKey(key)
+    },
+    takeScreenshot: async () => await browser.takeScreenshot(),
+  }
+}
+
+function createLocalQaRuntime({
+  api,
+  runId,
+  sessionId,
+}: {
+  api: LocalHelperApi
+  runId: string
+  sessionId: string
+}) {
+  return {
+    createArtifact: async (payload: {
+      body: Uint8Array
+      contentType: string
+      pageUrl?: string
+      title?: string
+      type: "html-report" | "replay" | "screenshot" | "trace"
+    }) => {
+      const artifact = await api.artifact({
+        base64: Buffer.from(payload.body).toString("base64"),
+        contentType: payload.contentType,
+        pageUrl: payload.pageUrl,
+        runId,
+        title: payload.title,
+        type: payload.type,
+      })
+
+      return artifact.artifactId
+    },
+    createFinding: async (payload: {
+      artifactId?: string
+      browserSignal?: "console" | "network" | "pageerror"
+      confidence: number
+      description: string
+      impact: number
+      pageOrFlow?: string
+      score: number
+      severity: "critical" | "high" | "low" | "medium"
+      source: "browser" | "perf"
+      stepIndex?: number
+      suggestedFix?: string
+      title: string
+    }) => {
+      await api.finding({
+        ...payload,
+        runId,
+      })
+    },
+    createPerformanceAudit: async (payload: {
+      accessibilityScore: number
+      bestPracticesScore: number
+      pageUrl: string
+      performanceScore: number
+      reportArtifactId?: string
+      seoScore: number
+    }) => {
+      await api.performanceAudit({
+        ...payload,
+        runId,
+      })
+    },
+    emitEvent: async (payload: {
+      artifactId?: string
+      body?: string
+      kind: "agent" | "artifact" | "audit" | "finding" | "navigation" | "session" | "status" | "system"
+      pageUrl?: string
+      status?: RunStatus
+      stepIndex?: number
+      title: string
+    }) => {
+      await api.event({
+        ...payload,
+        runId,
+        sessionId,
+      })
+    },
+    getStopState: async () => {
+      const state = await api.state({ runId })
+      return state
+    },
+    updateRun: async (payload: {
+      currentStep?: string
+      currentUrl?: string | null
+      errorMessage?: string | null
+      finalScore?: number
+      finishedAt?: number
+      goalStatus?: RunGoalStatus | null
+      goalSummary?: string | null
+      queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
+      status?: RunStatus
+    }) => {
+      await api.progress({
+        ...payload,
+        runId,
+      })
+    },
+  }
+}
+
+void runAgentLoop
+void selectAuditUrls
 
 async function runAgentLoop({
   api,
@@ -1919,6 +1889,18 @@ class LocalHelperApi {
     title?: string
   }) {
     return await this.post("artifact", payload) as { artifactId: string }
+  }
+
+  async performanceAudit(payload: {
+    runId: string
+    pageUrl: string
+    performanceScore: number
+    accessibilityScore: number
+    bestPracticesScore: number
+    seoScore: number
+    reportArtifactId?: string
+  }) {
+    return await this.post("performance-audit", payload)
   }
 
   async finalize(payload: {

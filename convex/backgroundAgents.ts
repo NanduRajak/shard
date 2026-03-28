@@ -1,6 +1,7 @@
 import { v } from "convex/values"
 import { mutation, query } from "./_generated/server"
 import { DEFAULT_BACKGROUND_TASK_INSTRUCTIONS } from "../src/lib/background-agent-task"
+import { buildScoreSummary } from "../src/lib/scoring"
 
 function isActiveRun(status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting") {
   return status === "starting" || status === "running"
@@ -214,6 +215,159 @@ export const getBackgroundBatch = query({
       runs: runs
         .slice()
         .sort((left, right) => (left.agentOrdinal ?? 0) - (right.agentOrdinal ?? 0)),
+    }
+  },
+})
+
+export const getBackgroundBatchReport = query({
+  args: {
+    batchId: v.optional(v.id("backgroundBatches")),
+  },
+  handler: async (ctx, args) => {
+    if (!args.batchId) {
+      return null
+    }
+
+    const batch = await ctx.db.get(args.batchId)
+    if (!batch) {
+      return null
+    }
+
+    const runs = await ctx.db
+      .query("runs")
+      .withIndex("by_background_batch", (q) => q.eq("backgroundBatchId", args.batchId))
+      .collect()
+
+    const agentRuns = await Promise.all(
+      runs
+        .slice()
+        .sort((left, right) => (left.agentOrdinal ?? 0) - (right.agentOrdinal ?? 0))
+        .map(async (run) => {
+          const [rawArtifacts, findings, runEvents, session, performanceAudits] =
+            await Promise.all([
+              ctx.db
+                .query("artifacts")
+                .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
+                .order("desc")
+                .collect(),
+              ctx.db
+                .query("findings")
+                .withIndex("by_run", (q) => q.eq("runId", run._id))
+                .collect(),
+              ctx.db
+                .query("runEvents")
+                .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
+                .order("asc")
+                .collect(),
+              ctx.db
+                .query("sessions")
+                .withIndex("by_run_and_started_at", (q) => q.eq("runId", run._id))
+                .order("desc")
+                .first(),
+              ctx.db
+                .query("performanceAudits")
+                .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
+                .order("desc")
+                .collect(),
+            ])
+
+          const artifacts = await Promise.all(
+            rawArtifacts.map(async (artifact) => ({
+              ...artifact,
+              url: artifact.storageId ? await ctx.storage.getUrl(artifact.storageId) : undefined,
+            })),
+          )
+
+          return {
+            artifacts,
+            findings: findings.slice().sort((left, right) => right.createdAt - left.createdAt),
+            latestScreenshot: artifacts.find((artifact) => artifact.type === "screenshot") ?? null,
+            performanceAudits,
+            run,
+            runEvents,
+            session,
+            traceArtifact: artifacts.find((artifact) => artifact.type === "trace") ?? null,
+          }
+        }),
+    )
+
+    const mergedFindingMap = new Map<string, (typeof agentRuns)[number]["findings"][number]>()
+    for (const agentRun of agentRuns) {
+      for (const finding of agentRun.findings) {
+        const key = [
+          finding.source,
+          finding.browserSignal ?? "",
+          finding.title.trim().toLowerCase(),
+          (finding.pageOrFlow ?? "").trim().toLowerCase(),
+        ].join("::")
+
+        const existing = mergedFindingMap.get(key)
+        if (!existing || (finding.score ?? 0) > (existing.score ?? 0)) {
+          mergedFindingMap.set(key, finding)
+        }
+      }
+    }
+
+    const mergedFindings = [...mergedFindingMap.values()].sort(
+      (left, right) => (right.score ?? 0) - (left.score ?? 0),
+    )
+    const mergedPerformanceAudits = agentRuns.flatMap((run) => run.performanceAudits)
+    const mergedArtifacts = agentRuns.flatMap((run) => run.artifacts)
+    const coverageUrls = Array.from(
+      new Set(
+        agentRuns.flatMap((agentRun) =>
+          agentRun.runEvents
+            .map((event) => event.pageUrl)
+            .concat(agentRun.findings.map((finding) => finding.pageOrFlow))
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ),
+    )
+
+    const completedRuns = agentRuns.filter((item) => item.run.status === "completed").length
+    const failedRuns = agentRuns.filter((item) => isFailedRun(item.run.status)).length
+    const activeRuns = agentRuns.filter((item) => isActiveRun(item.run.status)).length
+    const queuedRuns = agentRuns.filter((item) => isQueuedRun(item.run.status)).length
+    const siteOrigins = Array.from(
+      new Set(
+        agentRuns
+          .map((item) => {
+            try {
+              return new URL(item.run.url).origin
+            } catch {
+              return null
+            }
+          })
+          .filter((value): value is string => Boolean(value)),
+      ),
+    )
+    const isSingleSiteBatch = siteOrigins.length <= 1
+
+    return {
+      agentRuns,
+      batch,
+      coverageUrls: isSingleSiteBatch ? coverageUrls : [],
+      isSingleSiteBatch,
+      mergedArtifacts: isSingleSiteBatch ? mergedArtifacts : [],
+      mergedFindings: isSingleSiteBatch ? mergedFindings : [],
+      mergedPerformanceAudits: isSingleSiteBatch ? mergedPerformanceAudits : [],
+      scoreSummary: isSingleSiteBatch
+        ? buildScoreSummary({
+            findings: mergedFindings.map((finding) => ({
+              score: finding.score ?? 0,
+              source: finding.source,
+            })),
+            performanceAudits: mergedPerformanceAudits.length,
+            screenshots: mergedArtifacts.filter((artifact) => artifact.type === "screenshot").length,
+          })
+        : null,
+      siteOrigin: siteOrigins[0] ?? null,
+      summary: {
+        activeRuns,
+        completedRuns,
+        failedRuns,
+        queuedRuns,
+      },
     }
   },
 })

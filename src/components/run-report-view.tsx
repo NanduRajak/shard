@@ -49,6 +49,7 @@ export function RunReportView({ report }: { report: any }) {
   const navigate = useNavigate()
   const {
     artifacts,
+    coverageUrls,
     currentAuditTrend,
     findings,
     latestReportArtifact,
@@ -68,6 +69,8 @@ export function RunReportView({ report }: { report: any }) {
   const consoleFindings = sortedFindings.filter((finding: any) => finding.browserSignal === "console")
   const networkFindings = sortedFindings.filter((finding: any) => finding.browserSignal === "network")
   const pageErrorFindings = sortedFindings.filter((finding: any) => finding.browserSignal === "pageerror")
+  const criticalFindings = sortedFindings.filter((finding: any) => finding.severity === "critical")
+  const highFindings = sortedFindings.filter((finding: any) => finding.severity === "high")
 
   return (
     <motion.div 
@@ -181,6 +184,51 @@ export function RunReportView({ report }: { report: any }) {
 
       {activeTab === "report" ? (
         <Fragment>
+          <motion.div variants={itemVariants} className="xl:col-span-2 flex h-full">
+            <Card className="border border-border/70 bg-card/80 w-full">
+              <CardHeader className="gap-3 border-b border-border/70">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <IconCheck className="size-4" />
+                  Actionable Summary
+                </CardTitle>
+                <CardDescription>
+                  The shortest path to what a QA engineer should inspect next.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 pt-4 md:grid-cols-2 xl:grid-cols-4">
+                <MetricCard label="Critical" value={criticalFindings.length.toString()} />
+                <MetricCard label="High" value={highFindings.length.toString()} />
+                <MetricCard
+                  label="Coverage routes"
+                  value={(coverageUrls?.length ?? 0).toString()}
+                />
+                <MetricCard
+                  label="Task status"
+                  value={
+                    run.goalStatus && run.goalStatus !== "not_requested"
+                      ? run.goalStatus.replaceAll("_", " ")
+                      : run.mode === "task"
+                        ? "Not proven"
+                        : "Exploration"
+                  }
+                />
+                <div className="rounded-[1.1rem] border border-border/70 bg-background/70 p-4 md:col-span-2 xl:col-span-4">
+                  <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                    What matters most
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-foreground/90">
+                    {topFindings.length
+                      ? topFindings
+                          .slice(0, 3)
+                          .map((finding: any) => `${finding.title}${finding.pageOrFlow ? ` on ${finding.pageOrFlow}` : ""}`)
+                          .join(" • ")
+                      : "No critical QA issues were persisted during this run."}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
           <motion.div variants={itemVariants} className="flex h-full">
         <Card className="overflow-hidden border border-border/70 bg-card/80 w-full">
           <CardHeader className="gap-3 border-b border-border/70">
@@ -349,33 +397,47 @@ export function RunReportView({ report }: { report: any }) {
           <CardHeader className="gap-3 border-b border-border/70">
             <CardTitle className="flex items-center gap-2 text-base">
               <IconRadar2 className="size-4" />
-              Lighthouse trend
+              Coverage And Lighthouse
             </CardTitle>
             <CardDescription>
-              Score deltas compare this run against the immediately previous run for the same URL.
+              Coverage shows where the run actually went. Lighthouse deltas compare against the immediately previous run for the same URL.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 pt-4 md:grid-cols-2 xl:grid-cols-4">
-            <TrendMetricCard
-              label="Performance"
-              current={currentAuditTrend.performance.current}
-              delta={currentAuditTrend.performance.delta}
-            />
-            <TrendMetricCard
-              label="Accessibility"
-              current={currentAuditTrend.accessibility.current}
-              delta={currentAuditTrend.accessibility.delta}
-            />
-            <TrendMetricCard
-              label="Best practices"
-              current={currentAuditTrend.bestPractices.current}
-              delta={currentAuditTrend.bestPractices.delta}
-            />
-            <TrendMetricCard
-              label="SEO"
-              current={currentAuditTrend.seo.current}
-              delta={currentAuditTrend.seo.delta}
-            />
+          <CardContent className="grid gap-4 pt-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <TrendMetricCard
+                label="Performance"
+                current={currentAuditTrend.performance.current}
+                delta={currentAuditTrend.performance.delta}
+              />
+              <TrendMetricCard
+                label="Accessibility"
+                current={currentAuditTrend.accessibility.current}
+                delta={currentAuditTrend.accessibility.delta}
+              />
+              <TrendMetricCard
+                label="Best practices"
+                current={currentAuditTrend.bestPractices.current}
+                delta={currentAuditTrend.bestPractices.delta}
+              />
+              <TrendMetricCard
+                label="SEO"
+                current={currentAuditTrend.seo.current}
+                delta={currentAuditTrend.seo.delta}
+              />
+            </div>
+            <div className="rounded-[1.1rem] border border-border/70 bg-background/70 p-4">
+              <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                Covered routes
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(coverageUrls ?? []).slice(0, 18).map((route: string) => (
+                  <Badge key={route} variant="outline" className="max-w-full truncate">
+                    {route}
+                  </Badge>
+                ))}
+              </div>
+            </div>
           </CardContent>
         </Card>
       </motion.div>

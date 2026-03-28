@@ -131,6 +131,16 @@ export const uploadArtifactRequestSchema = z.object({
   title: z.string().optional(),
 })
 
+export const createPerformanceAuditRequestSchema = z.object({
+  runId: z.string().min(1),
+  pageUrl: z.string().min(1),
+  performanceScore: z.number(),
+  accessibilityScore: z.number(),
+  bestPracticesScore: z.number(),
+  seoScore: z.number(),
+  reportArtifactId: z.string().optional(),
+})
+
 export const finalizeLocalRunRequestSchema = z.object({
   helperId: z.string().min(1),
   runId: z.string().min(1),
