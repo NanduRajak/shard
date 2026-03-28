@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { convexQuery } from "@convex-dev/react-query"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
+  IconAlertTriangle,
   IconEdit,
   IconKey,
   IconLock,
@@ -44,6 +45,8 @@ import {
   createCredential,
   deleteCredential,
   getCredentialForEdit,
+  getCredentialsRolloutStatus,
+  resetCredentials,
   type CredentialFormInput,
   updateCredential,
 } from "@/lib/credentials-server"
@@ -54,16 +57,17 @@ export const Route = createFileRoute("/credentials")({
 
 const EMPTY_FORM: CredentialFormInput = {
   isDefault: true,
-  namespace: "",
+  login: "",
   password: "",
-  profileLabel: "",
-  totpSecret: "",
-  username: "",
   website: "",
 }
 
 function CredentialsPage() {
   const { data: credentials } = useQuery(convexQuery(api.credentials.listCredentials, {}))
+  const { data: rolloutStatus } = useQuery({
+    queryKey: ["credentials-rollout-status"],
+    queryFn: async () => await getCredentialsRolloutStatus({ data: {} }),
+  })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{
     id: Id<"credentials">
@@ -75,6 +79,7 @@ function CredentialsPage() {
   const createMutation = useMutation({ mutationFn: createCredential })
   const updateMutation = useMutation({ mutationFn: updateCredential })
   const deleteMutation = useMutation({ mutationFn: deleteCredential })
+  const resetMutation = useMutation({ mutationFn: resetCredentials })
   const getCredentialMutation = useMutation({ mutationFn: getCredentialForEdit })
 
   const isSaving = createMutation.isPending || updateMutation.isPending
@@ -94,11 +99,8 @@ function CredentialsPage() {
       setEditingId(credentialId)
       setFormData({
         isDefault: credential.isDefault,
-        namespace: credential.namespace,
+        login: credential.login,
         password: credential.password,
-        profileLabel: credential.profileLabel,
-        totpSecret: credential.totpSecret,
-        username: credential.username,
         website: credential.website,
       })
       setDialogOpen(true)
@@ -148,22 +150,34 @@ function CredentialsPage() {
     }
   }
 
+  const handleReset = async () => {
+    try {
+      const result = await resetMutation.mutateAsync({ data: {} })
+      toast.success(
+        result.deletedCount > 0
+          ? `Cleared ${result.deletedCount} saved credential${result.deletedCount === 1 ? "" : "s"}.`
+          : "Saved credentials were already clear.",
+      )
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to reset saved credentials.")
+    }
+  }
+
   return (
     <div className="grid gap-4">
-      <Card className="border border-border/70 bg-card/80">
-        <CardHeader className="flex flex-col gap-4 border-b border-border/70 md:flex-row md:items-end md:justify-between">
+      <Card className="overflow-hidden border border-border/70 bg-card/90 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45)]">
+        <CardHeader className="flex flex-col gap-4 border-b border-border/70 bg-muted/15 md:flex-row md:items-end md:justify-between">
           <div className="space-y-2">
             <Badge variant="outline" className="w-fit tracking-[0.18em] uppercase">
               Credentials
             </Badge>
             <CardTitle className="font-heading text-2xl tracking-tight">
-              Store reusable website logins by namespace and profile.
+              Save website logins once and reuse them when a run needs sign-in.
             </CardTitle>
             <CardDescription className="max-w-2xl text-sm/6">
-              Secrets are encrypted at rest, never sent to the model, and only
-              resolved by the browser runtime when a matching site origin needs
-              authentication. You can keep multiple account profiles per site and
-              choose one default profile for the Home page flow.
+              Keep this simple: one saved login is just a website, an email or username,
+              and a password. You can keep multiple logins for the same site and mark one
+              default.
             </CardDescription>
           </div>
           <Button className="rounded-2xl" onClick={openCreateDialog}>
@@ -171,19 +185,44 @@ function CredentialsPage() {
             Add credential
           </Button>
         </CardHeader>
-        <CardContent className="pt-4">
+        <CardContent className="grid gap-4 pt-4">
+          {rolloutStatus?.hasLegacyCredentials ? (
+            <div className="flex flex-col gap-3 rounded-[1.5rem] border border-amber-500/30 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <IconAlertTriangle className="size-4 text-amber-600" />
+                  Old saved credentials need a reset
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  The credential model was simplified. Clear the old saved entries once,
+                  then recreate only the logins you still want to use.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                className="rounded-2xl"
+                disabled={resetMutation.isPending}
+                onClick={() => {
+                  void handleReset()
+                }}
+              >
+                {resetMutation.isPending ? "Resetting..." : "Reset saved credentials"}
+              </Button>
+            </div>
+          ) : null}
+
           {!credentials ? (
             <Card className="min-h-72 border border-border/70 bg-card/70" />
           ) : credentials.length === 0 ? (
-            <Empty className="min-h-[28rem] border border-dashed border-border/70 bg-background/70">
+            <Empty className="min-h-[24rem] border border-dashed border-border/70 bg-background/70">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <IconKey />
                 </EmptyMedia>
-                <EmptyTitle>No credentials saved yet.</EmptyTitle>
+                <EmptyTitle>No saved logins yet.</EmptyTitle>
                 <EmptyDescription>
-                  Add a namespace and website login so future runs can authenticate
-                  without exposing secrets to the model.
+                  Add a website login so background agents can sign in without exposing the
+                  secret to the model.
                 </EmptyDescription>
               </EmptyHeader>
               <Button className="rounded-2xl" onClick={openCreateDialog}>
@@ -196,28 +235,20 @@ function CredentialsPage() {
               {credentials.map((credential) => (
                 <article
                   key={credential._id}
-                  className="rounded-[1.4rem] border border-border/70 bg-background/75 p-4 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.45)]"
+                  className="rounded-[1.45rem] border border-border/70 bg-background/85 p-4 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.4)]"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="space-y-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="secondary">{credential.namespace}</Badge>
-                        <Badge variant="outline">{credential.origin}</Badge>
-                        <Badge variant="outline">{credential.profileLabel}</Badge>
                         {credential.isDefault ? (
                           <Badge variant="default">Default</Badge>
-                        ) : null}
-                        {credential.hasTotpSecret ? (
-                          <Badge variant="outline">TOTP</Badge>
                         ) : null}
                       </div>
                       <div className="space-y-1">
                         <p className="text-base font-medium text-foreground">
                           {credential.website}
                         </p>
-                        <p className="text-sm text-muted-foreground">
-                          {credential.username}
-                        </p>
+                        <p className="text-sm text-muted-foreground">{credential.login}</p>
                       </div>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <IconLock className="size-4" />
@@ -242,7 +273,7 @@ function CredentialsPage() {
                         onClick={() => {
                           setDeleteTarget({
                             id: credential._id,
-                            label: `${credential.namespace} · ${credential.origin}`,
+                            label: `${credential.website} · ${credential.login}`,
                           })
                         }}
                       >
@@ -265,27 +296,11 @@ function CredentialsPage() {
               {editingId ? "Edit credential" : "Add credential"}
             </DialogTitle>
             <DialogDescription>
-              Credentials are matched by exact namespace and website origin.
+              Saved logins are matched to the exact website origin from the URL you enter.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 px-6 pb-6">
-            <CredentialField
-              label="Namespace"
-              value={formData.namespace}
-              onChange={(value) => {
-                setFormData((current) => ({ ...current, namespace: value }))
-              }}
-              placeholder="admin"
-            />
-            <CredentialField
-              label="Profile name"
-              value={formData.profileLabel}
-              onChange={(value) => {
-                setFormData((current) => ({ ...current, profileLabel: value }))
-              }}
-              placeholder="Admin account"
-            />
             <CredentialField
               label="Website"
               value={formData.website}
@@ -296,10 +311,10 @@ function CredentialsPage() {
             />
             <div className="grid gap-4 md:grid-cols-2">
               <CredentialField
-                label="Username"
-                value={formData.username}
+                label="Email or username"
+                value={formData.login}
                 onChange={(value) => {
-                  setFormData((current) => ({ ...current, username: value }))
+                  setFormData((current) => ({ ...current, login: value }))
                 }}
                 placeholder="qa@example.com"
               />
@@ -313,19 +328,11 @@ function CredentialsPage() {
                 placeholder="••••••••"
               />
             </div>
-            <CredentialField
-              label="TOTP secret"
-              value={formData.totpSecret ?? ""}
-              onChange={(value) => {
-                setFormData((current) => ({ ...current, totpSecret: value }))
-              }}
-              placeholder="Optional base32 secret"
-            />
             <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
               <div className="space-y-1">
-                <p className="text-sm font-medium text-foreground">Default for Home</p>
+                <p className="text-sm font-medium text-foreground">Default for this site</p>
                 <p className="text-sm text-muted-foreground">
-                  Namespace-based interactive runs use the default profile for this site.
+                  Use this as the primary saved login when the site has more than one account.
                 </p>
               </div>
               <Switch
@@ -361,7 +368,7 @@ function CredentialsPage() {
             <DialogTitle>Delete credential</DialogTitle>
             <DialogDescription>
               {deleteTarget
-                ? `This removes ${deleteTarget.label}. Future runs will no longer be able to log into that site with this namespace.`
+                ? `This removes ${deleteTarget.label}.`
                 : ""}
             </DialogDescription>
           </DialogHeader>

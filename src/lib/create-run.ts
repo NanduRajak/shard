@@ -7,7 +7,6 @@ export const createRun = createServerFn({ method: "POST" })
   .inputValidator(
     (data: {
       browserProvider?: "local_chrome" | "steel" | null
-      credentialNamespace?: string | null
       prompt: string
     }) => data,
   )

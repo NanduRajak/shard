@@ -11,7 +11,7 @@ import {
   IconPlayerPlay,
   IconPlayerStop,
   IconPlus,
-  IconStack2,
+  IconRobot,
   IconTrash,
 } from "@tabler/icons-react"
 import { useMemo, useState, type ReactNode } from "react"
@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { createBackgroundBatch } from "@/lib/create-background-batch"
+import { getBackgroundTaskLabel } from "@/lib/background-agent-task"
 import { requestRunStop } from "@/lib/request-run-stop"
 import { isActiveRunStatus } from "@/lib/run-report"
 
@@ -60,27 +61,25 @@ export const Route = createFileRoute("/background-agents")({
 })
 
 type AssignmentRow = {
-  agentCount: string
-  credentialProfileId: string
-  goal: string
+  credentialId: string
   id: string
   siteUrl: string
+  task: string
 }
 
 const EMPTY_ROW = (): AssignmentRow => ({
-  agentCount: "1",
-  credentialProfileId: "none",
-  goal: "",
+  credentialId: "none",
   id: crypto.randomUUID(),
   siteUrl: "",
+  task: "",
 })
 
 function BackgroundAgentsPage() {
   const { data: overview } = useQuery(
     convexQuery(api.backgroundAgents.getBackgroundAgentsOverview, {}),
   )
-  const { data: credentialProfiles } = useQuery(
-    convexQuery(api.backgroundAgents.listCredentialProfilesForBackgroundRuns, {}),
+  const { data: credentials } = useQuery(
+    convexQuery(api.backgroundAgents.listCredentialsForBackgroundRuns, {}),
   )
   const [rows, setRows] = useState<AssignmentRow[]>([EMPTY_ROW()])
   const [selectedRunId, setSelectedRunId] = useState<Id<"runs"> | null>(null)
@@ -98,11 +97,7 @@ function BackgroundAgentsPage() {
   })
 
   const totalAgentsRequested = useMemo(
-    () =>
-      rows.reduce((sum, row) => {
-        const count = Number(row.agentCount)
-        return sum + (Number.isFinite(count) ? count : 0)
-      }, 0),
+    () => rows.filter((row) => row.siteUrl.trim()).length || rows.length,
     [rows],
   )
 
@@ -111,17 +106,15 @@ function BackgroundAgentsPage() {
       await createMutation.mutateAsync({
         data: {
           assignments: rows.map((row) => ({
-            agentCount: Number(row.agentCount),
-            credentialProfileId:
-              row.credentialProfileId !== "none" ? row.credentialProfileId : undefined,
-            goal: row.goal,
+            credentialId: row.credentialId !== "none" ? row.credentialId : undefined,
             siteUrl: row.siteUrl,
+            task: row.task,
           })),
         },
       })
 
       setRows([EMPTY_ROW()])
-      toast.success("Background batch queued.")
+      toast.success("Background agents queued.")
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create background batch.",
@@ -153,32 +146,26 @@ function BackgroundAgentsPage() {
   return (
     <>
       <div className="grid gap-5">
-        <Card className="relative overflow-hidden border border-border/60 bg-card shadow-[0_28px_80px_-42px_rgba(0,0,0,0.72)]">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-white/10" />
-          <CardHeader className="relative gap-6 border-b border-border/60 pb-6">
+        <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_28px_80px_-42px_rgba(0,0,0,0.65)]">
+          <CardHeader className="gap-5 border-b border-border/60 bg-muted/10">
             <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="max-w-3xl space-y-4">
-                <div className="space-y-2">
-                  <Badge
-                    variant="outline"
-                    className="border-border/70 bg-background/60 text-muted-foreground"
-                  >
-                    Background Agents
-                  </Badge>
-                  <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
-                    Asynchronous QA control tower
-                  </p>
-                </div>
-                <CardTitle className="font-heading text-[2rem] leading-tight tracking-tight text-balance md:text-[2.35rem]">
-                  Long-running async QA for whole-app exploration.
+              <div className="max-w-3xl space-y-3">
+                <Badge
+                  variant="outline"
+                  className="border-border/70 bg-background/60 text-muted-foreground"
+                >
+                  Background Agents
+                </Badge>
+                <CardTitle className="font-heading text-[2rem] leading-tight tracking-tight md:text-[2.2rem]">
+                  Queue simple background QA runs without babysitting a live browser.
                 </CardTitle>
-                <CardDescription className="max-w-2xl text-sm/6 text-muted-foreground text-pretty">
-                  Home is still the place for interactive Steel.dev and local browser sessions.
-                  This page is the separate control tower for queued Playwright agents that keep
-                  running after you leave the live session.
+                <CardDescription className="max-w-2xl text-sm/6 text-muted-foreground">
+                  Each row creates one isolated agent. Add a website, optionally attach a
+                  saved login, and add a task if you want something more specific than the
+                  default end-to-end QA audit.
                 </CardDescription>
               </div>
-              <div className="grid min-w-60 gap-3 self-stretch sm:grid-cols-2">
+              <div className="grid min-w-60 gap-3 sm:grid-cols-2">
                 <HeroMetric label="Queued" value={`${overview?.queuedRuns.length ?? 0}`} />
                 <HeroMetric label="Running" value={`${overview?.activeRuns.length ?? 0}`} />
                 <HeroMetric label="Completed" value={`${overview?.completedRuns.length ?? 0}`} />
@@ -186,41 +173,26 @@ function BackgroundAgentsPage() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="relative grid gap-3 pt-5 md:grid-cols-3">
-            <HeroNote
-              title="Interactive sessions"
-              body="Use Home when you want to watch Steel.dev live or drive Local Chrome in real time."
-            />
-            <HeroNote
-              title="Background batches"
-              body="Queue many agents across one site, many sites, or different goals without babysitting a live browser."
-            />
-            <HeroNote
-              title="Saved reports"
-              body="Each agent keeps its artifacts, findings, and Playwright trace so you can inspect it later."
-            />
-          </CardContent>
         </Card>
 
-        <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_20px_55px_-42px_rgba(0,0,0,0.8)]">
-          <CardHeader className="gap-4 border-b border-border/60 bg-muted/15 pb-5">
+        <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_20px_55px_-42px_rgba(0,0,0,0.78)]">
+          <CardHeader className="gap-4 border-b border-border/60 bg-muted/15">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-2">
                 <Badge
                   variant="secondary"
                   className="w-fit rounded-full px-3 py-1 text-[11px] tracking-[0.16em] uppercase"
                 >
-                  Create batch
+                  Launch agents
                 </Badge>
-                <CardTitle>Create background batch</CardTitle>
+                <CardTitle>Create background agents</CardTitle>
                 <CardDescription className="max-w-2xl text-pretty">
-                  Add assignment rows for sites and goals, then fan them out into isolated
-                  background agents. Credentials are optional and only used as runtime login
-                  handles, not exposed to the agent itself.
+                  Keep it lightweight: one row is one agent. Leave the task blank to run the
+                  built-in end-to-end QA pass.
                 </CardDescription>
               </div>
               <Badge variant="outline" className="tabular-nums">
-                {totalAgentsRequested} agents requested
+                {totalAgentsRequested} agent{totalAgentsRequested === 1 ? "" : "s"} ready
               </Badge>
             </div>
           </CardHeader>
@@ -231,7 +203,7 @@ function BackgroundAgentsPage() {
                 row={row}
                 index={index}
                 canRemove={rows.length > 1}
-                credentialProfiles={credentialProfiles ?? []}
+                credentials={credentials ?? []}
                 onChange={(nextRow) => {
                   setRows((current) =>
                     current.map((item) => (item.id === row.id ? nextRow : item)),
@@ -255,7 +227,7 @@ function BackgroundAgentsPage() {
                 }}
               >
                 <IconPlus className="size-4" />
-                Add assignment
+                Add another agent
               </Button>
               <Button
                 className="min-h-11 rounded-2xl"
@@ -264,7 +236,7 @@ function BackgroundAgentsPage() {
                   void handleCreateBatch()
                 }}
               >
-                {createMutation.isPending ? "Starting..." : "Start background agents"}
+                {createMutation.isPending ? "Starting..." : "Start agents"}
                 <IconPlayerPlay className="size-4" />
               </Button>
             </div>
@@ -274,39 +246,39 @@ function BackgroundAgentsPage() {
         <div className="grid gap-4 xl:grid-cols-2">
           <RunBucket
             title="Active agents"
-            description="Agents currently exploring, following goals, or collecting artifacts."
+            description="Agents currently running in the background."
             icon={<IconLoader3 className="size-4" />}
             items={overview?.activeRuns ?? []}
             onSelect={setSelectedRunId}
             emptyTitle="No active agents"
-            emptyBody="Background agents will appear here while they are running."
+            emptyBody="Running agents will appear here."
           />
           <RunBucket
             title="Queued agents"
-            description="Agents waiting for the background Playwright worker pool."
+            description="Agents waiting for a Playwright worker."
             icon={<IconHourglass className="size-4" />}
             items={overview?.queuedRuns ?? []}
             onSelect={setSelectedRunId}
             emptyTitle="No queued agents"
-            emptyBody="Create a batch above to queue long-running QA jobs."
+            emptyBody="Create one or more rows above to queue QA work."
           />
           <RunBucket
             title="Completed agents"
-            description="Finished agents with saved findings, screenshots, and replay trace."
-            icon={<IconStack2 className="size-4" />}
+            description="Finished agents with saved artifacts and findings."
+            icon={<IconRobot className="size-4" />}
             items={overview?.completedRuns ?? []}
             onSelect={setSelectedRunId}
             emptyTitle="No completed agents"
-            emptyBody="Finished reports stay explorable here after the work ends."
+            emptyBody="Completed reports stay visible here."
           />
           <RunBucket
             title="Failed agents"
-            description="Runs that failed or were cancelled before finishing."
+            description="Runs that failed or were cancelled."
             icon={<IconClock className="size-4" />}
             items={overview?.failedRuns ?? []}
             onSelect={setSelectedRunId}
             emptyTitle="No failed agents"
-            emptyBody="Failed background jobs will stay visible here for later debugging."
+            emptyBody="Failed jobs stay here for debugging."
           />
         </div>
       </div>
@@ -324,7 +296,7 @@ function BackgroundAgentsPage() {
           <DrawerHeader className="gap-3 border-b border-border/60 bg-muted/10">
             <DrawerTitle>Background agent detail</DrawerTitle>
             <DrawerDescription className="text-pretty">
-              Inspect the current output stream, findings, saved artifacts, and quick report data.
+              Review the saved output, findings, artifacts, and progress for this agent.
             </DrawerDescription>
           </DrawerHeader>
           <div className="grid h-full min-h-0 gap-4 overflow-y-auto bg-background/60 p-4">
@@ -348,7 +320,10 @@ function BackgroundAgentsPage() {
                       {detail.run.currentStep ?? "Queued for background QA"}
                     </p>
                     <div className="grid gap-3 md:grid-cols-2">
-                      <InfoMetric label="Goal" value={detail.run.instructions ?? "Whole-app exploration"} />
+                      <InfoMetric
+                        label="Task"
+                        value={getBackgroundTaskLabel(detail.run.instructions)}
+                      />
                       <InfoMetric
                         label="Findings"
                         value={`${detail.findings.length} total`}
@@ -419,7 +394,7 @@ function BackgroundAgentsPage() {
                   <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
                     <CardTitle className="text-base">Agent output</CardTitle>
                     <CardDescription className="text-pretty">
-                      Step-by-step event stream from the background worker.
+                      Step-by-step status from the background worker.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-3 p-4">
@@ -448,7 +423,7 @@ function BackgroundAgentsPage() {
                   <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
                     <CardTitle className="text-base">Findings snapshot</CardTitle>
                     <CardDescription className="text-pretty">
-                      Browser issues and report signals captured during the background run.
+                      Browser issues and QA findings captured during the run.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-3 p-4">
@@ -477,7 +452,7 @@ function BackgroundAgentsPage() {
                   <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
                     <CardTitle className="text-base">Artifacts</CardTitle>
                     <CardDescription className="text-pretty">
-                      Latest screenshots, trace exports, and other saved outputs.
+                      Latest screenshots, trace exports, and saved outputs.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-3 p-4">
@@ -531,20 +506,18 @@ function BackgroundAgentsPage() {
 
 function AssignmentComposerRow({
   canRemove,
-  credentialProfiles,
+  credentials,
   index,
   onChange,
   onRemove,
   row,
 }: {
   canRemove: boolean
-  credentialProfiles: Array<{
+  credentials: Array<{
     _id: Id<"credentials">
     isDefault: boolean
-    namespace: string
+    login: string
     origin: string
-    profileLabel: string
-    username: string
     website: string
   }>
   index: number
@@ -553,25 +526,26 @@ function AssignmentComposerRow({
   row: AssignmentRow
 }) {
   const siteOrigin = safeOrigin(row.siteUrl)
-  const matchingProfiles = siteOrigin
-    ? credentialProfiles.filter((profile) => profile.origin === siteOrigin)
-    : credentialProfiles
+  const matchingCredentials = siteOrigin
+    ? credentials.filter((credential) => credential.origin === siteOrigin)
+    : credentials
 
   return (
-    <div className="rounded-[1.7rem] border border-border/60 bg-background/95 p-4 shadow-[0_20px_45px_-36px_rgba(0,0,0,0.85)]">
+    <div className="rounded-[1.7rem] border border-border/60 bg-background/95 p-4 shadow-[0_20px_45px_-36px_rgba(0,0,0,0.82)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">Assignment {index + 1}</p>
+          <p className="text-sm font-medium text-foreground">Agent {index + 1}</p>
           <p className="text-sm text-muted-foreground">
-            One row can fan out into several isolated agents with the same brief.
+            Add a URL, optionally attach a saved login, and leave the task blank if you
+            want the default QA pass.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="bg-background/80 text-muted-foreground">
               {siteOrigin ? siteOrigin.replace(/^https?:\/\//, "") : "URL decides site scope"}
             </Badge>
             <Badge variant="secondary" className="bg-secondary/80">
-              {matchingProfiles.length} credential
-              {matchingProfiles.length === 1 ? " profile" : " profiles"}
+              {matchingCredentials.length} matching credential
+              {matchingCredentials.length === 1 ? "" : "s"}
             </Badge>
           </div>
         </div>
@@ -586,8 +560,8 @@ function AssignmentComposerRow({
           <span className="sr-only">Remove assignment</span>
         </Button>
       </div>
-      <div className="mt-4 grid gap-4 md:grid-cols-[1.1fr_1.1fr_0.8fr]">
-        <Field label="Site URL">
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <Field label="URL">
           <Input
             value={row.siteUrl}
             placeholder="https://app.example.com"
@@ -595,37 +569,20 @@ function AssignmentComposerRow({
             onChange={(event) => onChange({ ...row, siteUrl: event.target.value })}
           />
         </Field>
-        <Field label="Credential profile">
+        <Field label="Credential">
           <Select
-            value={row.credentialProfileId}
-            onValueChange={(value) => onChange({ ...row, credentialProfileId: value ?? "none" })}
+            value={row.credentialId}
+            onValueChange={(value) => onChange({ ...row, credentialId: value ?? "none" })}
           >
             <SelectTrigger className="h-11 rounded-2xl border-border/70 bg-background/80">
-              <SelectValue placeholder="No credentials" />
+              <SelectValue placeholder="No credential" />
             </SelectTrigger>
             <SelectContent align="start">
-              <SelectItem value="none">No credentials</SelectItem>
-              {matchingProfiles.map((profile) => (
-                <SelectItem key={profile._id} value={profile._id}>
-                  {profile.profileLabel}
-                  {profile.isDefault ? " · default" : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Agent count">
-          <Select
-            value={row.agentCount}
-            onValueChange={(value) => onChange({ ...row, agentCount: value ?? "1" })}
-          >
-            <SelectTrigger className="h-11 rounded-2xl border-border/70 bg-background/80">
-              <SelectValue placeholder="1" />
-            </SelectTrigger>
-            <SelectContent align="start">
-              {["1", "2", "3", "4", "5", "6", "7", "8"].map((count) => (
-                <SelectItem key={count} value={count}>
-                  {count}
+              <SelectItem value="none">No credential</SelectItem>
+              {matchingCredentials.map((credential) => (
+                <SelectItem key={credential._id} value={credential._id}>
+                  {credential.login}
+                  {credential.isDefault ? " · default" : ""}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -633,12 +590,12 @@ function AssignmentComposerRow({
         </Field>
       </div>
       <div className="mt-4">
-        <Field label="Goal">
+        <Field label="Task">
           <Textarea
-            value={row.goal}
-            placeholder="Optional. Leave blank for broad whole-app exploration."
+            value={row.task}
+            placeholder="Optional. Leave blank for the default end-to-end QA audit."
             className="min-h-28 rounded-[1.45rem] border-border/70 bg-background/80 shadow-none"
-            onChange={(event) => onChange({ ...row, goal: event.target.value })}
+            onChange={(event) => onChange({ ...row, task: event.target.value })}
           />
         </Field>
       </div>
@@ -710,7 +667,7 @@ function RunBucket({
                 {safeOrigin(item.run.url)?.replace(/^https?:\/\//, "") ?? item.run.url}
               </p>
               <p className="mt-2 line-clamp-2 text-sm font-medium text-foreground">
-                {item.run.instructions ?? "Whole-app exploration"}
+                {getBackgroundTaskLabel(item.run.instructions)}
               </p>
               <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
                 {item.run.currentStep ?? "Queued for background QA"}
@@ -747,15 +704,6 @@ function HeroMetric({ label, value }: { label: string; value: string }) {
         {label}
       </p>
       <p className="mt-2 text-3xl font-medium text-foreground tabular-nums">{value}</p>
-    </div>
-  )
-}
-
-function HeroNote({ body, title }: { body: string; title: string }) {
-  return (
-    <div className="rounded-[1.5rem] border border-border/60 bg-background/65 p-4 shadow-[0_16px_40px_-34px_rgba(0,0,0,0.9)]">
-      <p className="text-sm font-medium text-foreground">{title}</p>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground text-pretty">{body}</p>
     </div>
   )
 }

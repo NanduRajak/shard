@@ -1,5 +1,6 @@
 import { v } from "convex/values"
 import { mutation, query } from "./_generated/server"
+import { DEFAULT_BACKGROUND_TASK_INSTRUCTIONS } from "../src/lib/background-agent-task"
 
 function isActiveRun(status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting") {
   return status === "starting" || status === "running"
@@ -18,9 +19,8 @@ export const createBackgroundBatch = mutation({
     title: v.string(),
     assignments: v.array(
       v.object({
-        agentCount: v.number(),
-        credentialProfileId: v.optional(v.id("credentials")),
-        instructions: v.optional(v.string()),
+        credentialId: v.optional(v.id("credentials")),
+        instructions: v.string(),
         url: v.string(),
       }),
     ),
@@ -29,7 +29,7 @@ export const createBackgroundBatch = mutation({
     const now = Date.now()
     const batchId = await ctx.db.insert("backgroundBatches", {
       title: args.title,
-      totalRuns: args.assignments.reduce((sum, assignment) => sum + assignment.agentCount, 0),
+      totalRuns: args.assignments.length,
       createdAt: now,
       updatedAt: now,
     })
@@ -38,95 +38,78 @@ export const createBackgroundBatch = mutation({
     let agentOrdinal = 1
 
     for (const assignment of args.assignments) {
-      let credentialNamespace: string | undefined
-
-      if (assignment.credentialProfileId) {
-        const credential = await ctx.db.get(assignment.credentialProfileId)
+      if (assignment.credentialId) {
+        const credential = await ctx.db.get(assignment.credentialId)
 
         if (!credential) {
-          throw new Error("Selected credential profile was not found.")
+          throw new Error("Selected credential was not found.")
         }
 
         if (credential.origin !== new URL(assignment.url).origin) {
-          throw new Error("Selected credential profile does not match the website origin.")
+          throw new Error("Selected credential does not match the website origin.")
         }
-
-        credentialNamespace = credential.namespace
       }
 
-      const mode = assignment.instructions ? "task" : "explore"
+      const runId = await ctx.db.insert("runs", {
+        agentOrdinal,
+        backgroundBatchId: batchId,
+        browserProvider: "playwright",
+        credentialId: assignment.credentialId,
+        currentStep: "Queued for background QA",
+        executionMode: "background",
+        goalStatus: "not_requested",
+        instructions: assignment.instructions,
+        mode: "task",
+        queueState: "pending",
+        startedAt: now,
+        status: "queued",
+        updatedAt: now,
+        url: assignment.url,
+      })
 
-      for (let index = 0; index < assignment.agentCount; index += 1) {
-        const runId = await ctx.db.insert("runs", {
-          agentOrdinal,
-          backgroundBatchId: batchId,
-          browserProvider: "playwright",
-          credentialNamespace,
-          credentialProfileId: assignment.credentialProfileId,
-          currentStep: "Queued for background QA",
-          executionMode: "background",
-          goalStatus: mode === "task" ? "not_requested" : undefined,
-          instructions: assignment.instructions,
-          mode,
-          queueState: "pending",
-          startedAt: now,
-          status: "queued",
-          updatedAt: now,
-          url: assignment.url,
-        })
+      await ctx.db.insert("runEvents", {
+        runId,
+        kind: "status",
+        title: "Background agent queued",
+        body:
+          assignment.instructions === DEFAULT_BACKGROUND_TASK_INSTRUCTIONS
+            ? "The background agent is queued for the built-in end-to-end QA audit."
+            : `The background agent is queued for long-running QA.\nTask: ${assignment.instructions}`,
+        status: "queued",
+        pageUrl: assignment.url,
+        createdAt: now,
+      })
 
-        await ctx.db.insert("runEvents", {
-          runId,
-          kind: "status",
-          title: "Background agent queued",
-          body: assignment.instructions
-            ? `The background agent is queued for long-running QA.\nTask: ${assignment.instructions}`
-            : "The background agent is queued for long-running whole-app exploration.",
-          status: "queued",
-          pageUrl: assignment.url,
-          createdAt: now,
-        })
-
-        runIds.push(runId)
-        agentOrdinal += 1
-      }
+      runIds.push(runId)
+      agentOrdinal += 1
     }
 
     return { batchId, runIds }
   },
 })
 
-export const listCredentialProfilesForBackgroundRuns = query({
+export const listCredentialsForBackgroundRuns = query({
   args: {},
   handler: async (ctx) => {
     const credentials = await ctx.db.query("credentials").collect()
 
     return credentials
       .slice()
+      .filter((credential) => typeof credential.login === "string")
       .sort((left, right) => {
-        const namespaceComparison = left.namespace.localeCompare(right.namespace)
-
-        if (namespaceComparison !== 0) {
-          return namespaceComparison
-        }
-
         const websiteComparison = left.website.localeCompare(right.website)
 
         if (websiteComparison !== 0) {
           return websiteComparison
         }
 
-        return (left.profileLabel ?? left.username).localeCompare(
-          right.profileLabel ?? right.username,
-        )
+        return left.login.localeCompare(right.login)
       })
       .map((credential) => ({
         _id: credential._id,
         isDefault: credential.isDefault ?? false,
-        namespace: credential.namespace,
+        login: credential.login,
         origin: credential.origin,
-        profileLabel: credential.profileLabel ?? credential.username,
-        username: credential.username,
         website: credential.website,
       }))
   },

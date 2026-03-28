@@ -16,8 +16,7 @@ import { isTransientWorkflowError } from "@/lib/workflow-errors"
 import { scoreLighthouseFinding } from "@/lib/lighthouse-audits"
 import { pickQaFallbackAction } from "@/lib/qa-fallback"
 import {
-  getDecryptedCredentialForOrigin,
-  getDecryptedCredentialProfileById,
+  getDecryptedCredentialById,
 } from "@/lib/credentials-server"
 import {
   buildActionSignature,
@@ -27,7 +26,6 @@ import {
   shouldStopForRepeatActions,
   wouldExceedPageLimit,
 } from "@/lib/qa-guards"
-import { generateTotpCode } from "@/lib/totp"
 import {
   buildScoreSummary,
   computeFindingScore,
@@ -54,8 +52,7 @@ const PLAYWRIGHT_TRACE_PATH_PREFIX = "/tmp/shard-background-trace"
 type RunRequestedEvent = {
   data: {
     browserProvider: "local_chrome" | "playwright" | "steel"
-    credentialNamespace?: string
-    credentialProfileId?: Id<"credentials">
+    credentialId?: Id<"credentials">
     instructions?: string
     mode: "explore" | "task"
     runId: Id<"runs">
@@ -239,8 +236,7 @@ async function launchBackgroundPlaywrightBrowser() {
 
 export async function runQaWorkflow({
   browserProvider,
-  credentialNamespace,
-  credentialProfileId,
+  credentialId,
   instructions,
   mode,
   runId,
@@ -527,8 +523,7 @@ export async function runQaWorkflow({
       const agentLoopResult = await runAgentLoop({
         agentOrdinal: runRecord?.agentOrdinal,
         convex,
-        credentialProfileId,
-        credentialNamespace,
+        credentialId,
         config: qaConfig,
         findingSignatures,
         bufferedFindings,
@@ -933,8 +928,7 @@ export async function runQaWorkflow({
 async function runAgentLoop({
   agentOrdinal,
   convex,
-  credentialProfileId,
-  credentialNamespace,
+  credentialId,
   config,
   findingSignatures,
   bufferedFindings,
@@ -949,8 +943,7 @@ async function runAgentLoop({
 }: {
   agentOrdinal?: number
   convex: ReturnType<typeof createConvexServerClient>
-  credentialProfileId?: Id<"credentials">
-  credentialNamespace?: string
+  credentialId?: Id<"credentials">
   config: QaRuntimeConfig
   findingSignatures: Set<string>
   bufferedFindings: BufferedFinding[]
@@ -1048,7 +1041,7 @@ async function runAgentLoop({
       model: google(DEFAULT_MODEL),
       prompt: buildAgentPrompt({
         agentOrdinal,
-        credentialNamespace,
+        hasStoredCredential: Boolean(credentialId),
         maxAgentSteps: config.maxAgentSteps,
         instructions,
         mode,
@@ -1063,8 +1056,7 @@ async function runAgentLoop({
       stopWhen: stepCountIs(4),
       tools: buildAgentTools({
         bufferedFindings,
-        credentialProfileId,
-        credentialNamespace,
+        credentialId,
         convex,
         maxDiscoveredPages: config.maxDiscoveredPages,
         page,
@@ -1423,8 +1415,7 @@ async function runSnapshotStage({
 
 function buildAgentTools({
   bufferedFindings,
-  credentialProfileId,
-  credentialNamespace,
+  credentialId,
   convex,
   maxDiscoveredPages,
   page,
@@ -1434,8 +1425,7 @@ function buildAgentTools({
   visitedPages,
 }: {
   bufferedFindings: BufferedFinding[]
-  credentialProfileId?: Id<"credentials">
-  credentialNamespace?: string
+  credentialId?: Id<"credentials">
   convex: ReturnType<typeof createConvexServerClient>
   maxDiscoveredPages: number
   page: Page
@@ -1551,23 +1541,17 @@ function buildAgentTools({
         } satisfies ToolOutcome
       },
     }),
-    ...(credentialNamespace || credentialProfileId
+    ...(credentialId
       ? {
           useStoredLogin: tool({
             description:
               "Use the stored login credential for the current website when an auth wall blocks useful exploration.",
             inputSchema: z.object({}),
             execute: async () => {
-              const credential = credentialProfileId
-                ? await getDecryptedCredentialProfileById({
-                    convex,
-                    credentialId: credentialProfileId,
-                  })
-                : await getDecryptedCredentialForOrigin({
-                    convex,
-                    namespace: credentialNamespace ?? "",
-                    pageUrl: page.url(),
-                  })
+              const credential = await getDecryptedCredentialById({
+                convex,
+                credentialId,
+              })
 
               if (!credential) {
                 return {
@@ -1619,7 +1603,7 @@ function buildAgentTools({
 
 function buildAgentPrompt({
   agentOrdinal,
-  credentialNamespace,
+  hasStoredCredential,
   maxAgentSteps,
   instructions,
   mode,
@@ -1630,7 +1614,7 @@ function buildAgentPrompt({
   recentActions,
 }: {
   agentOrdinal?: number
-  credentialNamespace?: string
+  hasStoredCredential: boolean
   maxAgentSteps: number
   instructions?: string
   mode: "explore" | "task"
@@ -1644,7 +1628,7 @@ function buildAgentPrompt({
     "You are a balanced autonomous QA engineer exploring a public website.",
     "Rules:",
     "- Stay on the starting hostname only.",
-    credentialNamespace
+    hasStoredCredential
       ? "- Do not attempt signup, payment submission, purchase completion, account deletion, or destructive submission flows. If login is required, use the stored login tool instead of typing credentials yourself."
       : "- Do not attempt login, signup, payment submission, purchase completion, account deletion, or destructive submission flows.",
     "- Reversible actions are allowed, including search, filters, sorting, tabs, drawers, pagination, safe forms, add-to-cart, and opening checkout pages.",
@@ -2879,10 +2863,9 @@ function isInteractiveTool(toolName: ToolOutcome["toolName"]) {
 async function applyCredentialToPage(
   page: Page,
   credential: {
+    login: string
     origin: string
     password: string
-    totpSecret?: string
-    username: string
   },
 ) {
   const usernameField = await findFirstVisibleLocator(page, [
@@ -2908,27 +2891,8 @@ async function applyCredentialToPage(
     return false
   }
 
-  await usernameField.fill(credential.username, { timeout: 5_000 })
+  await usernameField.fill(credential.login, { timeout: 5_000 })
   await passwordField.fill(credential.password, { timeout: 5_000 })
-
-  if (credential.totpSecret) {
-    const totpField = await findFirstVisibleLocator(page, [
-      'input[autocomplete="one-time-code"]',
-      'input[name*="otp" i]',
-      'input[id*="otp" i]',
-      'input[name*="totp" i]',
-      'input[id*="totp" i]',
-      'input[name*="auth" i]',
-      'input[id*="auth" i]',
-      'input[inputmode="numeric"]',
-    ])
-
-    if (totpField) {
-      await totpField.fill(generateTotpCode(credential.totpSecret), {
-        timeout: 5_000,
-      })
-    }
-  }
 
   const submitButton = await findFirstVisibleLocator(page, [
     'button[type="submit"]',

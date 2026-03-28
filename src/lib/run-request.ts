@@ -1,11 +1,9 @@
-import { normalizeCredentialNamespace } from "@/lib/credential-url"
 import { validateRunUrl } from "@/lib/run-url"
 
 const RUN_URL_PATTERN = /https?:\/\/\S+/i
 
 export function prepareCreateRunPayload(data: {
   prompt: string
-  credentialNamespace?: string | null
   browserProvider?: "local_chrome" | "steel" | null
 }) {
   const prompt = data.prompt.trim()
@@ -21,9 +19,6 @@ export function prepareCreateRunPayload(data: {
     .replace(/\s+/g, " ")
     .trim()
 
-  const credentialNamespace = data.credentialNamespace
-    ? normalizeCredentialNamespace(data.credentialNamespace)
-    : ""
   const browserProvider =
     data.browserProvider === "local_chrome" ? ("local_chrome" as const) : ("steel" as const)
 
@@ -31,7 +26,6 @@ export function prepareCreateRunPayload(data: {
     url,
     mode: instructions ? ("task" as const) : ("explore" as const),
     browserProvider,
-    credentialNamespace: credentialNamespace || undefined,
     instructions: instructions || undefined,
   }
 }

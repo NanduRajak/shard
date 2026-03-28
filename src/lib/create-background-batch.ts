@@ -16,19 +16,19 @@ export const createBackgroundBatch = createServerFn({ method: "POST" })
     ])
 
     const convex = createConvexServerClient()
-    const credentialProfiles = await convex.query(
-      api.backgroundAgents.listCredentialProfilesForBackgroundRuns,
+    const credentials = await convex.query(
+      api.backgroundAgents.listCredentialsForBackgroundRuns,
       {},
     )
     const payload = prepareCreateBackgroundBatchPayload(data, {
-      credentialProfiles: credentialProfiles.map((profile) => ({
-        _id: profile._id,
-        origin: profile.origin,
+      credentialProfiles: credentials.map((credential) => ({
+        _id: credential._id,
+        origin: credential.origin,
       })),
     })
     const assignments = payload.assignments.map((assignment) => ({
       ...assignment,
-      credentialProfileId: assignment.credentialProfileId as Id<"credentials"> | undefined,
+      credentialId: assignment.credentialId as Id<"credentials"> | undefined,
     }))
 
     const { batchId, runIds } = await convex.mutation(
@@ -48,13 +48,7 @@ export const createBackgroundBatch = createServerFn({ method: "POST" })
         // intended parallelism and queue semantics outside local development.
         await Promise.all(
           runIds.map(async (runId, index) => {
-            const assignment = assignments.find((candidate, assignmentIndex) => {
-              const agentCountBefore = assignments
-                .slice(0, assignmentIndex)
-                .reduce((sum, item) => sum + item.agentCount, 0)
-
-              return index >= agentCountBefore && index < agentCountBefore + candidate.agentCount
-            })
+            const assignment = assignments[index]
 
             await convex.mutation(api.runtime.updateRunQueueState, {
               runId,
@@ -69,13 +63,9 @@ export const createBackgroundBatch = createServerFn({ method: "POST" })
 
             void runQaWorkflow({
               browserProvider: "playwright",
-              credentialNamespace: assignment.credentialProfileId
-                ? credentialProfiles.find((profile) => profile._id === assignment.credentialProfileId)
-                    ?.namespace
-                : undefined,
-              credentialProfileId: assignment.credentialProfileId,
+              credentialId: assignment.credentialId,
               instructions: assignment.instructions,
-              mode: assignment.instructions ? "task" : "explore",
+              mode: "task",
               runId,
               url: assignment.url,
             })
@@ -86,13 +76,7 @@ export const createBackgroundBatch = createServerFn({ method: "POST" })
 
         await Promise.all(
           runIds.map(async (runId, index) => {
-            const assignment = assignments.find((candidate, assignmentIndex) => {
-              const agentCountBefore = assignments
-                .slice(0, assignmentIndex)
-                .reduce((sum, item) => sum + item.agentCount, 0)
-
-              return index >= agentCountBefore && index < agentCountBefore + candidate.agentCount
-            })
+            const assignment = assignments[index]
 
             if (!assignment) {
               return
@@ -102,13 +86,9 @@ export const createBackgroundBatch = createServerFn({ method: "POST" })
               name: "app/background-run.requested",
               data: {
                 browserProvider: "playwright",
-                credentialNamespace: assignment.credentialProfileId
-                  ? credentialProfiles.find((profile) => profile._id === assignment.credentialProfileId)
-                      ?.namespace
-                  : undefined,
-                credentialProfileId: assignment.credentialProfileId,
+                credentialId: assignment.credentialId,
                 instructions: assignment.instructions,
-                mode: assignment.instructions ? "task" : "explore",
+                mode: "task",
                 runId,
                 url: assignment.url,
               },

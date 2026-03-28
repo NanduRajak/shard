@@ -2,13 +2,11 @@ import { describe, expect, it } from "vitest"
 import { prepareCreateBackgroundBatchPayload } from "./background-run-request"
 
 describe("prepareCreateBackgroundBatchPayload", () => {
-  it("expands a single assignment with multiple agents", () => {
+  it("turns a blank task into the default QA brief", () => {
     expect(
       prepareCreateBackgroundBatchPayload({
         assignments: [
           {
-            agentCount: 3,
-            goal: "Explore checkout safely",
             siteUrl: "https://shop.example.com",
           },
         ],
@@ -16,9 +14,9 @@ describe("prepareCreateBackgroundBatchPayload", () => {
     ).toEqual({
       assignments: [
         {
-          agentCount: 3,
-          credentialProfileId: undefined,
-          instructions: "Explore checkout safely",
+          credentialId: undefined,
+          instructions:
+            "Run a focused end-to-end QA audit for this website. If a stored credential is available, use it when login is required. Exercise the primary user journeys and core navigation safely. Capture important functional issues, browser issues, and helpful artifacts such as screenshots or trace output. Avoid destructive actions, final purchases, account deletion, or irreversible submissions.",
           url: "https://shop.example.com/",
         },
       ],
@@ -32,13 +30,11 @@ describe("prepareCreateBackgroundBatchPayload", () => {
         {
           assignments: [
             {
-              agentCount: 2,
-              credentialProfileId: "cred_1",
-              goal: "Review the admin dashboard",
+              credentialId: "cred_1",
               siteUrl: "https://admin.example.com/login",
+              task: "Review the admin dashboard",
             },
             {
-              agentCount: 1,
               siteUrl: "https://marketing.example.com",
             },
           ],
@@ -55,15 +51,14 @@ describe("prepareCreateBackgroundBatchPayload", () => {
     ).toEqual({
       assignments: [
         {
-          agentCount: 2,
-          credentialProfileId: "cred_1",
+          credentialId: "cred_1",
           instructions: "Review the admin dashboard",
           url: "https://admin.example.com/login",
         },
         {
-          agentCount: 1,
-          credentialProfileId: undefined,
-          instructions: undefined,
+          credentialId: undefined,
+          instructions:
+            "Run a focused end-to-end QA audit for this website. If a stored credential is available, use it when login is required. Exercise the primary user journeys and core navigation safely. Capture important functional issues, browser issues, and helpful artifacts such as screenshots or trace output. Avoid destructive actions, final purchases, account deletion, or irreversible submissions.",
           url: "https://marketing.example.com/",
         },
       ],
@@ -76,7 +71,6 @@ describe("prepareCreateBackgroundBatchPayload", () => {
       prepareCreateBackgroundBatchPayload({
         assignments: [
           {
-            agentCount: 1,
             siteUrl: "app.example.com",
           },
         ],
@@ -90,8 +84,7 @@ describe("prepareCreateBackgroundBatchPayload", () => {
         {
           assignments: [
             {
-              agentCount: 1,
-              credentialProfileId: "cred_1",
+              credentialId: "cred_1",
               siteUrl: "https://app.example.com",
             },
           ],
@@ -105,6 +98,6 @@ describe("prepareCreateBackgroundBatchPayload", () => {
           ],
         },
       ),
-    ).toThrowError("A selected credential profile does not match the assignment website.")
+    ).toThrowError("A selected credential does not match the assignment website.")
   })
 })

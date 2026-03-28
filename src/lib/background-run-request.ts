@@ -1,10 +1,10 @@
 import { validateRunUrl } from "@/lib/run-url"
+import { resolveBackgroundTaskInstructions } from "@/lib/background-agent-task"
 
 export type BackgroundAssignmentInput = {
-  agentCount: number
-  credentialProfileId?: string | null
-  goal?: string | null
+  credentialId?: string | null
   siteUrl: string
+  task?: string | null
 }
 
 export function prepareCreateBackgroundBatchPayload(
@@ -30,31 +30,23 @@ export function prepareCreateBackgroundBatchPayload(
         throw new Error("Every background assignment needs a full http:// or https:// URL.")
       }
 
-      const instructions = assignment.goal?.trim()
-      const agentCount = Number(assignment.agentCount)
+      const credentialId = assignment.credentialId?.trim()
 
-      if (!Number.isInteger(agentCount) || agentCount < 1 || agentCount > 8) {
-        throw new Error("Each background assignment must request between 1 and 8 agents.")
-      }
-
-      const credentialProfileId = assignment.credentialProfileId?.trim()
-
-      if (credentialProfileId) {
-        const credentialProfile = credentialProfilesById.get(credentialProfileId)
+      if (credentialId) {
+        const credentialProfile = credentialProfilesById.get(credentialId)
 
         if (!credentialProfile) {
-          throw new Error("A selected credential profile could not be found.")
+          throw new Error("A selected credential could not be found.")
         }
 
         if (credentialProfile.origin !== new URL(url).origin) {
-          throw new Error("A selected credential profile does not match the assignment website.")
+          throw new Error("A selected credential does not match the assignment website.")
         }
       }
 
       return {
-        agentCount,
-        credentialProfileId: credentialProfileId || undefined,
-        instructions: instructions || undefined,
+        credentialId: credentialId || undefined,
+        instructions: resolveBackgroundTaskInstructions(assignment.task),
         url,
       }
     })

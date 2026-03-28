@@ -11,7 +11,6 @@ describe("prepareCreateRunPayload", () => {
       url: "https://example.com/",
       mode: "explore",
       browserProvider: "steel",
-      credentialNamespace: undefined,
       instructions: undefined,
     })
   })
@@ -20,13 +19,11 @@ describe("prepareCreateRunPayload", () => {
     expect(
       prepareCreateRunPayload({
         prompt: "Open this site https://shop.example.com/search and search for headphones",
-        credentialNamespace: " Store Admin ",
       }),
     ).toEqual({
       url: "https://shop.example.com/search",
       mode: "task",
       browserProvider: "steel",
-      credentialNamespace: "Store Admin",
       instructions: "Open this site and search for headphones",
     })
   })
@@ -41,7 +38,6 @@ describe("prepareCreateRunPayload", () => {
       url: "https://example.com/",
       mode: "explore",
       browserProvider: "local_chrome",
-      credentialNamespace: undefined,
       instructions: undefined,
     })
   })

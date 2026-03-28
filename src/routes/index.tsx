@@ -68,7 +68,6 @@ function App() {
       const { runId } = await mutateAsync({
         data: {
           browserProvider,
-          credentialNamespace: undefined,
           prompt: normalizedPrompt,
         },
       })

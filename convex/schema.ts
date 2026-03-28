@@ -159,8 +159,7 @@ export default defineSchema({
     browserProvider: v.optional(browserProvider),
     executionMode: v.optional(executionMode),
     backgroundBatchId: v.optional(v.id("backgroundBatches")),
-    credentialNamespace: v.optional(v.string()),
-    credentialProfileId: v.optional(v.id("credentials")),
+    credentialId: v.optional(v.id("credentials")),
     instructions: v.optional(v.string()),
     agentOrdinal: v.optional(v.number()),
     status: runStatus,
@@ -377,18 +376,14 @@ export default defineSchema({
     .index("by_run_and_created_at", ["runId", "createdAt"]),
 
   credentials: defineTable({
-    namespace: v.string(),
     website: v.string(),
     origin: v.string(),
-    profileLabel: v.optional(v.string()),
     isDefault: v.optional(v.boolean()),
-    username: v.string(),
+    login: v.string(),
     passwordEncrypted: v.string(),
-    totpSecretEncrypted: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_namespace", ["namespace"])
-    .index("by_namespace_origin", ["namespace", "origin"])
-    .index("by_namespace_origin_profile", ["namespace", "origin", "profileLabel"]),
+    .index("by_origin", ["origin"])
+    .index("by_origin_login", ["origin", "login"]),
 })

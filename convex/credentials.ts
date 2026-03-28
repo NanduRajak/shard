@@ -1,47 +1,70 @@
 import { v } from "convex/values"
 import { mutation, query } from "./_generated/server"
 
+type CredentialRecord = {
+  _creationTime: number
+  _id: string
+  createdAt: number
+  isDefault?: boolean
+  login: string
+  origin: string
+  passwordEncrypted: string
+  updatedAt: number
+  website: string
+}
+
+function isSimplifiedCredentialRecord(value: any): value is CredentialRecord {
+  return (
+    Boolean(value) &&
+    typeof value.origin === "string" &&
+    typeof value.website === "string" &&
+    typeof value.login === "string" &&
+    typeof value.passwordEncrypted === "string" &&
+    typeof value.createdAt === "number" &&
+    typeof value.updatedAt === "number"
+  )
+}
+
 export const listCredentials = query({
   args: {},
   handler: async (ctx) => {
     const credentials = await ctx.db.query("credentials").collect()
 
     return credentials
+      .filter(isSimplifiedCredentialRecord)
       .slice()
       .sort((left, right) => {
-        const namespaceComparison = left.namespace.localeCompare(right.namespace)
+        const websiteComparison = left.website.localeCompare(right.website)
 
-        if (namespaceComparison !== 0) {
-          return namespaceComparison
+        if (websiteComparison !== 0) {
+          return websiteComparison
         }
 
-        return left.website.localeCompare(right.website)
+        return left.login.localeCompare(right.login)
       })
       .map((credential) => ({
         _creationTime: credential._creationTime,
         _id: credential._id,
         createdAt: credential.createdAt,
         isDefault: credential.isDefault ?? false,
-        namespace: credential.namespace,
+        login: credential.login,
         origin: credential.origin,
-        profileLabel: credential.profileLabel ?? credential.username,
         updatedAt: credential.updatedAt,
-        username: credential.username,
         website: credential.website,
-        hasTotpSecret: Boolean(credential.totpSecretEncrypted),
       }))
   },
 })
 
-export const listNamespaces = query({
+export const getCredentialsRolloutStatus = query({
   args: {},
   handler: async (ctx) => {
-    const credentials = await ctx.db
-      .query("credentials")
-      .withIndex("by_namespace")
-      .collect()
+    const credentials = await ctx.db.query("credentials").collect()
 
-    return [...new Set(credentials.map((credential) => credential.namespace))]
+    return {
+      hasLegacyCredentials: credentials.some(
+        (credential) => !isSimplifiedCredentialRecord(credential),
+      ),
+    }
   },
 })
 
@@ -50,79 +73,49 @@ export const getCredentialForServer = query({
     credentialId: v.id("credentials"),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.credentialId)
+    const credential = await ctx.db.get(args.credentialId)
+
+    return isSimplifiedCredentialRecord(credential) ? credential : null
   },
 })
 
 export const getCredentialForRuntime = query({
   args: {
-    namespace: v.string(),
-    origin: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const credentials = await ctx.db
-      .query("credentials")
-      .withIndex("by_namespace_origin", (q) =>
-        q.eq("namespace", args.namespace).eq("origin", args.origin),
-      )
-      .collect()
-
-    const defaultCredential =
-      credentials.find((credential) => credential.isDefault) ??
-      (credentials.length === 1 ? credentials[0] : null)
-
-    return defaultCredential ?? null
-  },
-})
-
-export const getCredentialProfileForRuntime = query({
-  args: {
     credentialId: v.id("credentials"),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.credentialId)
+    const credential = await ctx.db.get(args.credentialId)
+
+    return isSimplifiedCredentialRecord(credential) ? credential : null
   },
 })
 
 export const createCredential = mutation({
   args: {
-    namespace: v.string(),
     website: v.string(),
     origin: v.string(),
-    profileLabel: v.string(),
     isDefault: v.boolean(),
-    username: v.string(),
+    login: v.string(),
     passwordEncrypted: v.string(),
-    totpSecretEncrypted: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const existingProfiles = await ctx.db
+    const existingCredentials = await ctx.db
       .query("credentials")
-      .withIndex("by_namespace_origin_profile", (q) =>
-        q.eq("namespace", args.namespace)
-          .eq("origin", args.origin)
-          .eq("profileLabel", args.profileLabel),
-      )
+      .withIndex("by_origin", (q) => q.eq("origin", args.origin))
       .collect()
+    const validCredentials = existingCredentials.filter(isSimplifiedCredentialRecord)
 
-    if (existingProfiles.length > 0) {
-      throw new Error("A credential profile with this name already exists for the website.")
+    if (validCredentials.some((credential) => credential.login === args.login)) {
+      throw new Error("A credential with this login already exists for the website.")
     }
 
     const now = Date.now()
-    const existingCredentials = await ctx.db
-      .query("credentials")
-      .withIndex("by_namespace_origin", (q) =>
-        q.eq("namespace", args.namespace).eq("origin", args.origin),
-      )
-      .collect()
-
-    const shouldBeDefault = args.isDefault || existingCredentials.length === 0
+    const shouldBeDefault = args.isDefault || validCredentials.length === 0
 
     if (shouldBeDefault) {
       await Promise.all(
-        existingCredentials.map((credential) =>
-          ctx.db.patch(credential._id, {
+        validCredentials.map((credential) =>
+          ctx.db.patch(credential._id as any, {
             isDefault: false,
             updatedAt: now,
           }),
@@ -133,13 +126,10 @@ export const createCredential = mutation({
     return await ctx.db.insert("credentials", {
       createdAt: now,
       isDefault: shouldBeDefault,
-      namespace: args.namespace,
+      login: args.login,
       origin: args.origin,
       passwordEncrypted: args.passwordEncrypted,
-      profileLabel: args.profileLabel,
-      totpSecretEncrypted: args.totpSecretEncrypted,
       updatedAt: now,
-      username: args.username,
       website: args.website,
     })
   },
@@ -148,60 +138,57 @@ export const createCredential = mutation({
 export const updateCredential = mutation({
   args: {
     credentialId: v.id("credentials"),
-    namespace: v.string(),
     website: v.string(),
     origin: v.string(),
-    profileLabel: v.string(),
     isDefault: v.boolean(),
-    username: v.string(),
+    login: v.string(),
     passwordEncrypted: v.string(),
-    totpSecretEncrypted: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existingCredential = await ctx.db.get(args.credentialId)
 
-    if (!existingCredential) {
+    if (!isSimplifiedCredentialRecord(existingCredential)) {
       throw new Error("Credential not found.")
     }
 
-    const duplicateProfiles = await ctx.db
+    const currentOriginCredentials = await ctx.db
       .query("credentials")
-      .withIndex("by_namespace_origin_profile", (q) =>
-        q.eq("namespace", args.namespace)
-          .eq("origin", args.origin)
-          .eq("profileLabel", args.profileLabel),
-      )
+      .withIndex("by_origin", (q) => q.eq("origin", args.origin))
       .collect()
+    const validCurrentOriginCredentials = currentOriginCredentials.filter(
+      isSimplifiedCredentialRecord,
+    )
 
-    if (duplicateProfiles.some((credential) => credential._id !== args.credentialId)) {
-      throw new Error("A credential profile with this name already exists for the website.")
+    if (
+      validCurrentOriginCredentials.some(
+        (credential) =>
+          credential._id !== args.credentialId && credential.login === args.login,
+      )
+    ) {
+      throw new Error("A credential with this login already exists for the website.")
     }
 
-    const existingCredentials = await ctx.db
+    const previousOriginCredentials = await ctx.db
       .query("credentials")
-      .withIndex("by_namespace_origin", (q) =>
-        q.eq("namespace", args.namespace).eq("origin", args.origin),
-      )
+      .withIndex("by_origin", (q) => q.eq("origin", existingCredential.origin))
       .collect()
-    const previousGroupCredentials = await ctx.db
-      .query("credentials")
-      .withIndex("by_namespace_origin", (q) =>
-        q.eq("namespace", existingCredential.namespace).eq("origin", existingCredential.origin),
-      )
-      .collect()
+    const validPreviousOriginCredentials = previousOriginCredentials.filter(
+      isSimplifiedCredentialRecord,
+    )
+
     const now = Date.now()
     const shouldBeDefault =
       args.isDefault ||
-      existingCredentials.every(
+      validCurrentOriginCredentials.every(
         (credential) => credential._id === args.credentialId,
       )
 
     if (shouldBeDefault) {
       await Promise.all(
-        existingCredentials
+        validCurrentOriginCredentials
           .filter((credential) => credential._id !== args.credentialId)
           .map((credential) =>
-            ctx.db.patch(credential._id, {
+            ctx.db.patch(credential._id as any, {
               isDefault: false,
               updatedAt: now,
             }),
@@ -211,52 +198,41 @@ export const updateCredential = mutation({
 
     await ctx.db.patch(args.credentialId, {
       isDefault: shouldBeDefault,
-      namespace: args.namespace,
+      login: args.login,
       origin: args.origin,
       passwordEncrypted: args.passwordEncrypted,
-      profileLabel: args.profileLabel,
-      totpSecretEncrypted: args.totpSecretEncrypted,
       updatedAt: now,
-      username: args.username,
       website: args.website,
     })
 
-    const movedGroups =
-      existingCredential.namespace !== args.namespace ||
-      existingCredential.origin !== args.origin
-
-    const previousGroupRemainingCredentials = previousGroupCredentials.filter(
+    const movedOrigins = existingCredential.origin !== args.origin
+    const remainingPreviousOriginCredentials = validPreviousOriginCredentials.filter(
       (credential) => credential._id !== args.credentialId,
     )
-    const previousGroupNeedsDefault =
-      movedGroups &&
-      previousGroupRemainingCredentials.length > 0 &&
-      !previousGroupRemainingCredentials.some((credential) => credential.isDefault)
 
-    if (previousGroupNeedsDefault) {
-      const replacement = previousGroupRemainingCredentials[0]
-
-      if (replacement) {
-        await ctx.db.patch(replacement._id, {
-          isDefault: true,
-          updatedAt: now,
-        })
-      }
+    if (
+      movedOrigins &&
+      remainingPreviousOriginCredentials.length > 0 &&
+      !remainingPreviousOriginCredentials.some((credential) => credential.isDefault)
+    ) {
+      await ctx.db.patch(remainingPreviousOriginCredentials[0]!._id as any, {
+        isDefault: true,
+        updatedAt: now,
+      })
     }
 
-    const currentGroupHasOtherDefault = existingCredentials.some(
+    const currentOriginOtherDefaults = validCurrentOriginCredentials.some(
       (credential) =>
-        credential._id !== args.credentialId &&
-        credential.isDefault,
+        credential._id !== args.credentialId && credential.isDefault,
     )
 
-    if (!shouldBeDefault && !currentGroupHasOtherDefault) {
-      const replacement = existingCredentials.find(
+    if (!shouldBeDefault && !currentOriginOtherDefaults) {
+      const replacement = validCurrentOriginCredentials.find(
         (credential) => credential._id !== args.credentialId,
       )
 
       if (replacement) {
-        await ctx.db.patch(replacement._id, {
+        await ctx.db.patch(replacement._id as any, {
           isDefault: true,
           updatedAt: now,
         })
@@ -277,7 +253,7 @@ export const deleteCredential = mutation({
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.credentialId)
 
-    if (!credential) {
+    if (!isSimplifiedCredentialRecord(credential)) {
       return
     }
 
@@ -289,18 +265,27 @@ export const deleteCredential = mutation({
 
     const replacement = await ctx.db
       .query("credentials")
-      .withIndex("by_namespace_origin", (q) =>
-        q.eq("namespace", credential.namespace).eq("origin", credential.origin),
-      )
+      .withIndex("by_origin", (q) => q.eq("origin", credential.origin))
       .first()
 
-    if (!replacement) {
+    if (!isSimplifiedCredentialRecord(replacement)) {
       return
     }
 
-    await ctx.db.patch(replacement._id, {
+    await ctx.db.patch(replacement._id as any, {
       isDefault: true,
       updatedAt: Date.now(),
     })
+  },
+})
+
+export const resetCredentials = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const credentials = await ctx.db.query("credentials").collect()
+
+    await Promise.all(credentials.map((credential) => ctx.db.delete(credential._id)))
+
+    return { deletedCount: credentials.length }
   },
 })
