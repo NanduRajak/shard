@@ -190,6 +190,7 @@ export type QaRuntimeSink = {
     stepIndex?: number
     title: string
   }) => Promise<void>
+  getAbortSignal?: () => AbortSignal | undefined
   getStopState?: () => Promise<{
     currentUrl: string | null
     stopRequestedAt: number | null
@@ -457,6 +458,7 @@ async function runAgentLoop({
 
     const plannerResult = await runRetriedAction(async () => {
       return await generateText({
+        abortSignal: runtime.getAbortSignal?.(),
         model,
         prompt: buildAgentPrompt({
           hasStoredCredential: Boolean(getStoredCredential && browser.useStoredLogin),
@@ -505,13 +507,14 @@ async function runAgentLoop({
 
     if (plannerGoalOutcome && !latestToolResult) {
       if (plannerGoalOutcome.status === "completed") {
-        const verifiedCompletion = await verifyTaskCompletion({
-          instructions,
-          model,
-          plannerSummary,
-          recentActions: actionHistory.slice(-4),
-          snapshot,
-        })
+          const verifiedCompletion = await verifyTaskCompletion({
+            instructions,
+            model,
+            plannerSummary,
+            recentActions: actionHistory.slice(-4),
+            runtime,
+            snapshot,
+          })
 
         if (verifiedCompletion?.status === "completed") {
           goalOutcome = verifiedCompletion
@@ -636,6 +639,7 @@ async function runAgentLoop({
         model,
         plannerSummary,
         recentActions: actionHistory.slice(-4),
+        runtime,
         snapshot: nextSnapshot,
       })
 
@@ -761,6 +765,7 @@ async function runSnapshotStage({
   analyzedSnapshots.add(snapshot.signature)
 
   const pageReview = await generateObject({
+    abortSignal: runtime.getAbortSignal?.(),
     model,
     schema: pageReviewSchema,
     prompt: [
@@ -776,6 +781,10 @@ async function runSnapshotStage({
       `Interactive elements: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} (${item.tagName})`).join("; ")}`,
     ].join("\n"),
   }).catch(async (error) => {
+    if (isQaOperationAborted(runtime, error)) {
+      throw buildQaAbortError("QA run stopped during page review", snapshot.url)
+    }
+
     await runtime.emitEvent({
       kind: "system",
       title: "Page review skipped",
@@ -1760,12 +1769,14 @@ async function verifyTaskCompletion({
   model,
   plannerSummary,
   recentActions,
+  runtime,
   snapshot,
 }: {
   instructions?: string
   model: any
   plannerSummary: string
   recentActions: string[]
+  runtime: QaRuntimeSink
   snapshot: PageSnapshot
 }) {
   if (!instructions) {
@@ -1773,6 +1784,7 @@ async function verifyTaskCompletion({
   }
 
   const assessment = await generateObject({
+    abortSignal: runtime.getAbortSignal?.(),
     model,
     schema: taskProofSchema,
     prompt: [
@@ -1789,7 +1801,13 @@ async function verifyTaskCompletion({
       `Visible text excerpt: ${snapshot.textExcerpt}`,
       `Interactive elements: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} (${item.tagName})`).join("; ")}`,
     ].join("\n"),
-  }).catch(() => null)
+  }).catch((error) => {
+    if (isQaOperationAborted(runtime, error)) {
+      throw buildQaAbortError("QA run stopped during task verification", snapshot.url)
+    }
+
+    return null
+  })
 
   if (!assessment) {
     return null
@@ -2055,6 +2073,10 @@ async function runRetriedAction<T>(operation: () => Promise<T>) {
     } catch (error) {
       lastError = error
 
+      if (isAbortError(error)) {
+        throw error
+      }
+
       if (attempt < MAX_TOOL_ATTEMPTS) {
         await sleep(TOOL_RETRY_DELAY_MS)
       }
@@ -2066,4 +2088,25 @@ async function runRetriedAction<T>(operation: () => Promise<T>) {
 
 async function sleep(durationMs: number) {
   await new Promise((resolve) => setTimeout(resolve, durationMs))
+}
+
+function isQaOperationAborted(runtime: QaRuntimeSink, error: unknown) {
+  return Boolean(runtime.getAbortSignal?.()?.aborted) || isAbortError(error)
+}
+
+function isAbortError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  const candidate = error as { name?: string; message?: string }
+
+  return (
+    candidate.name === "AbortError" ||
+    candidate.message?.toLowerCase().includes("aborted") === true
+  )
+}
+
+function buildQaAbortError(currentStep: string, currentUrl?: string) {
+  return new QaRunCancelledError(currentStep, currentUrl)
 }

@@ -1,6 +1,12 @@
-"use client"
+"use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   IconArrowUp,
   IconChevronDown,
@@ -10,59 +16,59 @@ import {
   IconPlus,
   IconPlugConnected,
   IconPlugConnectedX,
-} from "@tabler/icons-react"
-import { AnimatePresence, motion } from "motion/react"
-import { Textarea } from "@/components/ui/textarea"
-import { cn } from "@/lib/utils"
+} from "@tabler/icons-react";
+import { AnimatePresence, motion } from "motion/react";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 interface UseAutoResizeTextareaProps {
-  minHeight: number
-  maxHeight?: number
+  minHeight: number;
+  maxHeight?: number;
 }
 
 function useAutoResizeTextarea({
   minHeight,
   maxHeight,
 }: UseAutoResizeTextareaProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const adjustHeight = useCallback(
     (reset?: boolean) => {
-      const textarea = textareaRef.current
-      if (!textarea) return
+      const textarea = textareaRef.current;
+      if (!textarea) return;
 
       if (reset) {
-        textarea.style.height = `${minHeight}px`
-        return
+        textarea.style.height = `${minHeight}px`;
+        return;
       }
 
-      textarea.style.height = `${minHeight}px`
+      textarea.style.height = `${minHeight}px`;
 
       const newHeight = Math.max(
         minHeight,
         Math.min(textarea.scrollHeight, maxHeight ?? Number.POSITIVE_INFINITY),
-      )
+      );
 
-      textarea.style.height = `${newHeight}px`
+      textarea.style.height = `${newHeight}px`;
     },
     [minHeight, maxHeight],
-  )
+  );
 
   useLayoutEffect(() => {
-    const textarea = textareaRef.current
+    const textarea = textareaRef.current;
     if (textarea) {
-      textarea.style.height = `${minHeight}px`
-      adjustHeight()
+      textarea.style.height = `${minHeight}px`;
+      adjustHeight();
     }
-  }, [minHeight, adjustHeight])
+  }, [minHeight, adjustHeight]);
 
   useEffect(() => {
-    const handleResize = () => adjustHeight()
-    window.addEventListener("resize", handleResize)
-    return () => window.removeEventListener("resize", handleResize)
-  }, [adjustHeight])
+    const handleResize = () => adjustHeight();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [adjustHeight]);
 
-  return { textareaRef, adjustHeight }
+  return { textareaRef, adjustHeight };
 }
 
 /* ─────────────────────────────────────────────
@@ -70,61 +76,66 @@ function useAutoResizeTextarea({
    ───────────────────────────────────────────── */
 
 interface CredentialDropdownProps {
-  value?: string
+  value?: string;
   options: Array<{
-    label: string
-    value: string
-    domain?: string
-    isDefault?: boolean
-  }>
-  disabled?: boolean
-  onChange?: (value: string | null) => void
+    label: string;
+    value: string;
+    domain?: string;
+    isDefault?: boolean;
+  }>;
+  disabled?: boolean;
+  onChange?: (value: string | null) => void;
 }
 
-function CredentialDropdown({ value, options, disabled = false, onChange }: CredentialDropdownProps) {
-  const [open, setOpen] = useState(false)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const [triggerWidth, setTriggerWidth] = useState(0)
+function CredentialDropdown({
+  value,
+  options,
+  disabled = false,
+  onChange,
+}: CredentialDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [triggerWidth, setTriggerWidth] = useState(0);
 
-  const selected = options.find((o) => o.value === value)
+  const selected = options.find((o) => o.value === value);
 
   // Measure trigger width for matching dropdown width
   useLayoutEffect(() => {
     if (triggerRef.current) {
-      const measure = () => setTriggerWidth(triggerRef.current!.offsetWidth)
-      measure()
-      const ro = new ResizeObserver(measure)
-      ro.observe(triggerRef.current)
-      return () => ro.disconnect()
+      const measure = () => setTriggerWidth(triggerRef.current!.offsetWidth);
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(triggerRef.current);
+      return () => ro.disconnect();
     }
-  }, [])
+  }, []);
 
   // Close on outside click
   useEffect(() => {
-    if (!open) return
+    if (!open) return;
     const handler = (e: MouseEvent) => {
       if (
         triggerRef.current?.contains(e.target as Node) ||
         menuRef.current?.contains(e.target as Node)
       ) {
-        return
+        return;
       }
-      setOpen(false)
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [open])
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
 
   // Close on Escape
   useEffect(() => {
-    if (!open) return
+    if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false)
-    }
-    document.addEventListener("keydown", handler)
-    return () => document.removeEventListener("keydown", handler)
-  }, [open])
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
 
   return (
     <div className="relative">
@@ -133,7 +144,7 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
         type="button"
         onClick={() => {
           if (!disabled) {
-            setOpen((prev) => !prev)
+            setOpen((prev) => !prev);
           }
         }}
         disabled={disabled}
@@ -151,7 +162,9 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
               {selected.label}
             </span>
           ) : (
-            <span className="block min-w-0 flex-1 truncate text-neutral-500">Select login</span>
+            <span className="block min-w-0 flex-1 truncate text-neutral-500">
+              Select login
+            </span>
           )}
         </span>
         <motion.span
@@ -170,7 +183,12 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
             initial={{ opacity: 0, y: -4, scaleY: 0.96 }}
             animate={{ opacity: 1, y: 0, scaleY: 1 }}
             exit={{ opacity: 0, y: -4, scaleY: 0.96 }}
-            transition={{ type: "spring", stiffness: 400, damping: 30, mass: 0.8 }}
+            transition={{
+              type: "spring",
+              stiffness: 400,
+              damping: 30,
+              mass: 0.8,
+            }}
             style={{
               width: triggerWidth > 0 ? Math.max(triggerWidth, 320) : 320,
               transformOrigin: "top",
@@ -178,71 +196,74 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
             className="absolute left-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 p-2 shadow-2xl shadow-black/50"
           >
             <div className="flex flex-col gap-1">
-            {options.map((option, idx) => {
-              const isSelected = option.value === value
-              return (
-                <motion.div
-                  key={option.value}
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 400,
-                    damping: 30,
-                    delay: idx * 0.03,
-                  }}
-                  className="px-1"
-                >
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onChange?.(isSelected ? null : option.value)
-                      setOpen(false)
+              {options.map((option, idx) => {
+                const isSelected = option.value === value;
+                return (
+                  <motion.div
+                    key={option.value}
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 400,
+                      damping: 30,
+                      delay: idx * 0.03,
                     }}
-                    title={option.label}
-                    className={cn(
-                      "group relative mx-auto flex min-h-12 w-full cursor-pointer items-center rounded-xl px-3 py-1.5 pr-10 text-left outline-none transition-all duration-150",
-                      isSelected
-                        ? "bg-neutral-800/70 text-neutral-100"
-                        : "text-neutral-300 hover:bg-neutral-800/50 hover:text-neutral-100",
-                    )}
+                    className="px-1"
                   >
-                    <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1 pr-2">
-                        <div className="truncate text-[15px] font-medium tracking-[-0.01em] text-inherit">
-                          {option.label}
-                        </div>
-                        {option.domain ? (
-                          <div className="truncate text-[10px] leading-3.5 text-neutral-500 transition-colors group-hover:text-neutral-400">
-                            {option.domain}
-                          </div>
-                        ) : null}
-                      </div>
-                      {option.isDefault && (
-                        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-black uppercase">
-                          Default
-                        </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onChange?.(isSelected ? null : option.value);
+                        setOpen(false);
+                      }}
+                      title={option.label}
+                      className={cn(
+                        "group relative mx-auto flex min-h-12 w-full cursor-pointer items-center rounded-xl px-3 py-1.5 pr-10 text-left outline-none transition-all duration-150",
+                        isSelected
+                          ? "bg-neutral-800/70 text-neutral-100"
+                          : "text-neutral-300 hover:bg-neutral-800/50 hover:text-neutral-100",
                       )}
-                    </div>
-                    {isSelected && (
-                      <motion.span
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                        className="absolute right-4 size-2 rounded-full bg-emerald-400"
-                      />
-                    )}
-                  </button>
-                </motion.div>
-              )
-            })}
+                    >
+                      <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1 pr-2">
+                          <div className="truncate text-[15px] font-medium tracking-[-0.01em] text-inherit">
+                            {option.label}
+                          </div>
+                          {option.domain ? (
+                            <div className="truncate text-[10px] leading-3.5 text-neutral-500 transition-colors group-hover:text-neutral-400">
+                              {option.domain}
+                            </div>
+                          ) : null}
+                        </div>
+                        {option.isDefault && (
+                          <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-black uppercase">
+                            Default
+                          </span>
+                        )}
+                      </div>
+                      {isSelected && (
+                        <motion.span
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 500,
+                            damping: 25,
+                          }}
+                          className="absolute right-4 size-2 rounded-full bg-emerald-400"
+                        />
+                      )}
+                    </button>
+                  </motion.div>
+                );
+              })}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
-  )
+  );
 }
 
 /* ─────────────────────────────────────────────
@@ -250,30 +271,35 @@ function CredentialDropdown({ value, options, disabled = false, onChange }: Cred
    ───────────────────────────────────────────── */
 
 interface VercelV0ChatProps {
-  value: string
-  onChange: (value: string) => void
-  onSubmit: () => void
-  isPending: boolean
-  browserProvider: "steel" | "local_chrome" | null
-  onBrowserProviderChange: (provider: "steel" | "local_chrome") => void
-  onAddCredentials: () => void
-  helperLabel?: string
-  helperAvailable?: boolean
-  placeholder: string
-  modeDescription: string
-  hasValidUrl: boolean
-  credentialActionMode: "disabled-add" | "add" | "selected" | "select" | "loading"
-  credentialLabel?: string
-  credentialValue?: string
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  isPending: boolean;
+  browserProvider: "steel" | "local_chrome" | null;
+  onBrowserProviderChange: (provider: "steel" | "local_chrome") => void;
+  onAddCredentials: () => void;
+  helperLabel?: string;
+  helperAvailable?: boolean;
+  placeholder: string;
+  modeDescription: string;
+  hasValidUrl: boolean;
+  credentialActionMode:
+    | "disabled-add"
+    | "add"
+    | "selected"
+    | "select"
+    | "loading";
+  credentialLabel?: string;
+  credentialValue?: string;
   credentialOptions?: Array<{
-    label: string
-    value: string
-    domain?: string
-    isDefault?: boolean
-  }>
-  credentialDisabled?: boolean
-  onCredentialChange?: (value: string | null) => void
-  canSubmit: boolean
+    label: string;
+    value: string;
+    domain?: string;
+    isDefault?: boolean;
+  }>;
+  credentialDisabled?: boolean;
+  onCredentialChange?: (value: string | null) => void;
+  canSubmit: boolean;
 }
 
 export function VercelV0Chat({
@@ -295,36 +321,38 @@ export function VercelV0Chat({
   credentialDisabled = false,
   onCredentialChange,
 }: VercelV0ChatProps) {
-  const [hasMounted, setHasMounted] = useState(false)
+  const [hasMounted, setHasMounted] = useState(false);
 
   useEffect(() => {
-    setHasMounted(true)
-  }, [])
+    setHasMounted(true);
+  }, []);
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 60,
     maxHeight: 200,
-  })
+  });
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
+      e.preventDefault();
       if (value.trim() && !isPending) {
-        onSubmit()
-        adjustHeight(true)
+        onSubmit();
+        adjustHeight(true);
       }
     }
-  }
+  };
 
-  const tabTransition = (hasMounted
-    ? { type: "spring", stiffness: 300, damping: 30 }
-    : { duration: 0 }) as any
+  const tabTransition = (
+    hasMounted
+      ? { type: "spring", stiffness: 300, damping: 30 }
+      : { duration: 0 }
+  ) as any;
 
   const renderCredentialControl = () => {
     if (credentialActionMode === "loading") {
       return (
         <div className="h-10 w-full min-w-0 animate-pulse rounded-lg border border-neutral-800 bg-neutral-900 sm:min-w-72" />
-      )
+      );
     }
 
     if (credentialActionMode === "select") {
@@ -335,7 +363,7 @@ export function VercelV0Chat({
           disabled={credentialDisabled}
           onChange={onCredentialChange}
         />
-      )
+      );
     }
 
     if (credentialActionMode === "selected") {
@@ -344,7 +372,7 @@ export function VercelV0Chat({
           <IconKey className="h-4 w-4 shrink-0 text-neutral-400" />
           <span className="truncate">{credentialLabel}</span>
         </div>
-      )
+      );
     }
 
     return (
@@ -363,8 +391,8 @@ export function VercelV0Chat({
         <span className="hidden sm:inline">Add credentials</span>
         <span className="sm:hidden">Add</span>
       </button>
-    )
-  }
+    );
+  };
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col items-center space-y-4 p-4">
@@ -386,8 +414,8 @@ export function VercelV0Chat({
               ref={textareaRef}
               value={value}
               onChange={(e) => {
-                onChange(e.target.value)
-                adjustHeight()
+                onChange(e.target.value);
+                adjustHeight();
               }}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
@@ -503,16 +531,15 @@ export function VercelV0Chat({
                   </button>
                 </div>
               </div>
-
-              {modeDescription ? (
-                <div className="space-y-1">
-                  <p className="text-xs text-neutral-400">{modeDescription}</p>
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
+        {modeDescription ? (
+          <div className="space-y-1 p-2">
+            <p className="text-xs text-neutral-400">{modeDescription}</p>
+          </div>
+        ) : null}
       </div>
     </div>
-  )
+  );
 }

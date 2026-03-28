@@ -161,7 +161,7 @@ function PreviewState({ browserProvider, executionState, replayUrl }: any) {
       <PanelState
         icon={<IconLoader3 className="size-5 animate-spin" />}
         title={browserProvider === "local_chrome" ? "Attaching local Chrome session" : browserProvider === "playwright" ? "Launching background Playwright session" : "Creating cloud browser session"}
-        body={browserProvider === "local_chrome" ? "The local helper is connecting through Chrome DevTools MCP. Chrome may ask you to approve the debugging session." : browserProvider === "playwright" ? "The background worker is launching an isolated Playwright browser and preparing trace capture." : "The runner is setting up the remote browser. The preview will appear as soon as the session is ready."}
+        body={browserProvider === "local_chrome" ? "The local helper is launching or attaching to a visible Chrome window and preparing live automation." : browserProvider === "playwright" ? "The background worker is launching an isolated Playwright browser and preparing trace capture." : "The runner is setting up the remote browser. The preview will appear as soon as the session is ready."}
       />
     )
   }
@@ -170,7 +170,7 @@ function PreviewState({ browserProvider, executionState, replayUrl }: any) {
       <PanelState
         icon={<IconSatellite className="size-5" />}
         title={browserProvider === "local_chrome" ? "Local helper picked up the run" : browserProvider === "playwright" ? "Background worker picked up the run" : "Runner picked up the run"}
-        body={browserProvider === "local_chrome" ? "The local helper is preparing Chrome DevTools MCP and will begin driving your browser shortly." : browserProvider === "playwright" ? "The Playwright worker is running the QA job and will keep saving artifacts while it explores." : "The job is executing, but live session metadata has not been published yet."}
+        body={browserProvider === "local_chrome" ? "The local helper is preparing the local Chrome session and will begin driving it shortly." : browserProvider === "playwright" ? "The Playwright worker is running the QA job and will keep saving artifacts while it explores." : "The job is executing, but live session metadata has not been published yet."}
       />
     )
   }
@@ -188,7 +188,7 @@ function PreviewState({ browserProvider, executionState, replayUrl }: any) {
       <PanelState
         icon={<IconCircleX className="size-5" />}
         title={browserProvider === "local_chrome" ? "Local helper unavailable" : "Background runner unreachable"}
-        body={browserProvider === "local_chrome" ? "The run is still queued and no local helper heartbeat is available. Run `pnpm run local-helper` and keep Chrome open." : browserProvider === "playwright" ? "The run is still queued and the background worker process is not currently responding." : "The run is still queued and the local Inngest dev server is not responding. Start the runner to continue this run."}
+        body={browserProvider === "local_chrome" ? "The run is still queued and no local helper heartbeat is available. Run `pnpm run local-helper` and the helper will launch Chrome when the run starts." : browserProvider === "playwright" ? "The run is still queued and the background worker process is not currently responding." : "The run is still queued and the local Inngest dev server is not responding. Start the runner to continue this run."}
       />
     )
   }

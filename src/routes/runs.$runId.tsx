@@ -239,6 +239,11 @@ function RunPage() {
               value={formatDistanceToNow(run.updatedAt, { addSuffix: true })}
             />
           </div>
+          {run.errorMessage ? (
+            <div className="rounded-[1.25rem] border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {run.errorMessage}
+            </div>
+          ) : null}
           </CardHeader>
         </Card>
       </motion.div>
@@ -389,7 +394,7 @@ function PreviewState({
         }
         body={
           browserProvider === "local_chrome"
-            ? "The local helper is connecting through Chrome DevTools MCP. Chrome may ask you to approve the debugging session."
+            ? "The local helper is launching or attaching to a visible Chrome window and preparing live automation."
             : browserProvider === "playwright"
               ? "The background worker is launching an isolated Playwright browser and preparing trace capture."
             : "The runner is setting up the remote browser. The preview will appear as soon as the session is ready."
@@ -411,7 +416,7 @@ function PreviewState({
         }
         body={
           browserProvider === "local_chrome"
-            ? "The local helper is preparing Chrome DevTools MCP and will begin driving your browser shortly."
+            ? "The local helper is preparing the local Chrome session and will begin driving it shortly."
             : browserProvider === "playwright"
               ? "The Playwright worker is running the QA job and will keep saving artifacts while it explores."
             : "The job is executing, but live session metadata has not been published yet."

@@ -686,7 +686,7 @@ export const claimNextLocalRun = mutation({
       runId: run._id,
       kind: "system",
       title: "Local helper picked up run",
-      body: `Local helper ${helper.machineLabel} claimed the run and is preparing Chrome DevTools MCP.`,
+      body: `Local helper ${helper.machineLabel} claimed the run and is preparing the local Chrome session.`,
       status: run.status,
       pageUrl: run.currentUrl ?? run.url,
       createdAt: Date.now(),

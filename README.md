@@ -128,7 +128,6 @@ Multi-site batches stay separated by agent and site.
 - AI SDK
 - Gemini
 - Lighthouse
-- Chrome DevTools MCP
 - Probot and Octokit
 
 ## Local development
@@ -175,6 +174,43 @@ pnpm local-helper
 ```
 
 4. If you use Convex locally, run your Convex dev process in parallel.
+
+### Local Chrome troubleshooting
+
+The helper supports two local Chrome modes:
+
+- default local launch mode, where the helper opens a fresh visible Chrome window and drives it directly with Playwright
+- optional `LOCAL_CHROME_BROWSER_URL`, which attaches to an explicit Chrome remote debugging endpoint such as `http://127.0.0.1:9222`
+
+For most machines, the default flow is the most reliable:
+
+1. Start the helper:
+
+```bash
+pnpm local-helper
+```
+
+2. Create a local Chrome run from the app.
+
+3. Let the helper open its dedicated Chrome window and keep that window open until the run finishes.
+
+If you explicitly want to reuse a Chrome instance you started yourself, use the advanced attach flow:
+
+1. Start Chrome with a dedicated debugging profile:
+
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/shard-chrome-profile
+```
+
+2. Start the helper against that port:
+
+```bash
+LOCAL_CHROME_BROWSER_URL=http://127.0.0.1:9222 pnpm local-helper
+```
+
+3. Open at least one normal Chrome tab in that debugging session before starting the run.
+
+If the explicit attach flow is misconfigured, the helper now surfaces a direct endpoint error on the run page instead of failing with a vague browser crash.
 
 ## Environment variables
 

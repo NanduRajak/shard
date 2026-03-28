@@ -1,12 +1,17 @@
-import { mkdir, readFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { hostname } from "node:os"
+import { rm } from "node:fs/promises"
+import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
 import { google } from "@ai-sdk/google"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { Launcher } from "chrome-launcher"
+import {
+  type Browser,
+  chromium,
+  type BrowserContext,
+  type Locator,
+  type Page,
+} from "playwright"
 import { z } from "zod"
 import {
   buildActionSignature,
@@ -37,6 +42,7 @@ const STOP_POLL_INTERVAL_MS = Number(
   process.env.LOCAL_HELPER_STOP_POLL_INTERVAL_MS ?? 500,
 )
 const DEFAULT_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash"
+const ACTION_HIGHLIGHT_DELAY_MS = 350
 
 type BrowserProvider = "local_chrome" | "steel"
 type RunMode = "explore" | "task"
@@ -215,22 +221,37 @@ async function main() {
       heartbeatState.status = "error"
 
       const message = error instanceof Error ? error.message : "Unknown local helper failure"
+      const status =
+        error instanceof RunCancelledError || error instanceof QaRunCancelledError
+          ? "cancelled"
+          : "failed"
+      const currentStep =
+        error instanceof RunCancelledError || error instanceof QaRunCancelledError
+          ? error.message
+          : "Local Chrome QA run failed"
+      const currentUrl =
+        error instanceof RunCancelledError || error instanceof QaRunCancelledError
+          ? error.currentUrl ?? claim.run.url
+          : claim.run.url
+
+      await api
+        .event({
+          runId: claim.run._id,
+          kind: "status",
+          status,
+          title: status === "cancelled" ? "Run cancelled" : "Run failed",
+          body: message,
+          pageUrl: currentUrl,
+        })
+        .catch(() => undefined)
+
       await api
         .finalize({
           helperId,
           runId: claim.run._id,
-          status:
-            error instanceof RunCancelledError || error instanceof QaRunCancelledError
-              ? "cancelled"
-              : "failed",
-          currentStep:
-            error instanceof RunCancelledError || error instanceof QaRunCancelledError
-              ? error.message
-              : "Local Chrome QA run failed",
-          currentUrl:
-            error instanceof RunCancelledError || error instanceof QaRunCancelledError
-              ? error.currentUrl ?? claim.run.url
-              : claim.run.url,
+          status,
+          currentStep,
+          currentUrl,
           errorMessage:
             error instanceof RunCancelledError || error instanceof QaRunCancelledError
               ? undefined
@@ -257,7 +278,8 @@ async function runLocalQaWorkflow({
   machineLabel: string
   run: RunRecord
 }) {
-  const browser = new LocalChromeMcpBrowser()
+  const browser = new LocalChromeBrowser()
+  const stopController = new AbortController()
   const externalSessionId = `local:${helperId}:${run._id}`
   let session: SessionRecord | null = null
   let finalStatus: "cancelled" | "completed" | "failed" = "completed"
@@ -265,6 +287,7 @@ async function runLocalQaWorkflow({
     api,
     runId: run._id,
     onStop: async () => {
+      stopController.abort("stop_requested")
       await browser.close().catch(() => undefined)
     },
   })
@@ -283,7 +306,7 @@ async function runLocalQaWorkflow({
       kind: "status",
       status: "starting",
       title: "Local run starting",
-      body: `Local helper ${machineLabel} is preparing Chrome DevTools MCP and will drive your Chrome window directly.`,
+      body: `Local helper ${machineLabel} is preparing a visible local Chrome window for live QA automation.`,
       pageUrl: run.url,
     })
 
@@ -299,8 +322,8 @@ async function runLocalQaWorkflow({
       kind: "session",
       status: "starting",
       sessionId: session.sessionId,
-      title: "Awaiting Chrome debugging permission",
-      body: "Use this redirect URL to enable the checkbox: chrome://inspect/#remote-debugging. Then allow the incoming debugging connection prompt in Chrome.",
+      title: "Preparing local Chrome session",
+      body: "Shard is starting the local Chrome session now. By default the helper launches a fresh visible Chrome window; if LOCAL_CHROME_BROWSER_URL is set, it will attach to that explicit debugging endpoint instead.",
       pageUrl: run.url,
     })
 
@@ -331,7 +354,7 @@ async function runLocalQaWorkflow({
       status: "running",
       sessionId: session.sessionId,
       title: "Local Chrome attached",
-      body: "Chrome DevTools MCP is connected. Watch your own Chrome window for live interactions while Shard streams steps and findings here.",
+      body: `Shard is driving ${browser.connectionLabel()}. Watch the local Chrome window for live interactions while steps and findings stream here.`,
       pageUrl: openedUrl,
     })
 
@@ -347,6 +370,7 @@ async function runLocalQaWorkflow({
       model: google(DEFAULT_MODEL),
       runtime: createLocalQaRuntime({
         api,
+        abortSignal: stopController.signal,
         runId: run._id,
         sessionId: session.sessionId,
       }),
@@ -433,7 +457,7 @@ async function runLocalQaWorkflow({
   }
 }
 
-function createLocalQaBrowser(browser: LocalChromeMcpBrowser) {
+function createLocalQaBrowser(browser: LocalChromeBrowser) {
   return {
     captureRuntimeFindings: async (startUrl: string, bufferedFindings: BufferedFinding[]) => {
       await browser.collectRuntimeFindings(startUrl, bufferedFindings)
@@ -464,16 +488,21 @@ function createLocalQaBrowser(browser: LocalChromeMcpBrowser) {
     pressKey: async (key: string) => {
       await browser.pressKey(key)
     },
+    startRuntimeCapture: async (startUrl: string, bufferedFindings: BufferedFinding[]) => {
+      await browser.startRuntimeCapture(startUrl, bufferedFindings)
+    },
     takeScreenshot: async () => await browser.takeScreenshot(),
   }
 }
 
 function createLocalQaRuntime({
   api,
+  abortSignal,
   runId,
   sessionId,
 }: {
   api: LocalHelperApi
+  abortSignal: AbortSignal
   runId: string
   sessionId: string
 }) {
@@ -543,6 +572,7 @@ function createLocalQaRuntime({
         sessionId,
       })
     },
+    getAbortSignal: () => abortSignal,
     getStopState: async () => {
       const state = await api.state({ runId })
       return state
@@ -583,7 +613,7 @@ async function runAgentLoop({
   startUrl,
 }: {
   api: LocalHelperApi
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   bufferedFindings: BufferedFinding[]
   findingSignatures: Set<string>
   instructions?: string
@@ -833,7 +863,7 @@ async function runSnapshotStage({
 }: {
   analyzedSnapshots: Set<string>
   api: LocalHelperApi
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   bufferedFindings: BufferedFinding[]
   findingSignatures: Set<string>
   pageCandidates: Map<string, PageCandidate>
@@ -1042,7 +1072,7 @@ function buildAgentTools({
   visitedPages,
 }: {
   api: LocalHelperApi
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   runId: string
   sessionId: string
   startUrl: string
@@ -1158,7 +1188,7 @@ async function executePlannerFallback({
   visitedPages,
 }: {
   api: LocalHelperApi
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   runId: string
   sessionId: string
   snapshot: PageSnapshot
@@ -1240,7 +1270,7 @@ async function performClickAction({
   targetId,
   visitedPages,
 }: {
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   startUrl: string
   targetId: number
   visitedPages: Set<string>
@@ -1363,7 +1393,7 @@ async function performFillAction({
   targetId,
   value,
 }: {
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   submitOnEnter: boolean
   targetId: number
   value: string
@@ -1424,7 +1454,7 @@ async function performNavigationAction({
   targetLabel,
   visitedPages,
 }: {
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   resolvedUrl: string
   targetLabel: string
   visitedPages: Set<string>
@@ -1479,7 +1509,7 @@ async function saveScreenshot({
   title,
 }: {
   api: LocalHelperApi
-  browser: LocalChromeMcpBrowser
+  browser: LocalChromeBrowser
   runId: string
   sessionId: string
   stepIndex: number
@@ -1491,7 +1521,7 @@ async function saveScreenshot({
     runId,
     type: "screenshot",
     contentType: "image/png",
-    base64: screenshot.toString("base64"),
+    base64: Buffer.from(screenshot).toString("base64"),
     pageUrl,
     title,
   })
@@ -2035,342 +2065,478 @@ class LocalHelperApi {
   }
 }
 
-class LocalChromeMcpBrowser {
-  private readonly client = new Client({
-    name: "shard-local-helper",
-    version: "0.1.0",
-  })
-  private readonly screenshotDir = join(tmpdir(), `shard-local-helper-${randomUUID()}`)
-  private readonly seenConsoleMessages = new Set<number>()
-  private readonly seenNetworkRequests = new Set<number>()
-  private transport: StdioClientTransport | null = null
+class LocalChromeBrowser {
+  private readonly browserUrl = process.env.LOCAL_CHROME_BROWSER_URL?.trim() || null
+  private readonly profileDir = join(tmpdir(), `shard-local-helper-profile-${randomUUID()}`)
+  private browser: Browser | null = null
+  private context: BrowserContext | null = null
+  private page: Page | null = null
+  private connectionLabelValue = "a local Chrome window launched by Shard"
+  private ownsBrowser = false
+  private runtimeCaptureStarted = false
 
   async connect() {
-    this.transport = new StdioClientTransport({
-      command: resolveChromeDevtoolsCommand(),
-      args: ["--autoConnect"],
-      cwd: process.cwd(),
-      stderr: "pipe",
-    })
+    if (this.browserUrl) {
+      await assertReachableChromeDebugEndpoint(this.browserUrl)
 
-    await this.client.connect(this.transport)
+      this.browser = await chromium.connectOverCDP(this.browserUrl, {
+        timeout: SESSION_TIMEOUT_MS,
+      })
+      this.context = this.browser.contexts()[0] ?? null
+      this.connectionLabelValue = this.browserUrl
+      this.ownsBrowser = false
+
+      if (!this.context) {
+        throw new Error(
+          "The provided LOCAL_CHROME_BROWSER_URL is reachable, but Chrome did not expose a default browser context. Open a normal tab in that Chrome instance first, or unset LOCAL_CHROME_BROWSER_URL so Shard can launch Chrome directly.",
+        )
+      }
+    } else {
+      this.context = await launchLocalChromeContext(this.profileDir)
+      this.connectionLabelValue = "the Chrome window launched by Shard"
+      this.ownsBrowser = true
+    }
+
+    const page = await this.requirePage()
+    await page.bringToFront().catch(() => undefined)
   }
 
   async close() {
-    await this.client.close().catch(() => undefined)
-    await rm(this.screenshotDir, { recursive: true, force: true }).catch(() => undefined)
+    if (this.ownsBrowser) {
+      await this.context?.close().catch(() => undefined)
+    } else {
+      await this.browser?.close().catch(() => undefined)
+    }
+
+    this.browser = null
+    this.context = null
+    this.page = null
+    await rm(this.profileDir, { recursive: true, force: true }).catch(() => undefined)
   }
 
-  async open(url: string) {
-    await this.callTool("new_page", {
-      url,
-      timeout: SESSION_TIMEOUT_MS,
-    }).catch(async () => {
-      await this.callTool("navigate_page", {
-        type: "url",
-        url,
-        timeout: SESSION_TIMEOUT_MS,
-      })
+  connectionLabel() {
+    return this.connectionLabelValue
+  }
+
+  async startRuntimeCapture(startUrl: string, bufferedFindings: BufferedFinding[]) {
+    if (this.runtimeCaptureStarted) {
+      return
+    }
+
+    attachBrowserSignalCapture({
+      bufferedFindings,
+      page: await this.requirePage(),
+      startUrl,
     })
+    this.runtimeCaptureStarted = true
+  }
+
+  async collectRuntimeFindings(
+    _startUrl?: string,
+    _bufferedFindings?: BufferedFinding[],
+  ) {}
+
+  async open(url: string) {
+    await safeGoto(await this.requirePage(), url)
   }
 
   async getCurrentUrl() {
-    const meta = await this.evaluate<{
-      url: string
-    }>("() => ({ url: location.href })")
-
-    return meta.url
+    return (await this.requirePage()).url()
   }
 
   async inspectCurrentPage(): Promise<PageSnapshot> {
-    const [snapshotText, meta] = await Promise.all([
-      this.takeSnapshot(),
-      this.evaluate<{
-        formsSummary: string
-        textExcerpt: string
-        title: string
-        url: string
-      }>(`(() => {
-        const text = (document.body?.innerText ?? "")
-          .replace(/\\s+/g, " ")
-          .trim()
-          .slice(0, 1200)
-
-        return {
-          url: location.href,
-          title: document.title || "Untitled page",
-          textExcerpt: text,
-          formsSummary: \`\${document.forms.length} forms, \${document.querySelectorAll("input, textarea, select").length} form fields\`,
-        }
-      })`),
-    ])
-
-    const interactiveCandidates = parseInteractiveSnapshot(snapshotText).slice(0, 25)
-    const interactives = (
-      await Promise.all(
-        interactiveCandidates.map(async (item, index) => {
-          const elementMeta = await this.evaluate<{
-            href?: string | null
-            label?: string | null
-            role?: string | null
-            tagName?: string | null
-            type?: string | null
-          }>(
-            `(el) => {
-              if (!el) {
-                return null
-              }
-
-              const text = el.innerText || el.textContent || ""
-              return {
-                tagName: el.tagName?.toLowerCase?.() ?? null,
-                type: el.getAttribute?.("type"),
-                role: el.getAttribute?.("role"),
-                href: el.getAttribute?.("href"),
-                label:
-                  el.getAttribute?.("aria-label") ||
-                  el.getAttribute?.("placeholder") ||
-                  el.getAttribute?.("name") ||
-                  text,
-              }
-            }`,
-            [item.uid],
-          ).catch(() => null)
-
-          if (!elementMeta) {
-            return null
-          }
-
-          return {
-            id: index + 1,
-            uid: item.uid,
-            label: normalizeLabel(elementMeta.label ?? item.label),
-            role: elementMeta.role ?? item.role,
-            tagName: elementMeta.tagName ?? mapRoleToTagName(item.role),
-            type: elementMeta.type ?? undefined,
-            href: elementMeta.href ?? undefined,
-          } satisfies InteractiveElement
-        }),
-      )
-    ).filter(Boolean) as InteractiveElement[]
-
-    return {
-      ...meta,
-      interactives,
-      signature: JSON.stringify({
-        url: meta.url,
-        title: meta.title,
-        text: meta.textExcerpt.slice(0, 300),
-        interactives: interactives.map((item) => item.label),
-      }),
-    }
+    return await inspectLocalChromePage(await this.requirePage())
   }
 
   async click(uid: string) {
-    await this.callTool("click", { uid })
+    const page = await this.requirePage()
+    const locator = page.locator(uid).first()
+    await highlightActionTarget({ locator, page })
+    await locator.click({ timeout: 5_000 })
+    await settlePage(page)
   }
 
   async fill(uid: string, value: string) {
-    await this.callTool("fill", { uid, value })
+    const page = await this.requirePage()
+    const locator = page.locator(uid).first()
+    await highlightActionTarget({ locator, page })
+    await locator.fill(value, { timeout: 5_000 })
+    await settlePage(page)
   }
 
   async pressKey(key: string) {
-    await this.callTool("press_key", { key })
+    const page = await this.requirePage()
+    await page.keyboard.press(key).catch(() => undefined)
+    await settlePage(page)
   }
 
   async navigate(url: string) {
-    await this.callTool("navigate_page", {
-      type: "url",
-      url,
-      timeout: SESSION_TIMEOUT_MS,
-    })
+    await safeGoto(await this.requirePage(), url)
   }
 
   async goBack() {
-    await this.callTool("navigate_page", {
-      type: "back",
-      timeout: 5_000,
-    })
+    const page = await this.requirePage()
+    await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
+    await settlePage(page)
   }
 
   async takeScreenshot() {
-    await mkdir(this.screenshotDir, { recursive: true })
-    const filePath = join(this.screenshotDir, `${randomUUID()}.png`)
-
-    await this.callTool("take_screenshot", {
-      filePath,
-      format: "png",
-      fullPage: true,
-    })
-
-    return await readFile(filePath)
+    return new Uint8Array(
+      await (await this.requirePage()).screenshot({
+        fullPage: true,
+        type: "png",
+      }),
+    )
   }
 
-  async collectRuntimeFindings(startUrl: string, bufferedFindings: BufferedFinding[]) {
-    const consoleResult = await this.callTool("list_console_messages", {
-      includePreservedMessages: true,
-      pageSize: 50,
-      types: ["error", "warn"],
-    }).catch(() => null)
-
-    const consoleMessages = (consoleResult?.structuredContent?.messages ??
-      consoleResult?.messages ??
-      []) as Array<{ id: number; level: string; text: string }>
-
-    for (const message of consoleMessages) {
-      if (this.seenConsoleMessages.has(message.id)) {
-        continue
-      }
-
-      this.seenConsoleMessages.add(message.id)
-      if (!message.text?.trim()) {
-        continue
-      }
-
-      bufferedFindings.push({
-        source: "browser",
-        signature: `console::${message.id}`,
-        title: "Console warning or error",
-        description: message.text,
-        severity: message.level === "error" ? "high" : "medium",
-        confidence: 0.92,
-        pageOrFlow: await this.getCurrentUrl().catch(() => startUrl),
-        suggestedFix: "Inspect the console output and resolve the reported client-side issue.",
-      })
+  private async requirePage() {
+    if (!this.context) {
+      throw new Error("Local Chrome context is not ready yet.")
     }
 
-    const networkResult = await this.callTool("list_network_requests", {
-      includePreservedRequests: true,
-      pageSize: 100,
-    }).catch(() => null)
-
-    const requests = (networkResult?.structuredContent?.requests ??
-      networkResult?.requests ??
-      []) as Array<{
-      id: number
-      method: string
-      status?: number
-      type?: string
-      url: string
-    }>
-
-    for (const request of requests) {
-      if (this.seenNetworkRequests.has(request.id)) {
-        continue
-      }
-
-      this.seenNetworkRequests.add(request.id)
-      if (!isSameHostname(startUrl, request.url)) {
-        continue
-      }
-
-      if ((request.status ?? 0) < 400) {
-        continue
-      }
-
-      bufferedFindings.push({
-        source: "browser",
-        signature: `network::${request.id}`,
-        title: "Same-origin request failed",
-        description: `${request.method} ${request.url} returned ${request.status ?? "an unknown"} status during the QA run.`,
-        severity: request.type === "Document" ? "high" : "medium",
-        confidence: 0.9,
-        pageOrFlow: request.url,
-        suggestedFix: "Inspect the failing endpoint or frontend request path and confirm the browser can complete the flow successfully.",
-      })
+    if (this.page && !this.page.isClosed()) {
+      return this.page
     }
-  }
 
-  private async takeSnapshot() {
-    const result = await this.callTool("take_snapshot", {})
-    return (
-      result?.structuredContent?.snapshot ??
-      extractTextContent(result) ??
-      "RootWebArea"
-    ) as string
-  }
+    this.page = this.context.pages().find((page) => !page.isClosed()) ?? null
 
-  private async evaluate<T>(fn: string, args?: unknown[]) {
-    const result = await this.callTool("evaluate_script", {
-      function: fn,
-      args,
-    })
+    if (!this.page) {
+      this.page = await this.context.newPage()
+    }
 
-    return (result?.structuredContent?.result ?? result?.result) as T
-  }
-
-  private async callTool(name: string, args: Record<string, unknown>) {
-    return await (this.client.callTool({
-      name,
-      arguments: args,
-    }) as Promise<any>)
+    return this.page
   }
 }
 
-function parseInteractiveSnapshot(snapshot: string) {
-  return snapshot
-    .split("\n")
-    .map((line) => line.trim())
-    .map((line) => {
-      const match = line.match(/^\[(.+?)\]\s+([a-zA-Z-]+)(?:\s+["'](.+?)["'])?/)
-      if (!match) {
-        return null
+async function launchLocalChromeContext(userDataDir: string) {
+  try {
+    return await chromium.launchPersistentContext(userDataDir, {
+      channel: "chrome",
+      headless: false,
+      args: ["--start-maximized"],
+      ignoreHTTPSErrors: true,
+      viewport: null,
+    })
+  } catch (error) {
+    const chromePath = Launcher.getFirstInstallation()
+    if (!chromePath) {
+      throw error
+    }
+
+    return await chromium.launchPersistentContext(userDataDir, {
+      executablePath: chromePath,
+      headless: false,
+      args: ["--start-maximized"],
+      ignoreHTTPSErrors: true,
+      viewport: null,
+    })
+  }
+}
+
+async function assertReachableChromeDebugEndpoint(browserUrl: string) {
+  let parsedUrl: URL
+
+  try {
+    parsedUrl = new URL(browserUrl)
+  } catch {
+    throw new Error(
+      "LOCAL_CHROME_BROWSER_URL must be a valid Chrome debugging endpoint such as http://127.0.0.1:9222 or ws://127.0.0.1:9222/devtools/browser/<id>.",
+    )
+  }
+
+  if (
+    parsedUrl.protocol !== "http:" &&
+    parsedUrl.protocol !== "https:" &&
+    parsedUrl.protocol !== "ws:" &&
+    parsedUrl.protocol !== "wss:"
+  ) {
+    throw new Error(
+      "LOCAL_CHROME_BROWSER_URL must use http, https, ws, or wss so Shard can connect to Chrome.",
+    )
+  }
+
+  if (parsedUrl.protocol === "ws:" || parsedUrl.protocol === "wss:") {
+    return
+  }
+
+  const versionUrl = new URL("/json/version", parsedUrl)
+  let response: Response
+
+  try {
+    response = await fetch(versionUrl, {
+      method: "GET",
+    })
+  } catch (error) {
+    throw new Error(
+      `Could not reach ${versionUrl.toString()}. Start Chrome with --remote-debugging-port=9222, then retry, or unset LOCAL_CHROME_BROWSER_URL so Shard launches Chrome directly. Cause: ${toErrorMessage(error)}`,
+    )
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Chrome debugging endpoint ${versionUrl.toString()} returned HTTP ${response.status}. Start Chrome with --remote-debugging-port=9222, then retry, or unset LOCAL_CHROME_BROWSER_URL so Shard launches Chrome directly.`,
+    )
+  }
+
+  let payload: unknown
+
+  try {
+    payload = await response.json()
+  } catch (error) {
+    throw new Error(
+      `Chrome debugging endpoint ${versionUrl.toString()} did not return valid JSON. Cause: ${toErrorMessage(error)}`,
+    )
+  }
+
+  const webSocketDebuggerUrl =
+    typeof payload === "object" && payload !== null && "webSocketDebuggerUrl" in payload
+      ? payload.webSocketDebuggerUrl
+      : null
+
+  if (typeof webSocketDebuggerUrl !== "string" || webSocketDebuggerUrl.length === 0) {
+    throw new Error(
+      `Chrome debugging endpoint ${versionUrl.toString()} did not expose a browser webSocketDebuggerUrl. Start Chrome with --remote-debugging-port=9222 and make sure you are pointing at the Chrome debugger, not your app server.`,
+    )
+  }
+}
+
+async function highlightActionTarget({
+  locator,
+  page,
+}: {
+  locator: Locator
+  page: Page
+}) {
+  await locator.scrollIntoViewIfNeeded().catch(() => undefined)
+  await locator.highlight().catch(() => undefined)
+  await page.waitForTimeout(ACTION_HIGHLIGHT_DELAY_MS).catch(() => undefined)
+}
+
+async function inspectLocalChromePage(page: Page): Promise<PageSnapshot> {
+  return await page.evaluate(() => {
+    const text = (document.body?.innerText ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1200)
+
+    const nodes = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'a[href], button, input, textarea, select, [role="button"], [role="link"]',
+      ),
+    )
+
+    const visibleNodes = nodes.filter((node) => {
+      const style = window.getComputedStyle(node)
+      const rect = node.getBoundingClientRect()
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      )
+    })
+
+    const escapeValue = (value: string) =>
+      value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+
+    const buildSelector = (element: HTMLElement) => {
+      const id = element.getAttribute("id")
+      if (id) {
+        return `#${window.CSS?.escape ? window.CSS.escape(id) : escapeValue(id)}`
       }
 
-      const [, uid, role, rawLabel] = match
-      if (!isInteractiveRole(role)) {
-        return null
+      const dataTestId = element.getAttribute("data-testid")
+      if (dataTestId) {
+        return `[data-testid="${escapeValue(dataTestId)}"]`
       }
+
+      const name = element.getAttribute("name")
+      if (name) {
+        return `${element.tagName.toLowerCase()}[name="${escapeValue(name)}"]`
+      }
+
+      const ariaLabel = element.getAttribute("aria-label")
+      if (ariaLabel) {
+        return `${element.tagName.toLowerCase()}[aria-label="${escapeValue(ariaLabel)}"]`
+      }
+
+      const placeholder = element.getAttribute("placeholder")
+      if (placeholder) {
+        return `${element.tagName.toLowerCase()}[placeholder="${escapeValue(placeholder)}"]`
+      }
+
+      if (element instanceof HTMLAnchorElement && element.getAttribute("href")) {
+        return `a[href="${escapeValue(element.getAttribute("href") ?? "")}"]`
+      }
+
+      const path: string[] = []
+      let current: Element | null = element
+
+      while (current && current.nodeType === Node.ELEMENT_NODE && path.length < 5) {
+        const tagName = current.tagName.toLowerCase()
+        const siblings = Array.from(current.parentElement?.children ?? []).filter(
+          (sibling) => sibling.tagName === current?.tagName,
+        )
+        const index = siblings.indexOf(current) + 1
+        path.unshift(`${tagName}:nth-of-type(${Math.max(index, 1)})`)
+        current = current.parentElement
+      }
+
+      return path.join(" > ")
+    }
+
+    const interactives = visibleNodes.slice(0, 25).map((element, index) => {
+      const label =
+        element.getAttribute("aria-label") ||
+        element.getAttribute("placeholder") ||
+        element.getAttribute("name") ||
+        element.innerText ||
+        element.textContent ||
+        element.getAttribute("href") ||
+        `${element.tagName.toLowerCase()} ${index + 1}`
 
       return {
-        uid,
-        role,
-        label: normalizeLabel(rawLabel ?? role),
+        id: index + 1,
+        uid: buildSelector(element),
+        label: label.replace(/\s+/g, " ").trim().slice(0, 120),
+        role: element.getAttribute("role") ?? "",
+        tagName: element.tagName.toLowerCase(),
+        type: element.getAttribute("type") ?? undefined,
+        href: element.getAttribute("href") ?? undefined,
       }
     })
-    .filter(Boolean) as Array<{ uid: string; role: string; label: string }>
+
+    const formsSummary = `${document.forms.length} forms, ${
+      document.querySelectorAll("input, textarea, select").length
+    } form fields`
+
+    const signature = JSON.stringify({
+      url: location.href,
+      title: document.title,
+      text: text.slice(0, 300),
+      interactives: interactives.map((item) => item.label),
+    })
+
+    return {
+      url: location.href,
+      title: document.title || "Untitled page",
+      textExcerpt: text,
+      formsSummary,
+      interactives,
+      signature,
+    }
+  })
 }
 
-function isInteractiveRole(role: string) {
-  return [
-    "button",
-    "checkbox",
-    "combobox",
-    "link",
-    "menuitem",
-    "radio",
-    "searchbox",
-    "switch",
-    "tab",
-    "textbox",
-  ].includes(role)
+function attachBrowserSignalCapture({
+  bufferedFindings,
+  page,
+  startUrl,
+}: {
+  bufferedFindings: BufferedFinding[]
+  page: Page
+  startUrl: string
+}) {
+  page.on("console", (message) => {
+    if (message.type() !== "error" && message.type() !== "warning") {
+      return
+    }
+
+    bufferedFindings.push({
+      source: "browser",
+      signature: `console::${message.type()}::${page.url()}::${message.text()}`,
+      title: message.type() === "error" ? "Browser console error" : "Browser console warning",
+      description: message.text(),
+      severity: message.type() === "error" ? "high" : "medium",
+      confidence: 0.9,
+      pageOrFlow: page.url(),
+      suggestedFix: "Inspect the console output and fix the underlying frontend runtime issue.",
+    })
+  })
+
+  page.on("pageerror", (error) => {
+    bufferedFindings.push({
+      source: "browser",
+      signature: `pageerror::${page.url()}::${error.message}`,
+      title: "Unhandled browser error",
+      description: error.message,
+      severity: "high",
+      confidence: 0.95,
+      pageOrFlow: page.url(),
+      suggestedFix: "Inspect the stack trace and resolve the runtime error before the affected flow ships.",
+    })
+  })
+
+  page.on("requestfailed", (request) => {
+    const failureUrl = request.url()
+    if (!isSameHostname(startUrl, failureUrl)) {
+      return
+    }
+
+    const resourceType = request.resourceType()
+    if (resourceType !== "document" && resourceType !== "fetch" && resourceType !== "xhr") {
+      return
+    }
+
+    bufferedFindings.push({
+      source: "browser",
+      signature: `requestfailed::${failureUrl}::${request.failure()?.errorText ?? "unknown"}`,
+      title: "Same-origin request failed",
+      description: `${resourceType} request to ${failureUrl} failed: ${request.failure()?.errorText ?? "Unknown failure"}`,
+      severity: resourceType === "document" ? "high" : "medium",
+      confidence: 0.9,
+      pageOrFlow: page.url(),
+      suggestedFix: "Check the failed request path, server response, and frontend call site.",
+    })
+  })
+
+  page.on("response", (response) => {
+    const responseUrl = response.url()
+    if (!isSameHostname(startUrl, responseUrl)) {
+      return
+    }
+
+    const resourceType = response.request().resourceType()
+    if (
+      response.status() < 400 ||
+      (resourceType !== "document" && resourceType !== "fetch" && resourceType !== "xhr")
+    ) {
+      return
+    }
+
+    bufferedFindings.push({
+      source: "browser",
+      signature: `response::${response.status()}::${responseUrl}`,
+      title: "Same-origin request returned an error status",
+      description: `${resourceType} request to ${responseUrl} returned HTTP ${response.status()}.`,
+      severity: resourceType === "document" ? "high" : "medium",
+      confidence: 0.9,
+      pageOrFlow: page.url(),
+      suggestedFix: "Inspect the failing route or API handler and verify the frontend request path.",
+    })
+  })
 }
 
-function mapRoleToTagName(role: string) {
-  switch (role) {
-    case "textbox":
-    case "searchbox":
-      return "input"
-    case "combobox":
-      return "select"
-    default:
-      return role === "link" ? "a" : "button"
+async function settlePage(page: Page) {
+  await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined)
+  await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined)
+  await page.waitForTimeout(500).catch(() => undefined)
+}
+
+async function safeGoto(page: Page, url: string) {
+  await page.goto(url, {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  })
+  await settlePage(page)
+}
+
+function toErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message
   }
-}
 
-function normalizeLabel(value: string) {
-  return value.replace(/\s+/g, " ").trim().slice(0, 120) || "Unnamed element"
-}
-
-function extractTextContent(result: any) {
-  const textItem = result?.content?.find((item: any) => item?.type === "text")
-  return typeof textItem?.text === "string" ? textItem.text : null
-}
-
-function resolveChromeDevtoolsCommand() {
-  return process.platform === "win32"
-    ? join(process.cwd(), "node_modules", ".bin", "chrome-devtools-mcp.cmd")
-    : join(process.cwd(), "node_modules", ".bin", "chrome-devtools-mcp")
+  return String(error)
 }
 
 function requiredEnv(name: string) {

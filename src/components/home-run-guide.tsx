@@ -2,9 +2,7 @@
 
 import {
   IconBrowser,
-  IconCheck,
   IconCloud,
-  IconCopy,
   IconHelpCircle,
 } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
@@ -60,7 +58,6 @@ export function HomeRunGuide() {
   const [hasLoadedLocalSetupState, setHasLoadedLocalSetupState] = useState(false)
   const [hasCompletedLocalSetup, setHasCompletedLocalSetup] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     setBrowserProvider(getStoredHomeBrowserProvider())
@@ -77,20 +74,6 @@ export function HomeRunGuide() {
     window.localStorage.setItem(LOCAL_SETUP_COMPLETE_KEY, "true")
     setHasCompletedLocalSetup(true)
     setIsOpen(false)
-  }
-
-  const copyInspectUrl = async () => {
-    await navigator.clipboard.writeText("chrome://inspect/#remote-debugging")
-    setCopied(true)
-    window.setTimeout(() => {
-      setCopied(false)
-    }, 1200)
-  }
-
-  const openInspectUrl = () => {
-    const target = "chrome://inspect/#remote-debugging"
-    window.location.assign(target)
-    window.open(target, "_self")
   }
 
   return (
@@ -175,58 +158,38 @@ export function HomeRunGuide() {
                   Local Chrome setup
                 </div>
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  The agent will drive your own Chrome window after your local helper attaches
-                  through Chrome DevTools MCP.
+                  The agent will drive a visible local Chrome window from your machine while the
+                  run view streams progress, findings, and screenshots.
                 </p>
               </div>
               <p className="mt-3 text-sm text-muted-foreground">
                 Start command: <code>pnpm run local-helper</code>
               </p>
               <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-muted-foreground">
-                <li>
-                  Open{" "}
-                  <span className="group inline-flex items-center gap-1">
-                    <a
-                      href="chrome://inspect/#remote-debugging"
-                      onClick={(event) => {
-                        event.preventDefault()
-                        openInspectUrl()
-                      }}
-                      className="font-medium text-foreground underline underline-offset-4"
-                    >
-                      <code>chrome://inspect/#remote-debugging</code>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void copyInspectUrl()
-                      }}
-                      className={`inline-flex items-center gap-1 text-foreground transition ${
-                        copied
-                          ? "opacity-100"
-                          : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                      }`}
-                      title={copied ? "Copied" : "Copy URL"}
-                    >
-                      {copied ? (
-                        <>
-                          <IconCheck className="size-3.5 text-emerald-500" />
-                          <span className="text-xs text-emerald-500">Copied</span>
-                        </>
-                      ) : (
-                        <IconCopy className="size-3.5" />
-                      )}
-                    </button>
-                  </span>{" "}
-                  and enable the checkbox.
-                </li>
-                <li>Allow incoming debugging connections in Chrome.</li>
-                <li>Keep Chrome open, then start the local helper from this repo.</li>
-                <li>Approve the Chrome permission dialog when the helper attaches.</li>
+                <li>Start the helper from this repo with <code>pnpm run local-helper</code>.</li>
+                <li>Kick off a local run from Home.</li>
+                <li>Shard will open a dedicated visible Chrome window when the run starts.</li>
+                <li>Keep that Chrome window open until the run finishes.</li>
               </ol>
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                Local actions happen live in your own browser window. The app will focus on
-                agent progress, findings, and captured screenshots.
+                If you specifically want Shard to reuse an already-running debug Chrome session,
+                use an explicit debugging port instead:
+                <code className="ml-1">
+                  LOCAL_CHROME_BROWSER_URL=http://127.0.0.1:9222 pnpm run local-helper
+                </code>
+                . Start Chrome yourself with
+                <code className="ml-1">
+                  --remote-debugging-port=9222 --user-data-dir=/tmp/shard-chrome-profile
+                </code>
+                , then open at least one normal tab before starting the helper.
+              </p>
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                The default flow is simpler and more reliable because the helper launches Chrome
+                itself instead of depending on a pre-existing remote debugging port.
+              </p>
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                Local actions happen live in that browser window. The app stays focused on agent
+                progress, findings, and captured screenshots.
               </p>
               {!hasCompletedLocalSetup ? (
                 <div className="mt-3 flex justify-end">

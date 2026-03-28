@@ -265,6 +265,7 @@ export async function runQaWorkflow({
   let workflowError: Error | null = null
   let lastKnownUrl = url
   let failureStage = "Queued"
+  const runAbortController = new AbortController()
   let stopWatcher: ReturnType<typeof createImmediateRunStopWatcher> | null = null
 
   try {
@@ -429,6 +430,7 @@ export async function runQaWorkflow({
         pollStopState: async () =>
           await convex.query(api.runtime.getRunExecutionState, { runId }),
         onStop: async () => {
+          runAbortController.abort("stop_requested")
           await context?.close().catch(() => undefined)
           await browser?.close().catch(() => undefined)
 
@@ -502,6 +504,7 @@ export async function runQaWorkflow({
         mode,
         model: google(DEFAULT_MODEL),
         runtime: createConvexQaRuntime({
+          abortSignal: runAbortController.signal,
           convex,
           runId,
           sessionId: sessionDocId,
@@ -817,10 +820,12 @@ function createPlaywrightQaBrowser(page: Page) {
 }
 
 function createConvexQaRuntime({
+  abortSignal,
   convex,
   runId,
   sessionId,
 }: {
+  abortSignal: AbortSignal
   convex: ReturnType<typeof createConvexServerClient>
   runId: Id<"runs">
   sessionId: Id<"sessions"> | null
@@ -892,6 +897,7 @@ function createConvexQaRuntime({
         sessionId,
       })
     },
+    getAbortSignal: () => abortSignal,
     getStopState: async () => await convex.query(api.runtime.getRunExecutionState, { runId }),
     updateRun: async (payload: {
       currentStep?: string
