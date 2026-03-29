@@ -3,7 +3,7 @@ import { chromium, type BrowserContext, type Locator, type Page } from "playwrig
 import SteelClient from "steel-sdk"
 import { NonRetriableError } from "inngest"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
-import { google } from "@ai-sdk/google"
+import { openai } from "@ai-sdk/openai"
 import { Launcher } from "chrome-launcher"
 import { z } from "zod"
 import type { Id } from "../convex/_generated/dataModel"
@@ -37,7 +37,7 @@ import {
 
 const MAX_PAGE_FINDINGS = 2
 const ACTION_HIGHLIGHT_DELAY_MS = 350
-const DEFAULT_MODEL = serverEnv.GEMINI_MODEL ?? "gemini-2.5-flash"
+const DEFAULT_MODEL = serverEnv.OPENAI_MODEL ?? "gpt-4o-mini"
 const INTERACTIVE_QA_CONFIG = {
   agentTimeBudgetMs: 8 * 60 * 1000,
   maxAgentSteps: 36,
@@ -503,7 +503,7 @@ export async function runQaWorkflow({
           : undefined,
         instructions,
         mode,
-        model: google(DEFAULT_MODEL),
+        model: openai(DEFAULT_MODEL),
         runtime: createConvexQaRuntime({
           abortSignal: runAbortController.signal,
           convex,
@@ -1044,7 +1044,7 @@ async function runAgentLoop({
     })
 
     const result = await generateText({
-      model: google(DEFAULT_MODEL),
+      model: openai(DEFAULT_MODEL),
       prompt: buildAgentPrompt({
         agentOrdinal,
         hasStoredCredential: Boolean(credentialId),
@@ -1328,7 +1328,7 @@ async function runSnapshotStage({
   analyzedSnapshots.add(snapshot.signature)
 
   const pageReview = await generateObject({
-    model: google(DEFAULT_MODEL),
+    model: openai(DEFAULT_MODEL),
     schema: pageReviewSchema,
     prompt: [
       "You are reviewing a public webpage during an automated QA run.",

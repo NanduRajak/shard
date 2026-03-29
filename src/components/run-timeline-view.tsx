@@ -50,7 +50,7 @@ const itemVariants: Variants = {
 export function RunTimelineView({ report }: { report: any }) {
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   
-  const { artifacts, executionState, run, runEvents, session } = report
+  const { artifacts, executionState, performanceAudits, run, runEvents, session } = report
   const isActive = isActiveRunStatus(run.status)
   const timeline = sortTimelineEvents(filterTimelineEventsForQaView(runEvents as RunEvent[]))
   const isSteelRun = (run.browserProvider ?? "steel") === "steel"
@@ -86,8 +86,8 @@ export function RunTimelineView({ report }: { report: any }) {
   }, [report, isActive])
 
   return (
-    <motion.div variants={itemVariants} className="xl:col-span-2 grid min-h-[32rem] flex-1 gap-4 xl:grid-cols-[minmax(20rem,0.3fr)_minmax(0,0.7fr)]">
-      <Card className="flex flex-col border border-border/70 bg-card/85">
+    <motion.div variants={itemVariants} className="xl:col-span-2 grid min-h-[32rem] gap-4 xl:h-[48rem] xl:grid-cols-[minmax(20rem,0.3fr)_minmax(0,0.7fr)]">
+      <Card className="flex min-h-0 flex-col overflow-hidden border border-border/70 bg-card/85 xl:h-full">
         <CardHeader className="shrink-0 gap-2 border-b border-border/70 bg-card/95">
           <CardTitle className="text-base">Agent output</CardTitle>
           <CardDescription className="text-pretty">
@@ -96,10 +96,14 @@ export function RunTimelineView({ report }: { report: any }) {
         </CardHeader>
         <CardContent
           ref={transcriptRef}
-          className="flex-1 overflow-y-auto p-4 max-h-[48rem] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="min-h-0 flex-1 overflow-y-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {timeline.length ? (
-            <AgentPlan events={timeline} />
+            <AgentPlan
+              events={timeline}
+              finalScore={run.finalScore}
+              performanceAudits={performanceAudits ?? []}
+            />
           ) : (
             <PanelState
               icon={<IconRadar2 className="size-4" />}
@@ -110,7 +114,7 @@ export function RunTimelineView({ report }: { report: any }) {
         </CardContent>
       </Card>
 
-      <Card className="flex flex-col border border-border/70 bg-card/85">
+      <Card className="flex min-h-0 flex-col overflow-hidden border border-border/70 bg-card/85 xl:h-full">
         <CardHeader className="shrink-0 gap-3 border-b border-border/70 bg-card/95">
           <CardTitle className="flex items-center gap-2 text-base">
             <IconPlayerPlay className="size-4" />
@@ -120,14 +124,14 @@ export function RunTimelineView({ report }: { report: any }) {
             {snapshotDescription}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex-1 p-4">
+        <CardContent className="min-h-0 flex-1 p-4">
           {isActive && executionState === "preview_active" && liveEmbedUrl ? (
             <iframe
               title="Steel live session"
               src={liveEmbedUrl}
               allow="clipboard-read; clipboard-write"
               sandbox="allow-downloads allow-forms allow-popups allow-scripts"
-              className="h-full min-h-[26rem] w-full rounded-[1.6rem] border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)]"
+              className="h-full min-h-[26rem] w-full rounded-[1.6rem] border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)] xl:min-h-0"
             />
           ) : !isActive ? (
             <SnapshotState
@@ -255,7 +259,7 @@ function LocalSessionState({ browserProvider, currentUrl, screenshot }: any) {
 
 function PanelState({ body, icon, title, action }: { body: string; icon: ReactNode; title: string; action?: ReactNode }) {
   return (
-    <div className="flex min-h-[calc(100svh-20rem)] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-border/70 bg-background/70 p-8 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+    <div className="flex h-full min-h-[26rem] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-border/70 bg-background/70 p-8 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] xl:min-h-0">
       <div className="flex size-12 items-center justify-center rounded-2xl border border-border/70 bg-card text-foreground shadow-[0_20px_40px_-28px_rgba(0,0,0,0.75)]">
         {icon}
       </div>

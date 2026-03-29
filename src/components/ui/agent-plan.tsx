@@ -12,7 +12,7 @@ import {
 import { motion, AnimatePresence, LayoutGroup } from "motion/react";
 import { formatDistanceToNowStrict } from "date-fns";
 
-export type TimelineEvent = {
+type TimelineEvent = {
   _id: string;
   artifactUrl?: string;
   body?: string;
@@ -24,25 +24,155 @@ export type TimelineEvent = {
   title: string;
 };
 
-interface Subtask {
-  id: string;
-  title: string;
-  description?: string;
-  status: TimelineEvent["status"];
-  kind: string;
-  createdAt: number;
-  pageUrl?: string;
+type AgentPlanSubtask = {
   artifactUrl?: string;
-}
-
-interface Task {
-  id: string;
-  title: string;
+  createdAt: number;
   description?: string;
+  id: string;
+  kind: string;
+  pageUrl?: string;
+  status: TimelineEvent["status"];
+  title: string;
+};
+
+type AgentPlanTask = {
+  createdAt: number;
+  description?: string;
+  displayStepNumber?: number;
+  id: string;
+  kind?: string;
   status: TimelineEvent["status"];
   stepIndex?: number;
-  subtasks: Subtask[];
-  createdAt: number;
+  subtasks: AgentPlanSubtask[];
+  title: string;
+};
+
+type PerformanceAudit = {
+  _id?: string;
+  accessibilityScore: number;
+  bestPracticesScore: number;
+  pageUrl: string;
+  performanceScore: number;
+  seoScore: number;
+};
+
+function groupAgentPlanTasks(events: TimelineEvent[]) {
+  const tasks: AgentPlanTask[] = [];
+  const stepMap = new Map<number, AgentPlanTask>();
+
+  for (const event of events) {
+    if (typeof event.stepIndex === "number") {
+      let task = stepMap.get(event.stepIndex);
+      if (!task) {
+        task = {
+          createdAt: event.createdAt,
+          id: `step-${event.stepIndex}`,
+          status: event.status ?? "completed",
+          stepIndex: event.stepIndex,
+          subtasks: [],
+          title: `Step ${event.stepIndex}`,
+        };
+        stepMap.set(event.stepIndex, task);
+        tasks.push(task);
+      }
+
+      task.subtasks.push({
+        artifactUrl: event.artifactUrl,
+        createdAt: event.createdAt,
+        description: event.body,
+        id: event._id,
+        kind: event.kind,
+        pageUrl: event.pageUrl,
+        status: event.status ?? "completed",
+        title: event.title,
+      });
+
+      if (event.status === "failed" || event.status === "cancelled") {
+        task.status = event.status;
+      } else if (event.status === "running" || event.status === "starting") {
+        task.status = event.status;
+      } else if (
+        event.status === "completed" &&
+        task.status !== "failed" &&
+        task.status !== "cancelled"
+      ) {
+        task.status = "completed";
+      }
+    } else {
+      tasks.push({
+        createdAt: event.createdAt,
+        description: event.body,
+        kind: event.kind,
+        id: event._id,
+        status: event.status ?? "completed",
+        stepIndex: undefined,
+        subtasks: [],
+        title: event.title,
+      });
+    }
+  }
+
+  let displayStepNumber = 1;
+  for (const task of tasks) {
+    if (typeof task.stepIndex === "number") {
+      task.displayStepNumber = displayStepNumber;
+      task.title = buildReadableTaskTitle(task, displayStepNumber);
+      displayStepNumber += 1;
+    }
+  }
+
+  for (const [index, task] of tasks.entries()) {
+    const hasLaterTask = index < tasks.length - 1;
+    const hasLaterTerminalEvent = tasks
+      .slice(index + 1)
+      .some((laterTask) => laterTask.kind === "status");
+    const shouldMarkCompleted =
+      task.status !== "failed" &&
+      task.status !== "cancelled" &&
+      (hasLaterTask || hasLaterTerminalEvent);
+
+    if (shouldMarkCompleted) {
+      task.status = "completed";
+      if (task.subtasks.length > 0) {
+        task.subtasks = task.subtasks.map((subtask) => ({
+          ...subtask,
+          status:
+            subtask.status === "failed" || subtask.status === "cancelled"
+              ? subtask.status
+              : "completed",
+        }));
+      }
+    }
+  }
+
+  return tasks;
+}
+
+function buildReadableTaskTitle(task: AgentPlanTask, displayStepNumber: number) {
+  const preferredSubtask = task.subtasks.find(
+    (subtask) =>
+      subtask.title !== "Agent decision" &&
+      subtask.title !== "Fallback action selected" &&
+      subtask.title !== "Stored login",
+  );
+
+  if (preferredSubtask?.title) {
+    return preferredSubtask.title;
+  }
+
+  return `Step ${displayStepNumber}`;
+}
+
+function getAutoExpandedTaskId(tasks: AgentPlanTask[]) {
+  for (let index = tasks.length - 1; index >= 0; index -= 1) {
+    const task = tasks[index];
+    if (!task) continue;
+    if (task.status === "running" || task.status === "starting") {
+      return task.id;
+    }
+  }
+
+  return null;
 }
 
 function parseBody(body?: string) {
@@ -63,87 +193,187 @@ function parseBody(body?: string) {
   return <p className="py-2 text-muted-foreground/90 leading-relaxed whitespace-pre-wrap">{body}</p>;
 }
 
-export function AgentPlan({ events }: { events: TimelineEvent[] }) {
-  // Group events by stepIndex. 
-  // If an event lacks a stepIndex, we treat it as its own distinct step.
-  const groupedTasks = useMemo(() => {
-    const tasks: Task[] = [];
-    const stepMap = new Map<number, Task>();
+function normalizeSubtaskTitle(subtask: AgentPlanTask["subtasks"][number]) {
+  if (subtask.title.startsWith("Running Lighthouse audit")) {
+    return "Lighthouse audit";
+  }
 
-    for (const event of events) {
-      if (typeof event.stepIndex === "number") {
-        let task = stepMap.get(event.stepIndex);
-        if (!task) {
-          task = {
-            id: `step-${event.stepIndex}`,
-            title: `Step ${event.stepIndex}`,
-            status: event.status ?? "completed",
-            stepIndex: event.stepIndex,
-            subtasks: [],
-            createdAt: event.createdAt,
-          };
-          stepMap.set(event.stepIndex, task);
-          tasks.push(task);
-        }
-        
-        // Use the primary visual info from the event
-        task.subtasks.push({
-          id: event._id,
-          title: event.title,
-          description: event.body,
-          status: event.status ?? "completed",
-          kind: event.kind,
-          createdAt: event.createdAt,
-          pageUrl: event.pageUrl,
-          artifactUrl: event.artifactUrl,
-        });
+  if (subtask.title === "Lighthouse report saved") {
+    return "Lighthouse report";
+  }
 
-        // Update parent task status to worst case scenario or most ongoing
-        if (event.status === "failed" || event.status === "cancelled") {
-          task.status = event.status;
-        } else if (event.status === "running" && task.status !== "failed") {
-          task.status = "running";
-        }
+  return subtask.title;
+}
 
-      } else {
-        // Standalone event (e.g. initial navigation)
-        tasks.push({
-          id: event._id,
-          title: event.title,
-          description: event.body,
-          status: event.status ?? "completed",
-          stepIndex: undefined,
-          subtasks: [],
-          createdAt: event.createdAt,
-        });
-      }
-    }
-    
-    // Sort tasks primarily by logical order if we want, or just rely on chronology since events are sorted
-    return tasks;
-  }, [events]);
+function renderRunCompletedBody(body?: string) {
+  if (!body) return null;
 
-  const [expandedTasks, setExpandedTasks] = useState<string[]>(
-    Array.from(new Set(events.map(e => e.stepIndex !== undefined ? `step-${e.stepIndex}` : e._id)))
+  const lines = body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const remainingLines = lines.filter((line) => !line.startsWith("Final quality score:"));
+  if (!remainingLines.length) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2 py-2">
+      {remainingLines.map((line, index) => {
+        const isOutcome = line.startsWith("Task outcome:");
+        return (
+          <div
+            key={`${line}-${index}`}
+            className={
+              isOutcome
+                ? "inline-flex rounded-md border border-green-500/20 bg-green-500/10 px-2 py-1 text-xs font-medium text-green-400"
+                : "text-sm leading-relaxed text-muted-foreground/90"
+            }
+          >
+            {isOutcome ? line.replace("Task outcome:", "").trim() : line}
+          </div>
+        );
+      })}
+    </div>
   );
-  
+}
+
+function buildLighthouseMetricSubtasks(audit: PerformanceAudit, taskId: string, createdAt: number) {
+  const metrics = [
+    ["Performance", audit.performanceScore],
+    ["Accessibility", audit.accessibilityScore],
+    ["Best practices", audit.bestPracticesScore],
+    ["SEO", audit.seoScore],
+  ] as const;
+
+  return metrics.map(([title, score]) => ({
+    artifactUrl: undefined,
+    createdAt,
+    description: `Score ${Math.round(score * 100)}/100`,
+    id: `${taskId}-${title.toLowerCase().replace(/\s+/g, "-")}`,
+    kind: "metric",
+    pageUrl: audit.pageUrl,
+    status: "completed" as const,
+    title,
+  }));
+}
+
+function isLighthouseTask(task: AgentPlanTask) {
+  return task.subtasks.some(
+    (subtask) =>
+      subtask.title.startsWith("Running Lighthouse audit") ||
+      subtask.title === "Lighthouse report saved",
+  );
+}
+
+function consolidateLighthouseTasks(
+  tasks: AgentPlanTask[],
+  performanceAudits: PerformanceAudit[],
+): AgentPlanTask[] {
+  const lighthouseTasks = tasks.filter(isLighthouseTask);
+  if (!lighthouseTasks.length || !performanceAudits.length) {
+    return tasks;
+  }
+
+  const firstLighthouseTask = lighthouseTasks[0]!;
+  const lighthouseTask: AgentPlanTask = {
+    createdAt: firstLighthouseTask.createdAt,
+    description: firstLighthouseTask.subtasks[0]?.pageUrl ?? firstLighthouseTask.description,
+    displayStepNumber: firstLighthouseTask.displayStepNumber,
+    id: firstLighthouseTask.id,
+    kind: "audit",
+    status: firstLighthouseTask.status,
+    stepIndex: firstLighthouseTask.stepIndex,
+    subtasks: buildLighthouseMetricSubtasks(
+      performanceAudits[0]!,
+      firstLighthouseTask.id,
+      firstLighthouseTask.createdAt,
+    ),
+    title: "Lighthouse audit",
+  };
+
+  const consolidatedTasks = tasks
+    .filter((task) => !isLighthouseTask(task))
+    .concat(lighthouseTask)
+    .sort((left, right) => left.createdAt - right.createdAt);
+
+  let displayStepNumber = 1;
+  for (const task of consolidatedTasks) {
+    if (typeof task.stepIndex === "number") {
+      task.displayStepNumber = displayStepNumber;
+      if (task.id !== lighthouseTask.id) {
+        task.title = `Step ${displayStepNumber}`;
+      }
+      displayStepNumber += 1;
+    }
+  }
+
+  return consolidatedTasks;
+}
+
+function getKindBadgeClasses(kind?: string) {
+  if (kind === "finding") {
+    return "border-yellow-500/20 bg-yellow-500/10 text-yellow-300";
+  }
+
+  if (kind === "agent") {
+    return "border-blue-500/20 bg-blue-500/10 text-blue-300";
+  }
+
+  return "border-border/40 bg-secondary/40 text-secondary-foreground";
+}
+
+function getScoreBadgeClasses(scoreText: string) {
+  const scoreValue = Number.parseInt(scoreText, 10);
+
+  if (Number.isNaN(scoreValue)) {
+    return "border-border/40 bg-secondary/40 text-secondary-foreground";
+  }
+
+  if (scoreValue >= 90) {
+    return "border-green-500/20 bg-green-500/10 text-green-300";
+  }
+
+  if (scoreValue >= 50) {
+    return "border-yellow-500/20 bg-yellow-500/10 text-yellow-300";
+  }
+
+  return "border-red-500/20 bg-red-500/10 text-red-300";
+}
+
+export function AgentPlan({
+  events,
+  finalScore,
+  performanceAudits = [],
+}: {
+  events: TimelineEvent[];
+  finalScore?: number | null;
+  performanceAudits?: PerformanceAudit[];
+}) {
+  const groupedTasks = useMemo(() => {
+    return consolidateLighthouseTasks(groupAgentPlanTasks(events), performanceAudits);
+  }, [events, performanceAudits]);
+  const autoExpandedTaskId = useMemo(() => getAutoExpandedTaskId(groupedTasks), [groupedTasks]);
+  const [expandedTasks, setExpandedTasks] = useState<{ [key: string]: boolean }>({});
   const [expandedSubtasks, setExpandedSubtasks] = useState<{ [key: string]: boolean }>({});
 
   const prefersReducedMotion = typeof window !== "undefined"
     ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
     : false;
 
-  const toggleTaskExpansion = (taskId: string) => {
-    setExpandedTasks((prev) =>
-      prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
-    );
-  };
-
   const toggleSubtaskExpansion = (taskId: string, subtaskId: string) => {
     const key = `${taskId}-${subtaskId}`;
     setExpandedSubtasks((prev) => ({
       ...prev,
       [key]: !prev[key],
+    }));
+  };
+
+  const toggleTaskExpansion = (taskId: string) => {
+    setExpandedTasks((prev) => ({
+      ...prev,
+      [taskId]: !(prev[taskId] ?? (autoExpandedTaskId === taskId)),
     }));
   };
 
@@ -251,8 +481,9 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
         <div>
           <ul className="space-y-1">
             {groupedTasks.map((task, index) => {
-              const isExpanded = expandedTasks.includes(task.id);
+              const isExpanded = expandedTasks[task.id] ?? (autoExpandedTaskId === task.id);
               const isCompleted = task.status === "completed";
+              const taskTitle = task.title;
 
               return (
                 <motion.li
@@ -264,7 +495,7 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
                 >
                   {/* Task row */}
                   <motion.div 
-                    className="group flex flex-col md:flex-row md:items-center px-3 py-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                    className="group flex cursor-pointer flex-col rounded-md px-3 py-1.5 transition-colors md:flex-row md:items-center"
                     onClick={() => toggleTaskExpansion(task.id)}
                   >
                     <div className="flex flex-1 items-center">
@@ -287,15 +518,15 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
 
                       <div className="mr-2 flex-1">
                         <span className={`font-medium ${isCompleted ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                          {task.title}
+                          {taskTitle}
                         </span>
                       </div>
                     </div>
 
                     <div className="flex flex-shrink-0 items-center justify-start mt-2 md:mt-0 space-x-2 text-xs ml-[2.25rem] md:ml-0">
-                      {task.stepIndex !== undefined && (
-                        <div className="rounded border border-border/40 bg-secondary/40 text-secondary-foreground px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
-                          Index {task.stepIndex}
+                      {task.title === "Run completed" && typeof finalScore === "number" && (
+                        <div className="rounded border border-border/40 bg-secondary/40 px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
+                          {Math.round(finalScore)}/100
                         </div>
                       )}
 
@@ -326,7 +557,9 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
                       >
                         <div className="border-l-2 border-dashed border-muted-foreground/30 mt-1 ml-[1.125rem] pl-4 text-sm text-foreground overflow-hidden">
                           <div className="py-2 pr-2">
-                           {parseBody(task.description)}
+                           {task.title === "Run completed"
+                             ? renderRunCompletedBody(task.description)
+                             : parseBody(task.description)}
                           </div>
                         </div>
                       </motion.div>
@@ -351,11 +584,14 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
                             const subtaskKey = `${task.id}-${subtask.id}`;
                             const isSubtaskExpanded = expandedSubtasks[subtaskKey] ?? false;
                             const isSubCompleted = subtask.status === "completed";
+                            const isMetricSubtask = subtask.kind === "metric";
+                            const metricScore = isMetricSubtask ? subtask.description?.replace("Score ", "") : null;
+                            const canExpandSubtask = !isMetricSubtask && Boolean(subtask.description || subtask.artifactUrl);
 
                             return (
                               <motion.li
                                 key={subtask.id}
-                                className="group flex flex-col py-0.5 pl-5 relative z-10"
+                                className="group relative z-10 flex flex-col py-0.5 pl-5"
                                 variants={subtaskVariants}
                                 initial="hidden"
                                 animate="visible"
@@ -363,8 +599,16 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
                                 layout
                               >
                                 <motion.div 
-                                  className="flex flex-1 items-start sm:items-center rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer gap-3 max-w-full"
-                                  onClick={() => toggleSubtaskExpansion(task.id, subtask.id)}
+                                  className={`flex max-w-full flex-1 items-start gap-3 rounded-md p-1.5 transition-colors sm:items-center ${
+                                    canExpandSubtask
+                                      ? "cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
+                                      : ""
+                                  }`}
+                                  onClick={
+                                    canExpandSubtask
+                                      ? () => toggleSubtaskExpansion(task.id, subtask.id)
+                                      : undefined
+                                  }
                                   layout
                                 >
                                   <motion.div
@@ -388,7 +632,7 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
 
                                   <div className="flex flex-col min-w-0 flex-1">
                                     <span className={`text-sm truncate ${isSubCompleted ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                                      {subtask.title}
+                                      {isMetricSubtask ? subtask.title : normalizeSubtaskTitle(subtask)}
                                     </span>
                                     <span className="text-[10px] text-muted-foreground mt-0.5">
                                       {formatDistanceToNowStrict(subtask.createdAt, { addSuffix: true })}
@@ -396,9 +640,18 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
                                   </div>
 
                                   <div className="flex shrink-0 items-center justify-end gap-1.5 ml-auto">
-                                      {subtask.kind && (
-                                        <span className="bg-secondary/40 text-secondary-foreground border border-border/40 rounded px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
-                                          {subtask.kind}
+                                      {metricScore && (
+                                        <span
+                                          className={`rounded border px-1.5 py-0.5 text-[10px] font-medium shadow-sm ${getScoreBadgeClasses(metricScore)}`}
+                                        >
+                                          {metricScore}
+                                        </span>
+                                      )}
+                                      {subtask.kind && !isMetricSubtask && (
+                                        <span
+                                          className={`rounded border px-1.5 py-0.5 text-[10px] font-medium shadow-sm ${getKindBadgeClasses(subtask.kind)}`}
+                                        >
+                                          {subtask.kind === "finding" ? "issue" : subtask.kind}
                                         </span>
                                       )}
                                       {subtask.status && (
@@ -416,7 +669,7 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
                                 </motion.div>
 
                                 <AnimatePresence mode="wait">
-                                  {isSubtaskExpanded && (
+                                  {canExpandSubtask && isSubtaskExpanded && (
                                     <motion.div 
                                       className="border-muted-foreground/30 mt-1 ml-1.5 border-l-2 border-dashed pl-4 text-sm overflow-hidden"
                                       variants={subtaskDetailsVariants}
@@ -426,7 +679,7 @@ export function AgentPlan({ events }: { events: TimelineEvent[] }) {
                                       layout
                                     >
                                       <div className="py-1 pr-2">
-                                        {parseBody(subtask.description)}
+                                        {!isMetricSubtask ? parseBody(subtask.description) : null}
                                         {subtask.artifactUrl && (
                                           <a
                                               href={subtask.artifactUrl}

@@ -3,7 +3,7 @@ import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { generateObject, generateText, stepCountIs, tool } from "ai"
-import { google } from "@ai-sdk/google"
+import { openai } from "@ai-sdk/openai"
 import { Launcher } from "chrome-launcher"
 import {
   type Browser,
@@ -42,7 +42,7 @@ const HEARTBEAT_INTERVAL_MS = Number(process.env.LOCAL_HELPER_HEARTBEAT_MS ?? 10
 const STOP_POLL_INTERVAL_MS = Number(
   process.env.LOCAL_HELPER_STOP_POLL_INTERVAL_MS ?? 500,
 )
-const DEFAULT_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash"
+const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini"
 const ACTION_HIGHLIGHT_DELAY_MS = 350
 
 type BrowserProvider = "local_chrome" | "steel"
@@ -144,13 +144,13 @@ const pageReviewSchema = z.object({
 async function main() {
   const appBaseUrl = requiredEnv("APP_BASE_URL")
   const helperSecret = requiredEnv("LOCAL_HELPER_SECRET")
-  const geminiApiKey = requiredEnv("GEMINI_API_KEY")
+  const openaiApiKey = requiredEnv("OPENAI_API_KEY")
   const helperId = process.env.LOCAL_HELPER_ID ?? randomUUID()
   const machineLabel = process.env.LOCAL_HELPER_MACHINE_LABEL ?? hostname()
   const version = process.env.LOCAL_HELPER_VERSION ?? "0.1.0"
   const api = new LocalHelperApi(appBaseUrl, helperSecret)
 
-  process.env.GEMINI_API_KEY = geminiApiKey
+  process.env.OPENAI_API_KEY = openaiApiKey
 
   const heartbeatState: {
     currentClaimedRunId?: string
@@ -388,7 +388,7 @@ async function runLocalQaWorkflow({
         : undefined,
       instructions: run.instructions,
       mode: run.mode ?? "explore",
-      model: google(DEFAULT_MODEL),
+      model: openai(DEFAULT_MODEL),
       runtime: createLocalQaRuntime({
         api,
         abortSignal: stopController.signal,
@@ -703,7 +703,7 @@ async function runAgentLoop({
     })
 
     const result = await generateText({
-      model: google(DEFAULT_MODEL),
+      model: openai(DEFAULT_MODEL),
       prompt: buildAgentPrompt({
         instructions,
         mode,
@@ -936,7 +936,7 @@ async function runSnapshotStage({
   analyzedSnapshots.add(snapshot.signature)
 
   const pageReview = await generateObject({
-    model: google(DEFAULT_MODEL),
+    model: openai(DEFAULT_MODEL),
     schema: pageReviewSchema,
     prompt: [
       "You are reviewing a public webpage during an automated QA run.",
@@ -1958,6 +1958,8 @@ class LocalHelperApi {
       ok: boolean
       state: {
         currentUrl: string | null
+        manualInterventionRequiredAt: number | null
+        resumeRequestedAt: number | null
         stopRequestedAt: number | null
       } | null
     }

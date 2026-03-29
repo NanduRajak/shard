@@ -218,7 +218,8 @@ Important server-side environment variables include:
 
 - `VITE_CONVEX_URL`
 - `STEEL_API_KEY`
-- `GEMINI_API_KEY`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` default: `gpt-4o-mini`
 - `CREDENTIAL_ENCRYPTION_KEY`
 - `LOCAL_HELPER_SECRET`
 - `QA_DIRECT_RUN_FALLBACK`

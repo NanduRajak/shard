@@ -337,7 +337,6 @@ export function VercelV0Chat({
       e.preventDefault();
       if (value.trim() && !isPending) {
         onSubmit();
-        adjustHeight(true);
       }
     }
   };
