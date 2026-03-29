@@ -249,6 +249,7 @@ export class QaRunCancelledError extends Error {
 }
 
 export async function runQaSession({
+  agentOrdinal,
   browser,
   config,
   getStoredCredential,
@@ -258,6 +259,7 @@ export async function runQaSession({
   runtime,
   startUrl,
 }: {
+  agentOrdinal?: number
   browser: QaBrowserAdapter
   config: QaRuntimeConfig
   getStoredCredential?: () => Promise<StoredCredential | null>
@@ -303,6 +305,7 @@ export async function runQaSession({
   })
 
   const agentLoopResult = await runAgentLoop({
+    agentOrdinal,
     browser,
     bufferedFindings,
     config,
@@ -366,6 +369,7 @@ export async function runQaSession({
 }
 
 async function runAgentLoop({
+  agentOrdinal,
   browser,
   bufferedFindings,
   config,
@@ -379,6 +383,7 @@ async function runAgentLoop({
   savedFindings,
   startUrl,
 }: {
+  agentOrdinal?: number
   browser: QaBrowserAdapter
   bufferedFindings: BufferedFinding[]
   config: QaRuntimeConfig
@@ -461,6 +466,7 @@ async function runAgentLoop({
         abortSignal: runtime.getAbortSignal?.(),
         model,
         prompt: buildAgentPrompt({
+          agentOrdinal,
           hasStoredCredential: Boolean(getStoredCredential && browser.useStoredLogin),
           maxAgentSteps: config.maxAgentSteps,
           instructions,
@@ -1697,6 +1703,7 @@ async function throwIfStopRequested({
 }
 
 function buildAgentPrompt({
+  agentOrdinal,
   hasStoredCredential,
   maxAgentSteps,
   instructions,
@@ -1707,6 +1714,7 @@ function buildAgentPrompt({
   visitedPages,
   recentActions,
 }: {
+  agentOrdinal?: number
   hasStoredCredential: boolean
   maxAgentSteps: number
   instructions?: string
@@ -1733,9 +1741,10 @@ function buildAgentPrompt({
 
   const modeRules =
     mode === "task" && instructions
-      ? [
+        ? [
           `Primary task: ${instructions}`,
           "- Prioritize finishing the task safely and efficiently over broad exploration.",
+          "- If the task defines a lane, ownership boundary, or anti-duplication rule, treat it as mandatory and pivot away from flows that look like another agent's coverage.",
           "- Only say the task is complete when the current visible UI strongly proves success.",
           "- When the task is complete and no more action is needed, reply with `TASK_COMPLETE: <brief summary>` and do not call a tool.",
           "- When the task cannot be completed safely or the app blocks progress, reply with `TASK_BLOCKED: <brief summary>` and do not call a tool.",
@@ -1750,6 +1759,9 @@ function buildAgentPrompt({
   return [
     ...baseRules,
     ...modeRules,
+    agentOrdinal
+      ? `Agent lane: ${agentOrdinal}. You may share the site with sibling agents, so respect the task's lane ownership and favor fresh routes over repeated coverage.`
+      : null,
     `Step: ${stepIndex}/${maxAgentSteps}`,
     `Remaining time budget: ${Math.ceil(remainingMs / 1000)} seconds`,
     `Current URL: ${snapshot.url}`,

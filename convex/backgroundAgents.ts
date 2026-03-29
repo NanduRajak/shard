@@ -1,23 +1,160 @@
 import { v } from "convex/values"
 import { mutation, query } from "./_generated/server"
 import { DEFAULT_BACKGROUND_TASK_INSTRUCTIONS } from "../src/lib/background-agent-task"
+import {
+  dedupeMergedFindings,
+  deriveBackgroundOrchestratorStatus,
+  getAgentDurationMs,
+  getOrchestratorDurationMs,
+} from "../src/lib/background-orchestrator-report"
 import { buildScoreSummary } from "../src/lib/scoring"
+import { validateBackgroundOrchestratorCreationInput } from "../src/lib/background-orchestrator-creation"
 
-function isActiveRun(status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting") {
-  return status === "starting" || status === "running"
+function isActiveRun(
+  status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting",
+) {
+  return status === "queued" || status === "starting" || status === "running"
 }
 
-function isQueuedRun(status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting") {
-  return status === "queued"
+async function buildCredentialList(ctx: any) {
+  const credentials = await ctx.db.query("credentials").collect()
+
+  return credentials
+    .slice()
+    .filter((credential: any) => typeof credential.login === "string")
+    .sort((left: any, right: any) => {
+      const websiteComparison = left.website.localeCompare(right.website)
+
+      if (websiteComparison !== 0) {
+        return websiteComparison
+      }
+
+      return left.login.localeCompare(right.login)
+    })
+    .map((credential: any) => ({
+      _id: credential._id,
+      isDefault: credential.isDefault ?? false,
+      login: credential.login,
+      origin: credential.origin,
+      website: credential.website,
+    }))
 }
 
-function isFailedRun(status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting") {
-  return status === "failed" || status === "cancelled"
+async function getRunsForOrchestrator(ctx: any, orchestratorId: string) {
+  return await ctx.db
+    .query("runs")
+    .withIndex("by_background_orchestrator", (q: any) =>
+      q.eq("backgroundOrchestratorId", orchestratorId),
+    )
+    .collect()
 }
 
-export const createBackgroundBatch = mutation({
+async function buildAgentRunReport(ctx: any, run: any) {
+  const [rawArtifacts, rawFindings, runEvents, session, performanceAudits] = await Promise.all([
+    ctx.db
+      .query("artifacts")
+      .withIndex("by_run_and_created_at", (q: any) => q.eq("runId", run._id))
+      .order("desc")
+      .collect(),
+    ctx.db
+      .query("findings")
+      .withIndex("by_run", (q: any) => q.eq("runId", run._id))
+      .collect(),
+    ctx.db
+      .query("runEvents")
+      .withIndex("by_run_and_created_at", (q: any) => q.eq("runId", run._id))
+      .order("asc")
+      .collect(),
+    ctx.db
+      .query("sessions")
+      .withIndex("by_run_and_started_at", (q: any) => q.eq("runId", run._id))
+      .order("desc")
+      .first(),
+    ctx.db
+      .query("performanceAudits")
+      .withIndex("by_run_and_created_at", (q: any) => q.eq("runId", run._id))
+      .order("desc")
+      .collect(),
+  ])
+
+  const artifacts = await Promise.all(
+    rawArtifacts.map(async (artifact: any) => ({
+      ...artifact,
+      url: artifact.storageId ? await ctx.storage.getUrl(artifact.storageId) : undefined,
+    })),
+  )
+  const artifactById = new Map(artifacts.map((artifact: any) => [artifact._id, artifact]))
+  const findings = rawFindings
+    .slice()
+    .sort((left: any, right: any) => right.createdAt - left.createdAt)
+    .map((finding: any) => ({
+      ...finding,
+      artifactUrl: finding.artifactId ? artifactById.get(finding.artifactId)?.url : undefined,
+    }))
+  const hydratedEvents = runEvents.map((event: any) => ({
+    ...event,
+    artifactUrl: event.artifactId ? artifactById.get(event.artifactId)?.url : undefined,
+  }))
+  const screenshots = artifacts
+    .filter((artifact: any) => artifact.type === "screenshot")
+    .slice()
+    .sort((left: any, right: any) => left.createdAt - right.createdAt)
+
+  return {
+    artifacts,
+    durationMs: getAgentDurationMs(run),
+    findings,
+    findingCounts: {
+      console: findings.filter((finding: any) => finding.browserSignal === "console").length,
+      network: findings.filter((finding: any) => finding.browserSignal === "network").length,
+      pageerror: findings.filter((finding: any) => finding.browserSignal === "pageerror").length,
+      total: findings.length,
+    },
+    latestScreenshot: screenshots[screenshots.length - 1] ?? null,
+    performanceAudits: performanceAudits.map((audit: any) => ({
+      ...audit,
+      reportUrl: audit.reportArtifactId
+        ? artifactById.get(audit.reportArtifactId)?.url
+        : undefined,
+    })),
+    run,
+    runEvents: hydratedEvents,
+    screenshots,
+    session,
+    traceArtifact: artifacts.find((artifact: any) => artifact.type === "trace") ?? null,
+  }
+}
+
+async function buildOrchestratorSummary(ctx: any, orchestrator: any) {
+  const runs = await getRunsForOrchestrator(ctx, orchestrator._id)
+  const sortedRuns = runs
+    .slice()
+    .sort((left: any, right: any) => (left.agentOrdinal ?? 0) - (right.agentOrdinal ?? 0))
+  const status = deriveBackgroundOrchestratorStatus(sortedRuns.map((run: any) => run.status))
+  const updatedAt = Math.max(
+    orchestrator.updatedAt,
+    ...sortedRuns.map((run: any) => run.updatedAt),
+  )
+
+  return {
+    counts: {
+      completed: sortedRuns.filter((run: any) => run.status === "completed").length,
+      failed: sortedRuns.filter((run: any) => run.status === "failed" || run.status === "cancelled")
+        .length,
+      queued: sortedRuns.filter((run: any) => run.status === "queued").length,
+      running: sortedRuns.filter((run: any) => run.status === "starting" || run.status === "running")
+        .length,
+    },
+    durationMs: getOrchestratorDurationMs(sortedRuns),
+    orchestrator,
+    status,
+    updatedAt,
+  }
+}
+
+export const createBackgroundOrchestrator = mutation({
   args: {
-    title: v.string(),
+    agentCount: v.number(),
     assignments: v.array(
       v.object({
         credentialId: v.optional(v.id("credentials")),
@@ -25,38 +162,62 @@ export const createBackgroundBatch = mutation({
         url: v.string(),
       }),
     ),
+    credentialId: v.optional(v.id("credentials")),
+    instructions: v.string(),
+    origin: v.string(),
+    url: v.string(),
   },
   handler: async (ctx, args) => {
+    validateBackgroundOrchestratorCreationInput(args)
+
+    if (args.credentialId) {
+      const credential = await ctx.db.get(args.credentialId)
+
+      if (!credential) {
+        throw new Error("Selected credential was not found.")
+      }
+
+      if (credential.origin !== args.origin) {
+        throw new Error("Selected credential does not match the website origin.")
+      }
+    }
+
+    for (const assignment of args.assignments) {
+      if (!assignment.credentialId) {
+        continue
+      }
+
+      const credential = await ctx.db.get(assignment.credentialId)
+
+      if (!credential) {
+        throw new Error("Selected credential was not found.")
+      }
+
+      if (credential.origin !== args.origin) {
+        throw new Error("Selected credential does not match the website origin.")
+      }
+    }
+
     const now = Date.now()
-    const batchId = await ctx.db.insert("backgroundBatches", {
-      title: args.title,
-      totalRuns: args.assignments.length,
+    const orchestratorId = await ctx.db.insert("backgroundOrchestrators", {
+      agentCount: args.agentCount,
       createdAt: now,
+      credentialId: args.credentialId,
+      instructions: args.instructions,
+      origin: args.origin,
       updatedAt: now,
+      url: args.url,
     })
 
     const runIds = []
-    let agentOrdinal = 1
 
-    for (const assignment of args.assignments) {
-      if (assignment.credentialId) {
-        const credential = await ctx.db.get(assignment.credentialId)
-
-        if (!credential) {
-          throw new Error("Selected credential was not found.")
-        }
-
-        if (credential.origin !== new URL(assignment.url).origin) {
-          throw new Error("Selected credential does not match the website origin.")
-        }
-      }
-
+    for (const [index, assignment] of args.assignments.entries()) {
       const runId = await ctx.db.insert("runs", {
-        agentOrdinal,
-        backgroundBatchId: batchId,
+        agentOrdinal: index + 1,
+        backgroundOrchestratorId: orchestratorId,
         browserProvider: "playwright",
         credentialId: assignment.credentialId,
-        currentStep: "Queued for background QA",
+        currentStep: "Queued for orchestrator QA",
         executionMode: "background",
         goalStatus: "not_requested",
         instructions: assignment.instructions,
@@ -71,372 +232,245 @@ export const createBackgroundBatch = mutation({
       await ctx.db.insert("runEvents", {
         runId,
         kind: "status",
-        title: "Background agent queued",
+        title: "Orchestrator agent queued",
         body:
           assignment.instructions === DEFAULT_BACKGROUND_TASK_INSTRUCTIONS
-            ? "The background agent is queued for the built-in end-to-end QA audit."
-            : `The background agent is queued for long-running QA.\nTask: ${assignment.instructions}`,
+            ? "The orchestrator agent is queued for the built-in end-to-end QA audit."
+            : `The orchestrator agent is queued for autonomous QA.\nTask: ${assignment.instructions}`,
         status: "queued",
         pageUrl: assignment.url,
         createdAt: now,
       })
 
       runIds.push(runId)
-      agentOrdinal += 1
     }
 
-    return { batchId, runIds }
+    return { orchestratorId, runIds }
   },
 })
 
-export const listCredentialsForBackgroundRuns = query({
+export const listCredentialsForBackgroundOrchestrators = query({
   args: {},
   handler: async (ctx) => {
-    const credentials = await ctx.db.query("credentials").collect()
+    return await buildCredentialList(ctx)
+  },
+})
 
-    return credentials
+export const listBackgroundOrchestrators = query({
+  args: {},
+  handler: async (ctx) => {
+    const orchestrators = await ctx.db
+      .query("backgroundOrchestrators")
+      .withIndex("by_created_at")
+      .order("desc")
+      .collect()
+
+    const summaries = await Promise.all(
+      orchestrators.map((orchestrator) => buildOrchestratorSummary(ctx, orchestrator)),
+    )
+
+    return summaries
       .slice()
-      .filter((credential) => typeof credential.login === "string")
-      .sort((left, right) => {
-        const websiteComparison = left.website.localeCompare(right.website)
-
-        if (websiteComparison !== 0) {
-          return websiteComparison
-        }
-
-        return left.login.localeCompare(right.login)
-      })
-      .map((credential) => ({
-        _id: credential._id,
-        isDefault: credential.isDefault ?? false,
-        login: credential.login,
-        origin: credential.origin,
-        website: credential.website,
-      }))
+      .sort((left: any, right: any) => right.updatedAt - left.updatedAt)
   },
 })
 
-export const getBackgroundAgentsOverview = query({
-  args: {},
-  handler: async (ctx) => {
-    const [batches, runs] = await Promise.all([
-      ctx.db
-        .query("backgroundBatches")
-        .withIndex("by_created_at")
-        .order("desc")
-        .collect(),
-      ctx.db
-        .query("runs")
-        .withIndex("by_execution_mode_started_at", (q) =>
-          q.eq("executionMode", "background"),
-        )
-        .order("desc")
-        .collect(),
+export const getBackgroundOrchestratorDetail = query({
+  args: {
+    orchestratorId: v.optional(v.id("backgroundOrchestrators")),
+  },
+  handler: async (ctx, args) => {
+    if (!args.orchestratorId) {
+      return null
+    }
+
+    const orchestrator = await ctx.db.get(args.orchestratorId)
+
+    if (!orchestrator) {
+      return null
+    }
+
+    const [credential, runs] = await Promise.all([
+      orchestrator.credentialId ? ctx.db.get(orchestrator.credentialId) : Promise.resolve(null),
+      getRunsForOrchestrator(ctx, orchestrator._id),
     ])
+    const sortedRuns = runs
+      .slice()
+      .sort((left: any, right: any) => (left.agentOrdinal ?? 0) - (right.agentOrdinal ?? 0))
+    const findingsByRunId = new Map<string, number>()
 
-    const batchById = new Map(batches.map((batch) => [batch._id, batch]))
-    const cards = await Promise.all(
-      runs.map(async (run) => {
-        const [artifacts, findings, runEvents] = await Promise.all([
-          ctx.db
-            .query("artifacts")
-            .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
-            .order("desc")
-            .collect(),
-          ctx.db
-            .query("findings")
-            .withIndex("by_run", (q) => q.eq("runId", run._id))
-            .collect(),
-          ctx.db
-            .query("runEvents")
-            .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
-            .order("desc")
-            .take(1),
-        ])
-
-        const latestScreenshot =
-          artifacts.find((artifact) => artifact.type === "screenshot") ?? null
-        const traceArtifact =
-          artifacts.find((artifact) => artifact.type === "trace") ?? null
-
-        return {
-          batch: run.backgroundBatchId ? batchById.get(run.backgroundBatchId) ?? null : null,
-          findingsCount: findings.length,
-          latestEvent: runEvents[0] ?? null,
-          latestScreenshot,
-          run,
-          traceArtifact,
-        }
+    await Promise.all(
+      sortedRuns.map(async (run: any) => {
+        const findings = await ctx.db
+          .query("findings")
+          .withIndex("by_run", (q) => q.eq("runId", run._id))
+          .collect()
+        findingsByRunId.set(run._id, findings.length)
       }),
     )
 
-    const queuedRuns = cards.filter((item) => isQueuedRun(item.run.status))
-    const activeRuns = cards.filter((item) => isActiveRun(item.run.status))
-    const completedRuns = cards.filter((item) => item.run.status === "completed")
-    const failedRuns = cards.filter((item) => isFailedRun(item.run.status))
-
     return {
-      activeRuns,
-      batches: batches.map((batch) => ({
-        batch,
-        counts: {
-          active: activeRuns.filter((item) => item.run.backgroundBatchId === batch._id).length,
-          completed: completedRuns.filter((item) => item.run.backgroundBatchId === batch._id)
-            .length,
-          failed: failedRuns.filter((item) => item.run.backgroundBatchId === batch._id).length,
-          queued: queuedRuns.filter((item) => item.run.backgroundBatchId === batch._id).length,
-        },
+      agents: sortedRuns.map((run: any) => ({
+        durationMs: getAgentDurationMs(run),
+        findingsCount: findingsByRunId.get(run._id) ?? 0,
+        run,
       })),
-      completedRuns,
-      failedRuns,
-      queuedRuns,
-    }
-  },
-})
-
-export const getBackgroundBatch = query({
-  args: {
-    batchId: v.id("backgroundBatches"),
-  },
-  handler: async (ctx, args) => {
-    const batch = await ctx.db.get(args.batchId)
-
-    if (!batch) {
-      return null
-    }
-
-    const runs = await ctx.db
-      .query("runs")
-      .withIndex("by_background_batch", (q) => q.eq("backgroundBatchId", args.batchId))
-      .collect()
-
-    return {
-      batch,
-      runs: runs
-        .slice()
-        .sort((left, right) => (left.agentOrdinal ?? 0) - (right.agentOrdinal ?? 0)),
-    }
-  },
-})
-
-export const getBackgroundBatchReport = query({
-  args: {
-    batchId: v.optional(v.id("backgroundBatches")),
-  },
-  handler: async (ctx, args) => {
-    if (!args.batchId) {
-      return null
-    }
-
-    const batch = await ctx.db.get(args.batchId)
-    if (!batch) {
-      return null
-    }
-
-    const runs = await ctx.db
-      .query("runs")
-      .withIndex("by_background_batch", (q) => q.eq("backgroundBatchId", args.batchId))
-      .collect()
-
-    const agentRuns = await Promise.all(
-      runs
-        .slice()
-        .sort((left, right) => (left.agentOrdinal ?? 0) - (right.agentOrdinal ?? 0))
-        .map(async (run) => {
-          const [rawArtifacts, findings, runEvents, session, performanceAudits] =
-            await Promise.all([
-              ctx.db
-                .query("artifacts")
-                .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
-                .order("desc")
-                .collect(),
-              ctx.db
-                .query("findings")
-                .withIndex("by_run", (q) => q.eq("runId", run._id))
-                .collect(),
-              ctx.db
-                .query("runEvents")
-                .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
-                .order("asc")
-                .collect(),
-              ctx.db
-                .query("sessions")
-                .withIndex("by_run_and_started_at", (q) => q.eq("runId", run._id))
-                .order("desc")
-                .first(),
-              ctx.db
-                .query("performanceAudits")
-                .withIndex("by_run_and_created_at", (q) => q.eq("runId", run._id))
-                .order("desc")
-                .collect(),
-            ])
-
-          const artifacts = await Promise.all(
-            rawArtifacts.map(async (artifact) => ({
-              ...artifact,
-              url: artifact.storageId ? await ctx.storage.getUrl(artifact.storageId) : undefined,
-            })),
-          )
-
-          return {
-            artifacts,
-            findings: findings.slice().sort((left, right) => right.createdAt - left.createdAt),
-            latestScreenshot: artifacts.find((artifact) => artifact.type === "screenshot") ?? null,
-            performanceAudits,
-            run,
-            runEvents,
-            session,
-            traceArtifact: artifacts.find((artifact) => artifact.type === "trace") ?? null,
+      counts: {
+        completed: sortedRuns.filter((run: any) => run.status === "completed").length,
+        failed: sortedRuns.filter((run: any) => run.status === "failed" || run.status === "cancelled")
+          .length,
+        queued: sortedRuns.filter((run: any) => run.status === "queued").length,
+        running: sortedRuns.filter((run: any) => run.status === "starting" || run.status === "running")
+          .length,
+      },
+      credential: credential
+        ? {
+            _id: credential._id,
+            login: credential.login,
+            website: credential.website,
           }
-        }),
-    )
+        : null,
+      durationMs: getOrchestratorDurationMs(sortedRuns),
+      orchestrator,
+      status: deriveBackgroundOrchestratorStatus(sortedRuns.map((run: any) => run.status)),
+    }
+  },
+})
 
-    const mergedFindingMap = new Map<string, (typeof agentRuns)[number]["findings"][number]>()
-    for (const agentRun of agentRuns) {
-      for (const finding of agentRun.findings) {
-        const key = [
-          finding.source,
-          finding.browserSignal ?? "",
-          finding.title.trim().toLowerCase(),
-          (finding.pageOrFlow ?? "").trim().toLowerCase(),
-        ].join("::")
-
-        const existing = mergedFindingMap.get(key)
-        if (!existing || (finding.score ?? 0) > (existing.score ?? 0)) {
-          mergedFindingMap.set(key, finding)
-        }
-      }
+export const getBackgroundOrchestratorReport = query({
+  args: {
+    orchestratorId: v.optional(v.id("backgroundOrchestrators")),
+  },
+  handler: async (ctx, args) => {
+    if (!args.orchestratorId) {
+      return null
     }
 
-    const mergedFindings = [...mergedFindingMap.values()].sort(
-      (left, right) => (right.score ?? 0) - (left.score ?? 0),
+    const detail = await ctx.db.get(args.orchestratorId)
+
+    if (!detail) {
+      return null
+    }
+
+    const runs = await getRunsForOrchestrator(ctx, detail._id)
+    const sortedRuns = runs
+      .slice()
+      .sort((left: any, right: any) => (left.agentOrdinal ?? 0) - (right.agentOrdinal ?? 0))
+    const agentRuns = await Promise.all(
+      sortedRuns.map((run: any) => buildAgentRunReport(ctx, run)),
     )
-    const mergedPerformanceAudits = agentRuns.flatMap((run) => run.performanceAudits)
-    const mergedArtifacts = agentRuns.flatMap((run) => run.artifacts)
+    const allFindings = agentRuns.flatMap((agentRun) => agentRun.findings)
+    const mergedFindings = dedupeMergedFindings(allFindings)
+    const mergedPerformanceAudits = agentRuns.flatMap((agentRun) => agentRun.performanceAudits)
+    const mergedArtifacts = agentRuns.flatMap((agentRun) => agentRun.artifacts)
     const coverageUrls = Array.from(
       new Set(
-        agentRuns.flatMap((agentRun) =>
-          agentRun.runEvents
-            .map((event) => event.pageUrl)
-            .concat(agentRun.findings.map((finding) => finding.pageOrFlow))
-            .filter((value): value is string => Boolean(value)),
-        ),
+        [
+          detail.url,
+          ...agentRuns.flatMap((agentRun) =>
+            agentRun.runEvents.map((event: any) => event.pageUrl),
+          ),
+          ...mergedFindings.map((finding) => finding.pageOrFlow),
+        ].filter((value): value is string => Boolean(value)),
       ),
     )
-
-    const completedRuns = agentRuns.filter((item) => item.run.status === "completed").length
-    const failedRuns = agentRuns.filter((item) => isFailedRun(item.run.status)).length
-    const activeRuns = agentRuns.filter((item) => isActiveRun(item.run.status)).length
-    const queuedRuns = agentRuns.filter((item) => isQueuedRun(item.run.status)).length
-    const siteOrigins = Array.from(
-      new Set(
-        agentRuns
-          .map((item) => {
-            try {
-              return new URL(item.run.url).origin
-            } catch {
-              return null
-            }
-          })
-          .filter((value): value is string => Boolean(value)),
-      ),
-    )
-    const isSingleSiteBatch = siteOrigins.length <= 1
 
     return {
       agentRuns,
-      batch,
-      coverageUrls: isSingleSiteBatch ? coverageUrls : [],
-      isSingleSiteBatch,
-      mergedArtifacts: isSingleSiteBatch ? mergedArtifacts : [],
-      mergedFindings: isSingleSiteBatch ? mergedFindings : [],
-      mergedPerformanceAudits: isSingleSiteBatch ? mergedPerformanceAudits : [],
-      scoreSummary: isSingleSiteBatch
-        ? buildScoreSummary({
-            findings: mergedFindings.map((finding) => ({
-              score: finding.score ?? 0,
-              source: finding.source,
-            })),
-            performanceAudits: mergedPerformanceAudits.length,
-            screenshots: mergedArtifacts.filter((artifact) => artifact.type === "screenshot").length,
-          })
-        : null,
-      siteOrigin: siteOrigins[0] ?? null,
+      coverageUrls,
+      durationMs: getOrchestratorDurationMs(sortedRuns),
+      mergedFindings,
+      mergedPerformanceAudits,
+      orchestrator: detail,
+      scoreSummary: buildScoreSummary({
+        findings: mergedFindings.map((finding) => ({
+          score: finding.score ?? 0,
+          source: finding.source,
+        })),
+        performanceAudits: mergedPerformanceAudits.length,
+        screenshots: mergedArtifacts.filter((artifact) => artifact.type === "screenshot").length,
+      }),
+      status: deriveBackgroundOrchestratorStatus(sortedRuns.map((run: any) => run.status)),
       summary: {
-        activeRuns,
-        completedRuns,
-        failedRuns,
-        queuedRuns,
+        completed: sortedRuns.filter((run: any) => run.status === "completed").length,
+        failed: sortedRuns.filter((run: any) => run.status === "failed" || run.status === "cancelled")
+          .length,
+        queued: sortedRuns.filter((run: any) => run.status === "queued").length,
+        running: sortedRuns.filter((run: any) => run.status === "starting" || run.status === "running")
+          .length,
       },
     }
   },
 })
 
-export const getBackgroundRunDetail = query({
+export const requestBackgroundOrchestratorStop = mutation({
   args: {
-    runId: v.optional(v.id("runs")),
+    orchestratorId: v.id("backgroundOrchestrators"),
   },
   handler: async (ctx, args) => {
-    if (!args.runId) {
-      return null
+    const orchestrator = await ctx.db.get(args.orchestratorId)
+
+    if (!orchestrator) {
+      return { ok: false as const, reason: "not_found" as const }
     }
 
-    const runId = args.runId
-    const run = await ctx.db.get(runId)
+    const stopRequestedAt = orchestrator.stopRequestedAt ?? Date.now()
+    const runs = await getRunsForOrchestrator(ctx, orchestrator._id)
+    const activeRuns = runs.filter((run: any) => isActiveRun(run.status))
 
-    if (!run || run.executionMode !== "background") {
-      return null
+    await ctx.db.patch(orchestrator._id, {
+      stopRequestedAt,
+      updatedAt: stopRequestedAt,
+    })
+
+    for (const run of activeRuns) {
+      if (run.status === "queued") {
+        await ctx.db.patch(run._id, {
+          stopRequestedAt,
+          status: "cancelled",
+          currentStep: "Run cancelled before execution started",
+          finishedAt: stopRequestedAt,
+          updatedAt: stopRequestedAt,
+        })
+
+        await ctx.db.insert("runEvents", {
+          runId: run._id,
+          kind: "status",
+          title: "Run cancelled",
+          body: "The orchestrator cancelled this agent before execution started.",
+          status: "cancelled",
+          pageUrl: run.currentUrl ?? run.url,
+          createdAt: stopRequestedAt,
+        })
+      } else {
+        await ctx.db.patch(run._id, {
+          stopRequestedAt,
+          currentStep: "Stop requested, shutting down run",
+          updatedAt: stopRequestedAt,
+        })
+
+        await ctx.db.insert("runEvents", {
+          runId: run._id,
+          kind: "status",
+          title: "Stop requested",
+          body: "The orchestrator requested this agent to stop after the current step settles.",
+          status: run.status,
+          pageUrl: run.currentUrl ?? run.url,
+          createdAt: stopRequestedAt,
+        })
+      }
     }
 
-    const [batch, rawArtifacts, findings, runEvents, session] = await Promise.all([
-      run.backgroundBatchId ? ctx.db.get(run.backgroundBatchId) : Promise.resolve(null),
-      ctx.db
-        .query("artifacts")
-        .withIndex("by_run_and_created_at", (q) => q.eq("runId", runId))
-        .order("desc")
-        .collect(),
-      ctx.db
-        .query("findings")
-        .withIndex("by_run", (q) => q.eq("runId", runId))
-        .collect(),
-      ctx.db
-        .query("runEvents")
-        .withIndex("by_run_and_created_at", (q) => q.eq("runId", runId))
-        .order("asc")
-        .collect(),
-      ctx.db
-        .query("sessions")
-        .withIndex("by_run_and_started_at", (q) => q.eq("runId", runId))
-        .order("desc")
-        .first(),
-    ])
-
-    const artifacts = await Promise.all(
-      rawArtifacts.map(async (artifact) => ({
-        ...artifact,
-        url: artifact.storageId ? await ctx.storage.getUrl(artifact.storageId) : undefined,
-      })),
-    )
-
-    const latestScreenshot =
-      artifacts.find((artifact) => artifact.type === "screenshot") ?? null
-    const traceArtifact = artifacts.find((artifact) => artifact.type === "trace") ?? null
-    const consoleFindings = findings.filter((finding) => finding.browserSignal === "console")
-    const networkFindings = findings.filter((finding) => finding.browserSignal === "network")
-    const pageErrorFindings = findings.filter((finding) => finding.browserSignal === "pageerror")
+    if (activeRuns.every((run: any) => run.status === "queued")) {
+      await ctx.db.patch(orchestrator._id, {
+        finishedAt: stopRequestedAt,
+      })
+    }
 
     return {
-      artifacts,
-      batch,
-      consoleFindings,
-      findings: findings.slice().sort((left, right) => right.createdAt - left.createdAt),
-      latestScreenshot,
-      networkFindings,
-      pageErrorFindings,
-      run,
-      runEvents,
-      session,
-      traceArtifact,
+      ok: true as const,
+      stopRequestedAt,
+      stoppedRuns: activeRuns.length,
     }
   },
 })

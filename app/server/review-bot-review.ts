@@ -768,7 +768,7 @@ function sanitizeAiText(text: string | undefined, maxLength = 240) {
 
   const normalized = text
     .replace(/```(?:json)?/gi, " ")
-    .replace(/[{}\[\]]/g, " ")
+    .replace(/[{}[\]]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
 

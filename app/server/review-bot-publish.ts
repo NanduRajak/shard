@@ -7,7 +7,7 @@ function stripRawFormatting(text: string | null | undefined, maxLength = 220) {
 
   const normalized = text
     .replace(/```(?:json)?/gi, " ")
-    .replace(/[{}\[\]]/g, " ")
+    .replace(/[{}[\]]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
 

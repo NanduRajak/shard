@@ -167,6 +167,9 @@ export const updateRun = mutation({
     }
 
     await ctx.db.patch(args.runId, patch)
+
+    const run = await ctx.db.get(args.runId)
+    await syncBackgroundOrchestrator(ctx, run?.backgroundOrchestratorId)
   },
 })
 
@@ -198,6 +201,126 @@ function isActiveRun(
   status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting",
 ) {
   return status === "queued" || status === "starting" || status === "running"
+}
+
+function isTerminalRun(
+  status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting",
+) {
+  return status === "cancelled" || status === "completed" || status === "failed"
+}
+
+async function syncBackgroundOrchestrator(
+  ctx: any,
+  orchestratorId?: Id<"backgroundOrchestrators">,
+) {
+  if (!orchestratorId) {
+    return
+  }
+
+  const runs = await ctx.db
+    .query("runs")
+    .withIndex("by_background_orchestrator", (q: any) =>
+      q.eq("backgroundOrchestratorId", orchestratorId),
+    )
+    .collect()
+
+  if (!runs.length) {
+    await ctx.db.delete(orchestratorId).catch(() => undefined)
+    return
+  }
+
+  const updatedAt = Math.max(...runs.map((run: any) => run.updatedAt))
+  const allTerminal = runs.every((run: any) => isTerminalRun(run.status))
+  const finishedAt = allTerminal
+    ? Math.max(...runs.map((run: any) => run.finishedAt ?? run.updatedAt))
+    : undefined
+
+  await ctx.db.patch(orchestratorId, {
+    finishedAt,
+    updatedAt,
+  })
+}
+
+async function deleteRunCascade(ctx: any, runId: Id<"runs">) {
+  const run = await ctx.db.get(runId)
+
+  if (!run) {
+    return { ok: false as const, reason: "not_found" as const }
+  }
+
+  const [findings, artifacts, sessions, runEvents, performanceAudits, prReviews, localHelpers] =
+    await Promise.all([
+      ctx.db
+        .query("findings")
+        .withIndex("by_run", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("artifacts")
+        .withIndex("by_run", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("sessions")
+        .withIndex("by_run", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("runEvents")
+        .withIndex("by_run", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("performanceAudits")
+        .withIndex("by_run", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db.query("prReviews").collect(),
+      ctx.db.query("localHelpers").collect(),
+    ])
+
+  const linkedReviews = prReviews.filter((review: any) => review.browserRunId === runId)
+  const claimedHelpers = localHelpers.filter((helper: any) => helper.currentClaimedRunId === runId)
+
+  await Promise.all(
+    artifacts.map(async (artifact: any) => {
+      if (artifact.storageId) {
+        await ctx.storage.delete(artifact.storageId).catch(() => undefined)
+      }
+    }),
+  )
+
+  await Promise.all([
+    ...linkedReviews.map((review: any) =>
+      ctx.db.patch(review._id, {
+        browserRunId: undefined,
+        updatedAt: Date.now(),
+      }),
+    ),
+    ...claimedHelpers.map((helper: any) =>
+      ctx.db.patch(helper._id, {
+        currentClaimedRunId: undefined,
+        status: "idle",
+        updatedAt: Date.now(),
+      }),
+    ),
+    ...findings.map((finding: any) => ctx.db.delete(finding._id)),
+    ...artifacts.map((artifact: any) => ctx.db.delete(artifact._id)),
+    ...sessions.map((session: any) => ctx.db.delete(session._id)),
+    ...runEvents.map((event: any) => ctx.db.delete(event._id)),
+    ...performanceAudits.map((audit: any) => ctx.db.delete(audit._id)),
+  ])
+
+  await ctx.db.delete(runId)
+  await syncBackgroundOrchestrator(ctx, run.backgroundOrchestratorId)
+
+  return {
+    ok: true as const,
+    counts: {
+      artifacts: artifacts.length,
+      findings: findings.length,
+      localHelpersReleased: claimedHelpers.length,
+      performanceAudits: performanceAudits.length,
+      prReviewsCleared: linkedReviews.length,
+      runEvents: runEvents.length,
+      sessions: sessions.length,
+    },
+  }
 }
 
 export const resetRunState = mutation({
@@ -260,6 +383,8 @@ export const resetRunState = mutation({
       goalStatus: run.mode === "task" ? "not_requested" : undefined,
       goalSummary: undefined,
     })
+
+    await syncBackgroundOrchestrator(ctx, run.backgroundOrchestratorId)
   },
 })
 
@@ -297,6 +422,8 @@ export const updateRunQueueState = mutation({
         createdAt: Date.now(),
       })
     }
+
+    await syncBackgroundOrchestrator(ctx, run.backgroundOrchestratorId)
 
     return { ok: true as const, changed: true as const }
   },
@@ -342,6 +469,8 @@ export const requestRunStop = mutation({
         createdAt: stopRequestedAt,
       })
 
+      await syncBackgroundOrchestrator(ctx, run.backgroundOrchestratorId)
+
       return { ok: true as const, stopRequestedAt }
     }
 
@@ -361,6 +490,8 @@ export const requestRunStop = mutation({
       createdAt: Date.now(),
     })
 
+    await syncBackgroundOrchestrator(ctx, run.backgroundOrchestratorId)
+
     return { ok: true as const, stopRequestedAt }
   },
 })
@@ -369,7 +500,7 @@ export const clearAllData = mutation({
   args: {},
   handler: async (ctx) => {
     const [
-      backgroundBatches,
+      backgroundOrchestrators,
       runs,
       findings,
       artifacts,
@@ -381,7 +512,7 @@ export const clearAllData = mutation({
       localHelpers,
     ] =
       await Promise.all([
-        ctx.db.query("backgroundBatches").collect(),
+        ctx.db.query("backgroundOrchestrators").collect(),
         ctx.db.query("runs").collect(),
         ctx.db.query("findings").collect(),
         ctx.db.query("artifacts").collect(),
@@ -411,14 +542,14 @@ export const clearAllData = mutation({
       ...credentials.map((doc) => ctx.db.delete(doc._id)),
       ...localHelpers.map((doc) => ctx.db.delete(doc._id)),
       ...runs.map((doc) => ctx.db.delete(doc._id)),
-      ...backgroundBatches.map((doc) => ctx.db.delete(doc._id)),
+      ...backgroundOrchestrators.map((doc) => ctx.db.delete(doc._id)),
     ])
 
     return {
       ok: true as const,
       counts: {
         artifacts: artifacts.length,
-        backgroundBatches: backgroundBatches.length,
+        backgroundOrchestrators: backgroundOrchestrators.length,
         credentials: credentials.length,
         findings: findings.length,
         performanceAudits: performanceAudits.length,
@@ -437,86 +568,7 @@ export const deleteRun = mutation({
     runId: v.id("runs"),
   },
   handler: async (ctx, args) => {
-    const run = await ctx.db.get(args.runId)
-
-    if (!run) {
-      return { ok: false as const, reason: "not_found" as const }
-    }
-
-    const [findings, artifacts, sessions, runEvents, performanceAudits, prReviews, localHelpers] =
-      await Promise.all([
-        ctx.db
-          .query("findings")
-          .withIndex("by_run", (q) => q.eq("runId", args.runId))
-          .collect(),
-        ctx.db
-          .query("artifacts")
-          .withIndex("by_run", (q) => q.eq("runId", args.runId))
-          .collect(),
-        ctx.db
-          .query("sessions")
-          .withIndex("by_run", (q) => q.eq("runId", args.runId))
-          .collect(),
-        ctx.db
-          .query("runEvents")
-          .withIndex("by_run", (q) => q.eq("runId", args.runId))
-          .collect(),
-        ctx.db
-          .query("performanceAudits")
-          .withIndex("by_run", (q) => q.eq("runId", args.runId))
-          .collect(),
-        ctx.db.query("prReviews").collect(),
-        ctx.db.query("localHelpers").collect(),
-      ])
-
-    const linkedReviews = prReviews.filter((review) => review.browserRunId === args.runId)
-    const claimedHelpers = localHelpers.filter(
-      (helper) => helper.currentClaimedRunId === args.runId,
-    )
-
-    await Promise.all(
-      artifacts.map(async (artifact) => {
-        if (artifact.storageId) {
-          await ctx.storage.delete(artifact.storageId).catch(() => undefined)
-        }
-      }),
-    )
-
-    await Promise.all([
-      ...linkedReviews.map((review) =>
-        ctx.db.patch(review._id, {
-          browserRunId: undefined,
-          updatedAt: Date.now(),
-        }),
-      ),
-      ...claimedHelpers.map((helper) =>
-        ctx.db.patch(helper._id, {
-          currentClaimedRunId: undefined,
-          status: "idle",
-          updatedAt: Date.now(),
-        }),
-      ),
-      ...findings.map((finding) => ctx.db.delete(finding._id)),
-      ...artifacts.map((artifact) => ctx.db.delete(artifact._id)),
-      ...sessions.map((session) => ctx.db.delete(session._id)),
-      ...runEvents.map((event) => ctx.db.delete(event._id)),
-      ...performanceAudits.map((audit) => ctx.db.delete(audit._id)),
-    ])
-
-    await ctx.db.delete(args.runId)
-
-    return {
-      ok: true as const,
-      counts: {
-        artifacts: artifacts.length,
-        findings: findings.length,
-        performanceAudits: performanceAudits.length,
-        prReviewsCleared: linkedReviews.length,
-        runEvents: runEvents.length,
-        sessions: sessions.length,
-        localHelpersReleased: claimedHelpers.length,
-      },
-    }
+    return await deleteRunCascade(ctx, args.runId)
   },
 })
 
@@ -1097,11 +1149,14 @@ export const getRunReport = query({
 export const listRuns = query({
   args: {},
   handler: async (ctx) => {
-    const runs = await ctx.db
+    const allRuns = await ctx.db
       .query("runs")
       .withIndex("by_started_at")
       .order("desc")
       .collect()
+    const runs = allRuns.filter(
+      (run) => normalizeExecutionMode(run.executionMode) !== "background",
+    )
 
     const items = await Promise.all(
       runs.map(async (run) => {

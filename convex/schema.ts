@@ -146,19 +146,26 @@ export default defineSchema({
     .index("by_session_token", ["sessionToken"])
     .index("by_github_user_id", ["githubUserId"]),
 
-  backgroundBatches: defineTable({
-    title: v.string(),
-    totalRuns: v.number(),
+  backgroundOrchestrators: defineTable({
+    agentCount: v.number(),
     createdAt: v.number(),
+    credentialId: v.optional(v.id("credentials")),
+    finishedAt: v.optional(v.number()),
+    instructions: v.string(),
+    origin: v.string(),
+    stopRequestedAt: v.optional(v.number()),
     updatedAt: v.number(),
-  }).index("by_created_at", ["createdAt"]),
+    url: v.string(),
+  })
+    .index("by_created_at", ["createdAt"])
+    .index("by_updated_at", ["updatedAt"]),
 
   runs: defineTable({
     url: v.string(),
     mode: v.optional(runMode),
     browserProvider: v.optional(browserProvider),
     executionMode: v.optional(executionMode),
-    backgroundBatchId: v.optional(v.id("backgroundBatches")),
+    backgroundOrchestratorId: v.optional(v.id("backgroundOrchestrators")),
     credentialId: v.optional(v.id("credentials")),
     instructions: v.optional(v.string()),
     agentOrdinal: v.optional(v.number()),
@@ -177,7 +184,7 @@ export default defineSchema({
   })
     .index("by_status", ["status"])
     .index("by_started_at", ["startedAt"])
-    .index("by_background_batch", ["backgroundBatchId"])
+    .index("by_background_orchestrator", ["backgroundOrchestratorId"])
     .index("by_execution_mode_started_at", ["executionMode", "startedAt"]),
 
   findings: defineTable({

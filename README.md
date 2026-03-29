@@ -6,7 +6,7 @@ It can:
 
 - run live QA sessions against a URL in Steel cloud or your own local Chrome
 - execute task-driven browser workflows such as adding an item to cart or creating a record
-- queue multi-agent background QA batches for the same site or multiple sites
+- queue multi-agent background QA orchestrators for a site
 - capture findings, screenshots, traces, performance audits, and run timelines
 - generate archived QA reports with coverage, task outcome, and prioritized defects
 - review GitHub pull requests with tracked repositories and rerunnable PR reviews
@@ -19,7 +19,7 @@ Shard supports three QA execution paths:
 
 - `Cloud session`: interactive run in Steel with live preview
 - `Local session`: interactive run in your own Chrome through the local helper
-- `Background agents`: queued Playwright workers for long-running scans and batch jobs
+- `Background agents`: queued Playwright workers coordinated through a site orchestrator
 
 All three paths now use the same shared QA engine for:
 
@@ -92,19 +92,18 @@ https://shop.example.com add Sony headphones to cart and verify the cart flow
 
 ## Background agents
 
-Shard supports two background batch patterns:
+Shard supports a site-first background orchestrator:
 
-- `Site-first batch`: one site, multiple agents, optional shared task, auto-sharded coverage lanes
-- `Advanced multi-site batch`: one row per agent for different sites or different tasks
+- one site URL, one optional shared task, and multiple auto-sharded agents
+- default credential auto-selection based on the target site origin
+- a dedicated orchestrator detail page with merged report and per-agent timeline lanes
 
-Same-site batches produce a merged batch report with:
+Each orchestrator produces a merged report with:
 
 - deduped findings
 - shared coverage summary
 - merged performance audits
 - per-agent timeline lanes
-
-Multi-site batches stay separated by agent and site.
 
 ## Main routes
 
@@ -254,7 +253,7 @@ Core records stored in Convex include:
 - `artifacts`
 - `performanceAudits`
 - `sessions`
-- `backgroundBatches`
+- `backgroundOrchestrators`
 - `credentials`
 - `localHelpers`
 - `trackedRepos`

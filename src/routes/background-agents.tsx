@@ -1,1025 +1,557 @@
-import { createFileRoute, Link } from "@tanstack/react-router"
-import { convexQuery } from "@convex-dev/react-query"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useNavigate,
+  useRouterState,
+} from "@tanstack/react-router";
+import { convexQuery } from "@convex-dev/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   IconArrowRight,
-  IconClock,
-  IconExternalLink,
-  IconHourglass,
-  IconLoader3,
-  IconPhoto,
   IconPlayerPlay,
-  IconPlayerStop,
-  IconPlus,
-  IconRobot,
-  IconTrash,
-} from "@tabler/icons-react"
-import { useMemo, useState, type ReactNode } from "react"
-import { toast } from "sonner"
-import type { Id } from "../../convex/_generated/dataModel"
-import { api } from "../../convex/_generated/api"
-import { Badge } from "@/components/ui/badge"
-import { Button, buttonVariants } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer"
+  IconSparkles,
+  IconTargetArrow,
+} from "@tabler/icons-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import type { Id } from "../../convex/_generated/dataModel";
+import { api } from "../../convex/_generated/api";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
-import { AgentPlan } from "@/components/ui/agent-plan"
-import { createBackgroundBatch } from "@/lib/create-background-batch"
-import { getBackgroundTaskLabel } from "@/lib/background-agent-task"
-import { requestRunStop } from "@/lib/request-run-stop"
-import { filterTimelineEventsForQaView, sortTimelineEvents } from "@/lib/run-report"
-import { isActiveRunStatus } from "@/lib/run-report"
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { getBackgroundTaskLabel } from "@/lib/background-agent-task";
+import { isBackgroundOrchestratorActive } from "@/lib/background-orchestrator-report";
+import { createBackgroundOrchestrator } from "@/lib/create-background-orchestrator";
+import { makeCredentialDefault } from "@/lib/credentials-server";
+import { formatSessionDuration } from "@/lib/run-report";
+import {
+  getMatchingCredentialsForSiteUrl,
+  LAST_SELECTED_CREDENTIAL_KEY,
+  NO_CREDENTIAL_SELECTED,
+} from "@/lib/launcher-credentials";
+import { requestBackgroundOrchestratorStop } from "@/lib/request-background-orchestrator-stop";
 
 export const Route = createFileRoute("/background-agents")({
-  component: BackgroundAgentsPage,
-})
+  component: BackgroundAgentsRoute,
+});
 
-type AssignmentRow = {
-  credentialId: string
-  id: string
-  siteUrl: string
-  task: string
+const EMPTY_CREDENTIALS: Array<{
+  _id: Id<"credentials">;
+  isDefault: boolean;
+  login: string;
+  origin: string;
+  website: string;
+}> = [];
+
+function BackgroundAgentsRoute() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+
+  if (pathname.startsWith("/background-agents/")) {
+    return <Outlet />;
+  }
+
+  return <BackgroundAgentsPage />;
 }
 
-const EMPTY_ROW = (): AssignmentRow => ({
-  credentialId: "none",
-  id: crypto.randomUUID(),
-  siteUrl: "",
-  task: "",
-})
-
 function BackgroundAgentsPage() {
-  const { data: overview } = useQuery(
-    convexQuery(api.backgroundAgents.getBackgroundAgentsOverview, {}),
-  )
+  const navigate = useNavigate();
+  const { data: orchestrators } = useQuery(
+    convexQuery(api.backgroundAgents.listBackgroundOrchestrators, {}),
+  );
   const { data: credentials } = useQuery(
-    convexQuery(api.backgroundAgents.listCredentialsForBackgroundRuns, {}),
-  )
-  const [rows, setRows] = useState<AssignmentRow[]>([EMPTY_ROW()])
-  const [siteBatch, setSiteBatch] = useState({
-    agentCount: 3,
-    credentialId: "none",
+    convexQuery(
+      api.backgroundAgents.listCredentialsForBackgroundOrchestrators,
+      {},
+    ),
+  );
+  const createMutation = useMutation({
+    mutationFn: createBackgroundOrchestrator,
+  });
+  const makeDefaultMutation = useMutation({
+    mutationFn: makeCredentialDefault,
+  });
+  const stopMutation = useMutation({
+    mutationFn: requestBackgroundOrchestratorStop,
+  });
+  const [form, setForm] = useState({
+    agentCount: 2,
     siteUrl: "",
     task: "",
-  })
-  const [selectedRunId, setSelectedRunId] = useState<Id<"runs"> | null>(null)
-  const [detailTab, setDetailTab] = useState<"report" | "timeline">("report")
-  const createMutation = useMutation({
-    mutationFn: createBackgroundBatch,
-  })
-  const stopMutation = useMutation({
-    mutationFn: requestRunStop,
-  })
-  const { data: detail } = useQuery({
-    ...convexQuery(api.backgroundAgents.getBackgroundRunDetail, {
-      runId: selectedRunId ?? undefined,
-    }),
-    enabled: Boolean(selectedRunId),
-  })
-  const { data: batchReport } = useQuery({
-    ...convexQuery(api.backgroundAgents.getBackgroundBatchReport, {
-      batchId: detail?.batch?._id,
-    }),
-    enabled: Boolean(detail?.batch?._id),
-  })
+  });
+  const [selectedCredentialId, setSelectedCredentialId] = useState<
+    string | null
+  >(null);
+  const [stoppingOrchestratorId, setStoppingOrchestratorId] =
+    useState<Id<"backgroundOrchestrators"> | null>(null);
 
-  const totalAgentsRequested = useMemo(
-    () => rows.filter((row) => row.siteUrl.trim()).length || rows.length,
-    [rows],
-  )
+  const availableCredentials = credentials ?? EMPTY_CREDENTIALS;
+  const matchingCredentials = useMemo(
+    () => getMatchingCredentialsForSiteUrl(availableCredentials, form.siteUrl),
+    [availableCredentials, form.siteUrl],
+  );
+  const selectedCredential = useMemo(
+    () =>
+      availableCredentials.find(
+        (credential: (typeof availableCredentials)[number]) =>
+          credential._id === selectedCredentialId,
+      ) ?? null,
+    [availableCredentials, selectedCredentialId],
+  );
 
-  const handleCreateBatch = async () => {
-    try {
-      await createMutation.mutateAsync({
-        data: {
-          assignments: rows.map((row) => ({
-            credentialId: row.credentialId !== "none" ? row.credentialId : undefined,
-            siteUrl: row.siteUrl,
-            task: row.task,
-          })),
-        },
-      })
-
-      setRows([EMPTY_ROW()])
-      toast.success("Background agents queued.")
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to create background batch.",
-      )
+  useEffect(() => {
+    if (!form.siteUrl.trim()) {
+      setSelectedCredentialId(null);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          LAST_SELECTED_CREDENTIAL_KEY,
+          NO_CREDENTIAL_SELECTED,
+        );
+      }
+      return;
     }
-  }
 
-  const handleCreateSiteBatch = async () => {
+    if (!matchingCredentials.length) {
+      setSelectedCredentialId(null);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          LAST_SELECTED_CREDENTIAL_KEY,
+          NO_CREDENTIAL_SELECTED,
+        );
+      }
+      return;
+    }
+
+    const nextCredential =
+      matchingCredentials.find((credential) => credential.isDefault) ??
+      matchingCredentials[0];
+
+    if (!nextCredential || nextCredential._id === selectedCredentialId) {
+      return;
+    }
+
+    setSelectedCredentialId(nextCredential._id);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        LAST_SELECTED_CREDENTIAL_KEY,
+        nextCredential._id,
+      );
+    }
+  }, [form.siteUrl, matchingCredentials, selectedCredentialId]);
+
+  const handleCredentialChange = async (credentialId: string) => {
+    const nextCredential =
+      availableCredentials.find(
+        (credential: (typeof availableCredentials)[number]) =>
+          credential._id === credentialId,
+      ) ?? null;
+
+    if (!nextCredential || nextCredential._id === selectedCredentialId) {
+      return;
+    }
+
+    const previousCredentialId = selectedCredentialId;
+    setSelectedCredentialId(nextCredential._id);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        LAST_SELECTED_CREDENTIAL_KEY,
+        nextCredential._id,
+      );
+    }
+
     try {
-      await createMutation.mutateAsync({
+      await makeDefaultMutation.mutateAsync({
         data: {
-          siteBatch: {
-            agentCount: siteBatch.agentCount,
-            credentialId: siteBatch.credentialId !== "none" ? siteBatch.credentialId : undefined,
-            siteUrl: siteBatch.siteUrl,
-            task: siteBatch.task,
-          },
+          credentialId: nextCredential._id,
         },
-      })
+      });
+    } catch (error) {
+      setSelectedCredentialId(previousCredentialId);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to update the default credential.",
+      );
+    }
+  };
 
-      setSiteBatch({
-        agentCount: 3,
-        credentialId: "none",
+  const handleCreateOrchestrator = async () => {
+    if (!form.siteUrl.trim()) {
+      toast.error("Please enter a site URL to scan.");
+      return;
+    }
+
+    try {
+      const result = await createMutation.mutateAsync({
+        data: {
+          agentCount: form.agentCount,
+          credentialId:
+            selectedCredential &&
+            matchingCredentials.some(
+              (item) => item._id === selectedCredential._id,
+            )
+              ? (selectedCredential._id as Id<"credentials">)
+              : undefined,
+          siteUrl: form.siteUrl,
+          task: form.task,
+        },
+      });
+
+      setForm({
+        agentCount: 2,
         siteUrl: "",
         task: "",
-      })
-      toast.success("Site batch queued.")
+      });
+      setSelectedCredentialId(null);
+      toast.success("Orchestrator started.");
+      void navigate({
+        to: "/background-agents/$orchestratorId",
+        params: { orchestratorId: result.orchestratorId },
+      });
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create site batch.",
-      )
+        error instanceof Error
+          ? error.message
+          : "Failed to create the orchestrator.",
+      );
     }
-  }
+  };
 
-  const handleStopRun = async (runId: Id<"runs">) => {
+  const handleStop = async (orchestratorId: Id<"backgroundOrchestrators">) => {
+    setStoppingOrchestratorId(orchestratorId);
+
     try {
       const result = await stopMutation.mutateAsync({
-        data: { runId },
-      })
+        data: { orchestratorId },
+      });
 
       if (!result.ok) {
-        toast.error(
-          result.reason === "not_active"
-            ? "This agent is no longer active."
-            : "The agent could not be found.",
-        )
-        return
+        toast.error("This orchestrator could not be stopped.");
+        return;
       }
 
-      toast.success("Stop requested for background agent.")
+      toast.success("Stop requested.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to stop background agent.")
+      toast.error(error instanceof Error ? error.message : "Failed to stop.");
+    } finally {
+      setStoppingOrchestratorId((current) =>
+        current === orchestratorId ? null : current,
+      );
     }
-  }
+  };
 
   return (
-    <>
-      <div className="grid gap-5">
-        <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_28px_80px_-42px_rgba(0,0,0,0.65)]">
-          <CardHeader className="gap-5 border-b border-border/60 bg-muted/10">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="max-w-3xl space-y-3">
-                <Badge
-                  variant="outline"
-                  className="border-border/70 bg-background/60 text-muted-foreground"
-                >
-                  Background Agents
-                </Badge>
-                <CardTitle className="font-heading text-[2rem] leading-tight tracking-tight md:text-[2.2rem]">
-                  Queue simple background QA runs without babysitting a live browser.
-                </CardTitle>
-                <CardDescription className="max-w-2xl text-sm/6 text-muted-foreground">
-                  Each row creates one isolated agent. Add a website, optionally attach a
-                  saved login, and add a task if you want something more specific than the
-                  default end-to-end QA audit.
-                </CardDescription>
-              </div>
-              <div className="grid min-w-60 gap-3 sm:grid-cols-2">
-                <HeroMetric label="Queued" value={`${overview?.queuedRuns.length ?? 0}`} />
-                <HeroMetric label="Running" value={`${overview?.activeRuns.length ?? 0}`} />
-                <HeroMetric label="Completed" value={`${overview?.completedRuns.length ?? 0}`} />
-                <HeroMetric label="Failed" value={`${overview?.failedRuns.length ?? 0}`} />
-              </div>
-            </div>
-          </CardHeader>
-        </Card>
+    <div className="mx-auto flex max-w-5xl flex-col gap-12 pb-24 pt-4 md:pt-8">
+      {/* Header Section */}
+      <section className="space-y-6">
+        <div className="space-y-4">
+          <div className="inline-flex items-center rounded-full border border-border/40 bg-muted/20 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+            <IconSparkles className="mr-1.5 size-3" />
+            Background Agents
+          </div>
+          <h1 className="text-3xl font-medium tracking-tight text-foreground sm:text-4xl">
+            Autonomous Orchestrator
+          </h1>
+          <p className="max-w-2xl text-base text-muted-foreground leading-relaxed text-balance">
+            Fan out parallel Playwright agents to audit any site. Agents operate
+            headless in the background, streaming live evidence to a centralized
+            report.
+          </p>
+        </div>
 
-        <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_20px_55px_-42px_rgba(0,0,0,0.78)]">
-          <CardHeader className="gap-4 border-b border-border/60 bg-muted/15">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="space-y-2">
-                <Badge
-                  variant="secondary"
-                  className="w-fit rounded-full px-3 py-1 text-[11px] tracking-[0.16em] uppercase"
-                >
-                  Site-first launcher
-                </Badge>
-                <CardTitle>Launch one site with multiple agents</CardTitle>
-                <CardDescription className="max-w-2xl text-pretty">
-                  Enter a single site once, choose how many agents you want, and let Shard
-                  auto-shard coverage across different routes and flows.
-                </CardDescription>
-              </div>
-              <Badge variant="outline" className="tabular-nums">
-                {siteBatch.agentCount} agent{siteBatch.agentCount === 1 ? "" : "s"}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-4 pt-5">
-            <div className="grid gap-4 md:grid-cols-3">
-              <Field label="Site URL">
-                <Input
-                  value={siteBatch.siteUrl}
-                  placeholder="https://app.example.com"
-                  className="h-11 rounded-2xl border-border/70 bg-background/80 shadow-none"
-                  onChange={(event) =>
-                    setSiteBatch((current) => ({ ...current, siteUrl: event.target.value }))
-                  }
-                />
-              </Field>
-              <Field label="Credential">
-                <Select
-                  value={siteBatch.credentialId}
-                  onValueChange={(value) =>
-                    setSiteBatch((current) => ({ ...current, credentialId: value ?? "none" }))
-                  }
-                >
-                  <SelectTrigger className="h-11 rounded-2xl border-border/70 bg-background/80">
-                    <SelectValue placeholder="No credential" />
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    <SelectItem value="none">No credential</SelectItem>
-                    {(credentials ?? []).map((credential) => (
-                      <SelectItem key={credential._id} value={credential._id}>
-                        {credential.website} · {credential.login}
-                        {credential.isDefault ? " · default" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Agent Count">
-                <Select
-                  value={String(siteBatch.agentCount)}
-                  onValueChange={(value) =>
-                    setSiteBatch((current) => ({
-                      ...current,
-                      agentCount: Number(value),
-                    }))
-                  }
-                >
-                  <SelectTrigger className="h-11 rounded-2xl border-border/70 bg-background/80">
-                    <SelectValue placeholder="3" />
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    {[1, 2, 3, 4, 5, 6].map((count) => (
-                      <SelectItem key={count} value={String(count)}>
-                        {count}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-            <Field label="Shared Task">
-              <Textarea
-                value={siteBatch.task}
-                placeholder="Optional. Leave blank for the default end-to-end QA audit."
-                className="min-h-24 rounded-[1.45rem] border-border/70 bg-background/80 shadow-none"
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 pt-4">
+          <StatItem
+            label="Running"
+            value={`${orchestrators?.filter((item) => item.status === "running").length ?? 0}`}
+          />
+          <StatItem
+            label="Queued"
+            value={`${orchestrators?.filter((item) => item.status === "queued").length ?? 0}`}
+          />
+          <StatItem
+            label="Completed"
+            value={`${orchestrators?.filter((item) => item.status === "completed").length ?? 0}`}
+          />
+          <StatItem
+            label="Failed"
+            value={`${orchestrators?.filter((item) => item.status === "failed").length ?? 0}`}
+          />
+        </div>
+      </section>
+
+      {/* Launcher Form */}
+      <section>
+        <div className="flex flex-col gap-8 rounded-xl border border-border/40 bg-card p-6 shadow-sm sm:flex-row sm:p-8">
+          <div className="flex min-w-0 flex-1 flex-col gap-6">
+            <Field label="Target Environment URL">
+              <Input
+                value={form.siteUrl}
+                placeholder="https://staging.example.com"
+                className="h-9 border-border/50 bg-background/50 text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
                 onChange={(event) =>
-                  setSiteBatch((current) => ({ ...current, task: event.target.value }))
+                  setForm((current) => ({
+                    ...current,
+                    siteUrl: event.target.value,
+                  }))
                 }
               />
             </Field>
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-border/60 bg-muted/20 p-3">
-              <p className="text-sm text-muted-foreground">
-                Shard will create one merged site audit and keep each agent’s steps visible.
-              </p>
-              <Button
-                className="min-h-11 rounded-2xl"
-                disabled={createMutation.isPending}
-                onClick={() => {
-                  void handleCreateSiteBatch()
-                }}
-              >
-                {createMutation.isPending ? "Starting..." : "Start site batch"}
-                <IconPlayerPlay className="size-4" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_20px_55px_-42px_rgba(0,0,0,0.78)]">
-          <CardHeader className="gap-4 border-b border-border/60 bg-muted/15">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="space-y-2">
-                <Badge
-                  variant="secondary"
-                  className="w-fit rounded-full px-3 py-1 text-[11px] tracking-[0.16em] uppercase"
-                >
-                  Launch agents
-                </Badge>
-                <CardTitle>Advanced multi-site launcher</CardTitle>
-                <CardDescription className="max-w-2xl text-pretty">
-                  One row is one agent. Use this mode when you want different websites or
-                  fully custom per-agent tasks.
-                </CardDescription>
-              </div>
-              <Badge variant="outline" className="tabular-nums">
-                {totalAgentsRequested} agent{totalAgentsRequested === 1 ? "" : "s"} ready
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-4 pt-5">
-            {rows.map((row, index) => (
-              <AssignmentComposerRow
-                key={row.id}
-                row={row}
-                index={index}
-                canRemove={rows.length > 1}
-                credentials={credentials ?? []}
-                onChange={(nextRow) => {
-                  setRows((current) =>
-                    current.map((item) => (item.id === row.id ? nextRow : item)),
-                  )
-                }}
-                onRemove={() => {
-                  setRows((current) =>
-                    current.length === 1
-                      ? current
-                      : current.filter((item) => item.id !== row.id),
-                  )
-                }}
+            <Field label="Audit Context & Prompt (Optional)">
+              <Textarea
+                value={form.task}
+                placeholder="Leave blank for the standard comprehensive E2E QA sweep, or provide specific instructions (e.g. 'Focus entirely on the checkout flow')."
+                className="min-h-[140px] resize-none border-border/50 bg-background/50 text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    task: event.target.value,
+                  }))
+                }
               />
-            ))}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-border/60 bg-muted/20 p-3">
-              <Button
-                variant="outline"
-                className="min-h-11 rounded-2xl border-border/70 bg-background/80"
-                onClick={() => {
-                  setRows((current) => [...current, EMPTY_ROW()])
+            </Field>
+          </div>
+
+          <div className="flex w-full flex-col gap-6 sm:w-[280px] shrink-0">
+            <Field label="Authentication Profile">
+              <Select
+                value={selectedCredentialId ?? undefined}
+                onValueChange={(value) => {
+                  if (value) void handleCredentialChange(value);
                 }}
+                disabled={matchingCredentials.length === 0}
               >
-                <IconPlus className="size-4" />
-                Add another agent
-              </Button>
+                <SelectTrigger className="h-9 border-border/50 bg-background/50 text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary/30">
+                  <SelectValue
+                    placeholder={
+                      matchingCredentials.length
+                        ? "Select a profile"
+                        : "No saved profiles"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {matchingCredentials.map((credential) => (
+                    <SelectItem key={credential._id} value={credential._id}>
+                      {credential.login}
+                      {credential.isDefault ? " (Default)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field label="Agent Capacity (Lanes)">
+              <Select
+                value={String(form.agentCount)}
+                onValueChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    agentCount: Number(value),
+                  }))
+                }
+              >
+                <SelectTrigger className="h-9 border-border/50 bg-background/50 text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary/30">
+                  <SelectValue placeholder="2" />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {[1, 2, 3, 4, 5, 6].map((count) => (
+                    <SelectItem key={count} value={String(count)}>
+                      {count} Agents
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <div className="mt-auto sm:pt-6">
               <Button
-                className="min-h-11 rounded-2xl"
+                className="w-full text-sm font-medium"
                 disabled={createMutation.isPending}
                 onClick={() => {
-                  void handleCreateBatch()
+                  void handleCreateOrchestrator();
                 }}
               >
-                {createMutation.isPending ? "Starting..." : "Start agents"}
-                <IconPlayerPlay className="size-4" />
+                {createMutation.isPending ? "Initializing..." : "Launch Agents"}
+                {!createMutation.isPending && (
+                  <IconPlayerPlay className="ml-2 size-3.5" />
+                )}
               </Button>
             </div>
-          </CardContent>
-        </Card>
-
-        <div className="grid gap-4 xl:grid-cols-2">
-          <RunBucket
-            title="Active agents"
-            description="Agents currently running in the background."
-            icon={<IconLoader3 className="size-4" />}
-            items={overview?.activeRuns ?? []}
-            onSelect={setSelectedRunId}
-            emptyTitle="No active agents"
-            emptyBody="Running agents will appear here."
-          />
-          <RunBucket
-            title="Queued agents"
-            description="Agents waiting for a Playwright worker."
-            icon={<IconHourglass className="size-4" />}
-            items={overview?.queuedRuns ?? []}
-            onSelect={setSelectedRunId}
-            emptyTitle="No queued agents"
-            emptyBody="Create one or more rows above to queue QA work."
-          />
-          <RunBucket
-            title="Completed agents"
-            description="Finished agents with saved artifacts and findings."
-            icon={<IconRobot className="size-4" />}
-            items={overview?.completedRuns ?? []}
-            onSelect={setSelectedRunId}
-            emptyTitle="No completed agents"
-            emptyBody="Completed reports stay visible here."
-          />
-          <RunBucket
-            title="Failed agents"
-            description="Runs that failed or were cancelled."
-            icon={<IconClock className="size-4" />}
-            items={overview?.failedRuns ?? []}
-            onSelect={setSelectedRunId}
-            emptyTitle="No failed agents"
-            emptyBody="Failed jobs stay here for debugging."
-          />
-        </div>
-      </div>
-
-      <Drawer
-        direction="right"
-        open={Boolean(selectedRunId)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedRunId(null)
-          }
-        }}
-      >
-        <DrawerContent className="data-[vaul-drawer-direction=right]:sm:max-w-2xl">
-          <DrawerHeader className="gap-3 border-b border-border/60 bg-muted/10">
-            <DrawerTitle>Background agent detail</DrawerTitle>
-            <DrawerDescription className="text-pretty">
-              Review the saved output, findings, artifacts, and progress for this agent.
-            </DrawerDescription>
-          </DrawerHeader>
-          <div className="grid h-full min-h-0 gap-4 overflow-y-auto bg-background/60 p-4">
-            {!detail ? (
-              <Card className="min-h-72 border border-border/60 bg-card/80" />
-            ) : (
-              <>
-                <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.85)]">
-                  <CardContent className="grid gap-3 p-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">Agent {detail.run.agentOrdinal ?? "?"}</Badge>
-                      <StatusBadge status={detail.run.status} />
-                      {detail.batch ? (
-                        <Badge variant="outline">{detail.batch.title}</Badge>
-                      ) : null}
-                    </div>
-                    <p className="break-all text-sm font-medium text-foreground">
-                      {detail.run.url}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {detail.run.currentStep ?? "Queued for background QA"}
-                    </p>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <InfoMetric
-                        label="Task"
-                        value={getBackgroundTaskLabel(detail.run.instructions)}
-                      />
-                      <InfoMetric
-                        label="Findings"
-                        value={`${detail.findings.length} total`}
-                      />
-                      <InfoMetric
-                        label="Console / network / page"
-                        value={`${detail.consoleFindings.length} / ${detail.networkFindings.length} / ${detail.pageErrorFindings.length}`}
-                      />
-                      <InfoMetric
-                        label="Artifacts"
-                        value={`${detail.artifacts.length} saved`}
-                      />
-                      {batchReport?.isSingleSiteBatch ? (
-                        <InfoMetric
-                          label="Merged findings"
-                          value={`${batchReport.mergedFindings.length} deduped`}
-                        />
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {isActiveRunStatus(detail.run.status) ? (
-                        <Button
-                          variant="destructive"
-                          className="rounded-2xl"
-                          disabled={
-                            stopMutation.isPending || Boolean(detail.run.stopRequestedAt)
-                          }
-                          onClick={() => {
-                            void handleStopRun(detail.run._id)
-                          }}
-                        >
-                          {stopMutation.isPending || detail.run.stopRequestedAt
-                            ? "Stopping..."
-                            : "Stop agent"}
-                          <IconPlayerStop className="size-4" />
-                        </Button>
-                      ) : null}
-                      <Link
-                        to={
-                          detail.run.status === "queued" ||
-                          detail.run.status === "starting" ||
-                          detail.run.status === "running"
-                            ? "/runs/$runId"
-                            : "/history/$runId"
-                        }
-                        params={{ runId: detail.run._id }}
-                        className={buttonVariants({
-                          variant: "outline",
-                          className: "rounded-2xl",
-                        })}
-                      >
-                        Open full view
-                        <IconArrowRight className="size-4" />
-                      </Link>
-                      {detail.traceArtifact?.url ? (
-                        <a
-                          href={detail.traceArtifact.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={buttonVariants({
-                            variant: "outline",
-                            className: "rounded-2xl",
-                          })}
-                        >
-                          Open Playwright trace
-                          <IconExternalLink className="size-4" />
-                        </a>
-                      ) : null}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {batchReport?.isSingleSiteBatch ? (
-                  <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
-                    <CardHeader className="gap-3 border-b border-border/60 bg-muted/10">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <CardTitle className="text-base">Merged site audit</CardTitle>
-                          <CardDescription className="text-pretty">
-                            One deduped QA report for this site, with separate agent lanes underneath.
-                          </CardDescription>
-                        </div>
-                        <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground shadow-sm w-fit">
-                          <button
-                            onClick={() => setDetailTab("report")}
-                            className={`inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${detailTab === "report" ? "bg-muted/80 text-foreground" : "hover:text-foreground"}`}
-                          >
-                            QA Report
-                          </button>
-                          <button
-                            onClick={() => setDetailTab("timeline")}
-                            className={`inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${detailTab === "timeline" ? "bg-muted/80 text-foreground" : "hover:text-foreground"}`}
-                          >
-                            Timeline
-                          </button>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="grid gap-4 p-4">
-                      {detailTab === "report" ? (
-                        <>
-                          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                            <InfoMetric
-                              label="Overall score"
-                              value={`${batchReport.scoreSummary?.overall.toFixed(0) ?? "0"}/100`}
-                            />
-                            <InfoMetric
-                              label="Deduped findings"
-                              value={`${batchReport.mergedFindings.length}`}
-                            />
-                            <InfoMetric
-                              label="Covered routes"
-                              value={`${batchReport.coverageUrls.length}`}
-                            />
-                            <InfoMetric
-                              label="Performance audits"
-                              value={`${batchReport.mergedPerformanceAudits.length}`}
-                            />
-                          </div>
-                          <div className="grid gap-3">
-                            {batchReport.mergedFindings.slice(0, 8).map((finding: any) => (
-                              <article
-                                key={finding._id}
-                                className="rounded-[1.35rem] border border-border/60 bg-background/75 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                              >
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Badge variant="outline">{finding.source}</Badge>
-                                  <Badge variant="secondary">{finding.severity}</Badge>
-                                  {finding.browserSignal ? (
-                                    <Badge variant="outline">{finding.browserSignal}</Badge>
-                                  ) : null}
-                                </div>
-                                <p className="mt-2 text-sm font-medium text-foreground">{finding.title}</p>
-                                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                                  {finding.description}
-                                </p>
-                                {finding.pageOrFlow ? (
-                                  <p className="mt-2 text-xs text-muted-foreground">{finding.pageOrFlow}</p>
-                                ) : null}
-                              </article>
-                            ))}
-                          </div>
-                          <div className="rounded-[1.35rem] border border-border/60 bg-background/75 p-4">
-                            <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
-                              Coverage
-                            </p>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {batchReport.coverageUrls.slice(0, 18).map((route: string) => (
-                                <Badge key={route} variant="outline" className="max-w-full truncate">
-                                  {route}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="grid gap-4">
-                          {batchReport.agentRuns.map((agentRun: any) => (
-                            <Card
-                              key={agentRun.run._id}
-                              className="border border-border/60 bg-background/70 shadow-none"
-                            >
-                              <CardHeader className="gap-2 border-b border-border/60 bg-background/80">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Badge variant="outline">Agent {agentRun.run.agentOrdinal ?? "?"}</Badge>
-                                  <StatusBadge status={agentRun.run.status} />
-                                </div>
-                                <CardDescription>{agentRun.run.currentStep ?? "Queued for background QA"}</CardDescription>
-                              </CardHeader>
-                              <CardContent className="p-3">
-                                <AgentPlan
-                                  events={sortTimelineEvents(
-                                    filterTimelineEventsForQaView(agentRun.runEvents),
-                                  )}
-                                />
-                              </CardContent>
-                            </Card>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ) : batchReport ? (
-                  <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
-                    <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
-                      <CardTitle className="text-base">Batch agent lanes</CardTitle>
-                      <CardDescription className="text-pretty">
-                        This batch spans multiple sites, so Shard keeps each agent report separate instead of merging them into one QA summary.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="grid gap-4 p-4">
-                      {batchReport.agentRuns.map((agentRun: any) => (
-                        <Card
-                          key={agentRun.run._id}
-                          className="border border-border/60 bg-background/70 shadow-none"
-                        >
-                          <CardHeader className="gap-2 border-b border-border/60 bg-background/80">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant="outline">Agent {agentRun.run.agentOrdinal ?? "?"}</Badge>
-                              <StatusBadge status={agentRun.run.status} />
-                            </div>
-                            <CardDescription className="text-pretty">
-                              {agentRun.run.url}
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-3 p-3">
-                            <p className="text-sm text-muted-foreground">
-                              {agentRun.run.currentStep ?? "Queued for background QA"}
-                            </p>
-                            <AgentPlan
-                              events={sortTimelineEvents(
-                                filterTimelineEventsForQaView(agentRun.runEvents),
-                              )}
-                            />
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
-                    <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
-                      <CardTitle className="text-base">Agent output</CardTitle>
-                      <CardDescription className="text-pretty">
-                        Step-by-step status from the background worker.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="p-4">
-                      <AgentPlan
-                        events={sortTimelineEvents(
-                          filterTimelineEventsForQaView(detail.runEvents),
-                        )}
-                      />
-                    </CardContent>
-                  </Card>
-                )}
-
-                <Card className="border border-border/60 bg-card shadow-[0_20px_48px_-38px_rgba(0,0,0,0.82)]">
-                  <CardHeader className="gap-2 border-b border-border/60 bg-muted/10">
-                    <CardTitle className="text-base">Artifacts</CardTitle>
-                    <CardDescription className="text-pretty">
-                      Latest screenshots, trace exports, and saved outputs.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-3 p-4">
-                    {detail.latestScreenshot?.url ? (
-                      <a
-                        href={detail.latestScreenshot.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="overflow-hidden rounded-[1.45rem] border border-border/60 bg-background/75 shadow-[0_20px_45px_-35px_rgba(0,0,0,0.85)] outline outline-1 outline-white/5"
-                      >
-                        <img
-                          alt={detail.latestScreenshot.title ?? "Background QA screenshot"}
-                          src={detail.latestScreenshot.url}
-                          className="aspect-[16/10] w-full object-cover"
-                        />
-                        <div className="flex items-center justify-between gap-3 p-3">
-                          <div>
-                            <p className="text-sm font-medium text-foreground">
-                              {detail.latestScreenshot.title ?? "Latest screenshot"}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {detail.latestScreenshot.pageUrl ?? detail.run.currentUrl ?? detail.run.url}
-                            </p>
-                          </div>
-                          <IconPhoto className="size-4 text-muted-foreground" />
-                        </div>
-                      </a>
-                    ) : (
-                      <Empty className="min-h-40 rounded-[1.4rem] border border-dashed border-border/60 bg-background/70">
-                        <EmptyHeader>
-                          <EmptyMedia variant="icon">
-                            <IconPhoto />
-                          </EmptyMedia>
-                          <EmptyTitle>No screenshot saved yet.</EmptyTitle>
-                          <EmptyDescription>
-                            This agent has not stored a screenshot yet.
-                          </EmptyDescription>
-                        </EmptyHeader>
-                      </Empty>
-                    )}
-                  </CardContent>
-                </Card>
-              </>
-            )}
-          </div>
-        </DrawerContent>
-      </Drawer>
-    </>
-  )
-}
-
-function AssignmentComposerRow({
-  canRemove,
-  credentials,
-  index,
-  onChange,
-  onRemove,
-  row,
-}: {
-  canRemove: boolean
-  credentials: Array<{
-    _id: Id<"credentials">
-    isDefault: boolean
-    login: string
-    origin: string
-    website: string
-  }>
-  index: number
-  onChange: (row: AssignmentRow) => void
-  onRemove: () => void
-  row: AssignmentRow
-}) {
-  const siteOrigin = safeOrigin(row.siteUrl)
-  const matchingCredentials = siteOrigin
-    ? credentials.filter((credential) => credential.origin === siteOrigin)
-    : credentials
-
-  return (
-    <div className="rounded-[1.7rem] border border-border/60 bg-background/95 p-4 shadow-[0_20px_45px_-36px_rgba(0,0,0,0.82)]">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">Agent {index + 1}</p>
-          <p className="text-sm text-muted-foreground">
-            Add a URL, optionally attach a saved login, and leave the task blank if you
-            want the default QA pass.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className="bg-background/80 text-muted-foreground">
-              {siteOrigin ? siteOrigin.replace(/^https?:\/\//, "") : "URL decides site scope"}
-            </Badge>
-            <Badge variant="secondary" className="bg-secondary/80">
-              {matchingCredentials.length} matching credential
-              {matchingCredentials.length === 1 ? "" : "s"}
-            </Badge>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          disabled={!canRemove}
-          className="min-h-10 min-w-10 rounded-full"
-          onClick={onRemove}
-        >
-          <IconTrash className="size-4" />
-          <span className="sr-only">Remove assignment</span>
-        </Button>
-      </div>
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <Field label="URL">
-          <Input
-            value={row.siteUrl}
-            placeholder="https://app.example.com"
-            className="h-11 rounded-2xl border-border/70 bg-background/80 shadow-none"
-            onChange={(event) => onChange({ ...row, siteUrl: event.target.value })}
-          />
-        </Field>
-        <Field label="Credential">
-          <Select
-            value={row.credentialId}
-            onValueChange={(value) => onChange({ ...row, credentialId: value ?? "none" })}
-          >
-            <SelectTrigger className="h-11 rounded-2xl border-border/70 bg-background/80">
-              <SelectValue placeholder="No credential" />
-            </SelectTrigger>
-            <SelectContent align="start">
-              <SelectItem value="none">No credential</SelectItem>
-              {matchingCredentials.map((credential) => (
-                <SelectItem key={credential._id} value={credential._id}>
-                  {credential.login}
-                  {credential.isDefault ? " · default" : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
-      <div className="mt-4">
-        <Field label="Task">
-          <Textarea
-            value={row.task}
-            placeholder="Optional. Leave blank for the default end-to-end QA audit."
-            className="min-h-28 rounded-[1.45rem] border-border/70 bg-background/80 shadow-none"
-            onChange={(event) => onChange({ ...row, task: event.target.value })}
-          />
-        </Field>
-      </div>
-    </div>
-  )
-}
+      </section>
 
-function RunBucket({
-  description,
-  emptyBody,
-  emptyTitle,
-  icon,
-  items,
-  onSelect,
-  title,
-}: {
-  description: string
-  emptyBody: string
-  emptyTitle: string
-  icon: ReactNode
-  items: any[]
-  onSelect: (runId: Id<"runs">) => void
-  title: string
-}) {
-  return (
-    <Card className="overflow-hidden border border-border/60 bg-card shadow-[0_22px_55px_-42px_rgba(0,0,0,0.82)]">
-      <CardHeader className="gap-3 border-b border-border/60 bg-muted/10">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              {icon}
-              {title}
-            </CardTitle>
-            <CardDescription className="text-pretty">{description}</CardDescription>
-          </div>
-          <Badge variant="outline" className="tabular-nums">
-            {items.length}
-          </Badge>
+      {/* History List */}
+      <section className="flex flex-col">
+        <div className="flex items-center justify-between border-b border-border/40 pb-4">
+          <h2 className="text-sm font-medium text-foreground">Recent Audits</h2>
+          <span className="text-xs text-muted-foreground">
+            {orchestrators?.length ?? 0} total
+          </span>
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-3 p-4">
-        {items.length === 0 ? (
-          <Empty className="min-h-52 rounded-[1.6rem] border border-dashed border-border/60 bg-background/60">
+
+        {!orchestrators?.length ? (
+          <Empty className="my-8 min-h-48 border-dashed bg-transparent">
             <EmptyHeader>
-              <EmptyTitle>{emptyTitle}</EmptyTitle>
-              <EmptyDescription>{emptyBody}</EmptyDescription>
+              <EmptyMedia
+                variant="icon"
+                className="bg-muted/50 text-muted-foreground"
+              >
+                <IconTargetArrow />
+              </EmptyMedia>
+              <EmptyTitle>No audits dispatched</EmptyTitle>
+              <EmptyDescription>
+                The first autonomous audit you launch will appear here.
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
-          items.map((item) => (
-            <button
-              key={item.run._id}
-              type="button"
-              onClick={() => onSelect(item.run._id)}
-              className="group rounded-[1.55rem] border border-border/60 bg-background/95 p-4 text-left shadow-[0_18px_45px_-36px_rgba(0,0,0,0.8)] transition-[transform,box-shadow,border-color,background-color] duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[0_26px_60px_-38px_rgba(0,0,0,0.88)]"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">Agent {item.run.agentOrdinal ?? "?"}</Badge>
-                  <StatusBadge status={item.run.status} />
+          <div className="flex flex-col">
+            {orchestrators.map((item) => (
+              <div
+                key={item.orchestrator._id}
+                className="group flex flex-col gap-4 border-b border-border/40 py-4 last:border-0 transition-colors hover:bg-muted/20 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:-mx-4 sm:rounded-lg"
+              >
+                <div className="flex min-w-0 flex-1 items-start gap-4 sm:items-center">
+                  <div className="mt-1 shrink-0 sm:mt-0">
+                    <StatusIndicator status={item.status} />
+                  </div>
+                  <div className="grid min-w-0 gap-1.5 sm:gap-1">
+                    <Link
+                      to="/background-agents/$orchestratorId"
+                      params={{ orchestratorId: item.orchestrator._id }}
+                      className="truncate text-sm font-medium text-foreground hover:underline"
+                    >
+                      {item.orchestrator.url}
+                    </Link>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground tabular-nums">
+                      <span className="truncate max-w-[200px] sm:max-w-none">
+                        {getBackgroundTaskLabel(item.orchestrator.instructions)}
+                      </span>
+                      <span className="hidden h-1 w-1 shrink-0 rounded-full bg-border sm:inline-block" />
+                      <span className="hidden sm:inline-block">
+                        {item.orchestrator.agentCount} agents
+                      </span>
+                      <span className="hidden h-1 w-1 shrink-0 rounded-full bg-border sm:inline-block" />
+                      <span className="hidden sm:inline-block">
+                        {formatSessionDuration(item.durationMs)}
+                      </span>
+                      <span className="hidden h-1 w-1 shrink-0 rounded-full bg-border sm:inline-block" />
+                      <span className="capitalize">{item.status}</span>
+                    </div>
+                  </div>
                 </div>
-                {item.batch ? (
-                  <Badge variant="outline" className="max-w-full truncate">
-                    {item.batch.title}
-                  </Badge>
-                ) : null}
+
+                <div className="flex shrink-0 items-center justify-end gap-3 pl-6">
+                  {item.status === "running" || item.status === "queued" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-xs font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      disabled={
+                        stoppingOrchestratorId === item.orchestrator._id ||
+                        Boolean(item.orchestrator.stopRequestedAt)
+                      }
+                      onClick={() => {
+                        void handleStop(item.orchestrator._id);
+                      }}
+                    >
+                      <span className="mr-1.5 size-1.5 rounded-sm bg-current" />
+                      {stoppingOrchestratorId === item.orchestrator._id ||
+                      item.orchestrator.stopRequestedAt
+                        ? "Stopping"
+                        : "Stop"}
+                    </Button>
+                  ) : null}
+                  <Link
+                    to="/background-agents/$orchestratorId"
+                    params={{ orchestratorId: item.orchestrator._id }}
+                    className={buttonVariants({
+                      variant: "secondary",
+                      size: "sm",
+                      className:
+                        "h-8 bg-muted/50 text-xs font-medium hover:bg-muted",
+                    })}
+                  >
+                    {isBackgroundOrchestratorActive(item.status) ? "Open Live Run" : "View Report"}
+                    <IconArrowRight className="ml-1.5 size-3.5 opacity-60" />
+                  </Link>
+                </div>
               </div>
-              <p className="mt-4 line-clamp-1 text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
-                {safeOrigin(item.run.url)?.replace(/^https?:\/\//, "") ?? item.run.url}
-              </p>
-              <p className="mt-2 line-clamp-2 text-sm font-medium text-foreground">
-                {getBackgroundTaskLabel(item.run.instructions)}
-              </p>
-              <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
-                {item.run.currentStep ?? "Queued for background QA"}
-              </p>
-              <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="rounded-full bg-background/80 px-2.5 py-1 tabular-nums">
-                  {item.findingsCount} findings
-                </span>
-                {item.traceArtifact ? (
-                  <span className="rounded-full bg-background/80 px-2.5 py-1">Trace ready</span>
-                ) : null}
-                {item.latestEvent?.stepIndex !== undefined ? (
-                  <span className="rounded-full bg-background/80 px-2.5 py-1 tabular-nums">
-                    Step {item.latestEvent.stepIndex}
-                  </span>
-                ) : null}
-              </div>
-              <div className="mt-4 flex items-center gap-2 text-sm font-medium text-foreground/85 transition-transform duration-200 group-hover:translate-x-0.5">
-                Open agent detail
-                <IconArrowRight className="size-4" />
-              </div>
-            </button>
-          ))
+            ))}
+          </div>
         )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function HeroMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.5rem] border border-border/60 bg-background/65 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-      <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
-        {label}
-      </p>
-      <p className="mt-2 text-3xl font-medium text-foreground tabular-nums">{value}</p>
+      </section>
     </div>
-  )
+  );
 }
 
-function Field({
-  children,
-  label,
-}: {
-  children: ReactNode
-  label: string
-}) {
+function StatItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid gap-2">
-      <Label className="text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-        {label}
-      </Label>
+    <div className="flex flex-col gap-1 rounded-[14px] border border-border/40 bg-muted/10 p-4 shadow-sm">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="text-2xl font-semibold tracking-tight text-foreground">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function Field({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <div className="grid gap-2 text-left">
+      <Label className="text-[13px] font-medium text-foreground">{label}</Label>
       {children}
     </div>
-  )
+  );
 }
 
-function InfoMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.2rem] border border-border/60 bg-background/70 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-      <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
-        {label}
-      </p>
-      <p className="mt-1 text-sm text-foreground">{value}</p>
-    </div>
-  )
-}
-
-function StatusBadge({
+function StatusIndicator({
   status,
 }: {
-  status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
+  status: "cancelled" | "completed" | "failed" | "queued" | "running";
 }) {
-  if (status === "failed") {
-    return <Badge variant="destructive">failed</Badge>
+  if (status === "completed") {
+    return (
+      <div className="size-2.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.3)]" />
+    );
   }
 
-  if (status === "completed") {
-    return <Badge variant="default">completed</Badge>
+  if (status === "failed") {
+    return (
+      <div className="size-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.3)]" />
+    );
   }
 
   if (status === "cancelled") {
-    return <Badge variant="secondary">cancelled</Badge>
+    return <div className="size-2.5 rounded-full bg-zinc-400" />;
   }
 
-  return <Badge variant="secondary">{status}</Badge>
-}
-
-function safeOrigin(siteUrl: string) {
-  try {
-    return new URL(siteUrl).origin
-  } catch {
-    return null
+  if (status === "running") {
+    return (
+      <div className="relative flex size-2.5 items-center justify-center">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+        <span className="relative inline-flex size-2.5 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]" />
+      </div>
+    );
   }
+
+  return <div className="size-2.5 animate-pulse rounded-full bg-amber-500" />;
 }

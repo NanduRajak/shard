@@ -255,6 +255,7 @@ export async function runQaWorkflow({
 
   const convex = createConvexServerClient()
   const qaConfig = getQaRuntimeConfig(browserProvider)
+  const run = await convex.query(api.runs.getRun, { runId })
 
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
   let context: BrowserContext | null = null
@@ -488,6 +489,7 @@ export async function runQaWorkflow({
         sessionId: sessionDocId,
       })
       const sessionResult = await runQaSession({
+        agentOrdinal: run?.agentOrdinal,
         browser: createPlaywrightQaBrowser(page),
         config: {
           agentTimeBudgetMs: qaConfig.agentTimeBudgetMs,

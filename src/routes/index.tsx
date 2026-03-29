@@ -15,13 +15,24 @@ import { createRun } from "@/lib/create-run"
 import { normalizeCredentialWebsite } from "@/lib/credential-url"
 import { makeCredentialDefault } from "@/lib/credentials-server"
 import { getRunModeCapabilities } from "@/lib/get-run-mode-capabilities"
+import {
+  getMatchingCredentialsForSiteUrl,
+  getPreferredCredentialId,
+  LAST_SELECTED_CREDENTIAL_KEY,
+  NO_CREDENTIAL_SELECTED,
+} from "@/lib/launcher-credentials"
 import { validateRunUrl } from "@/lib/run-url"
 
 export const Route = createFileRoute("/")({ component: App })
 
 const RUN_URL_PATTERN = /https?:\/\/\S+/i
-const LAST_SELECTED_CREDENTIAL_KEY = "last-selected-credential-id"
-const NO_CREDENTIAL_SELECTED = "__none__"
+const EMPTY_CREDENTIALS: Array<{
+  _id: Id<"credentials">
+  isDefault: boolean
+  login: string
+  origin: string
+  website: string
+}> = []
 
 function App() {
   const navigate = Route.useNavigate()
@@ -64,18 +75,16 @@ function App() {
   )
   const hasValidUrl = Boolean(validUrl)
   const siteOrigin = normalizedWebsite?.origin ?? null
-  const availableCredentials = credentials ?? []
+  const availableCredentials = credentials ?? EMPTY_CREDENTIALS
+  const availableCredentialCount = availableCredentials.length
   const selectedCredential = useMemo(
     () =>
       availableCredentials.find((credential) => credential._id === selectedCredentialId) ?? null,
     [availableCredentials, selectedCredentialId],
   )
   const matchingCredentials = useMemo(
-    () =>
-      siteOrigin
-        ? availableCredentials.filter((credential) => credential.origin === siteOrigin)
-        : [],
-    [availableCredentials, siteOrigin],
+    () => getMatchingCredentialsForSiteUrl(availableCredentials, validUrl ?? ""),
+    [availableCredentials, validUrl],
   )
   const credentialOptions = useMemo(
     () =>
@@ -130,11 +139,10 @@ function App() {
     if (restoredCredential) {
       setSelectedCredentialId(restoredCredential._id)
     } else {
+      const nextDefaultId = getPreferredCredentialId(availableCredentials)
       const nextDefault =
-        availableCredentials.find((credential) => credential.isDefault) ??
-        availableCredentials[0] ??
-        null
-      setSelectedCredentialId(nextDefault?._id ?? null)
+        availableCredentials.find((credential) => credential._id === nextDefaultId) ?? null
+      setSelectedCredentialId((nextDefault?._id as Id<"credentials"> | undefined) ?? null)
     }
   }, [availableCredentials])
 
@@ -147,7 +155,7 @@ function App() {
       return
     }
 
-    if (!siteOrigin || !availableCredentials.length) {
+    if (!siteOrigin || availableCredentialCount === 0) {
       return
     }
 
@@ -161,18 +169,19 @@ function App() {
       return
     }
 
+    const nextCredentialId = getPreferredCredentialId(matchingCredentials)
     const nextCredential =
-      matchingCredentials.find((credential) => credential.isDefault) ?? matchingCredentials[0]
+      matchingCredentials.find((credential) => credential._id === nextCredentialId) ?? null
 
     if (!nextCredential || nextCredential._id === selectedCredentialId) {
       return
     }
 
-    setSelectedCredentialId(nextCredential._id)
+    setSelectedCredentialId(nextCredential._id as Id<"credentials">)
     if (typeof window !== "undefined") {
       window.localStorage.setItem(LAST_SELECTED_CREDENTIAL_KEY, nextCredential._id)
     }
-  }, [hasValidUrl, matchingCredentials, selectedCredentialId, siteOrigin])
+  }, [availableCredentialCount, hasValidUrl, matchingCredentials, selectedCredentialId, siteOrigin])
 
   const handleSubmit = async () => {
     if (!browserProvider) {

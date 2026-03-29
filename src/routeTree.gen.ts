@@ -17,6 +17,7 @@ import { Route as BackgroundAgentsRouteImport } from './routes/background-agents
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 import { Route as HistoryRunIdRouteImport } from './routes/history_.$runId'
+import { Route as BackgroundAgentsOrchestratorIdRouteImport } from './routes/background-agents.$orchestratorId'
 import { Route as ApiInngestRouteImport } from './routes/api.inngest'
 import { Route as ApiLocalHelperActionRouteImport } from './routes/api.local-helper.$action'
 import { Route as ApiGithubWebhookRouteImport } from './routes/api/github/webhook'
@@ -67,6 +68,12 @@ const HistoryRunIdRoute = HistoryRunIdRouteImport.update({
   path: '/history/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BackgroundAgentsOrchestratorIdRoute =
+  BackgroundAgentsOrchestratorIdRouteImport.update({
+    id: '/$orchestratorId',
+    path: '/$orchestratorId',
+    getParentRoute: () => BackgroundAgentsRoute,
+  } as any)
 const ApiInngestRoute = ApiInngestRouteImport.update({
   id: '/api/inngest',
   path: '/api/inngest',
@@ -116,12 +123,13 @@ const ApiGithubInstallCallbackRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/background-agents': typeof BackgroundAgentsRoute
+  '/background-agents': typeof BackgroundAgentsRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
   '/api/inngest': typeof ApiInngestRoute
+  '/background-agents/$orchestratorId': typeof BackgroundAgentsOrchestratorIdRoute
   '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
@@ -135,12 +143,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/background-agents': typeof BackgroundAgentsRoute
+  '/background-agents': typeof BackgroundAgentsRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
   '/api/inngest': typeof ApiInngestRoute
+  '/background-agents/$orchestratorId': typeof BackgroundAgentsOrchestratorIdRoute
   '/history/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
@@ -155,12 +164,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/background-agents': typeof BackgroundAgentsRoute
+  '/background-agents': typeof BackgroundAgentsRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/dashboard': typeof DashboardRoute
   '/history': typeof HistoryRoute
   '/review-bot': typeof ReviewBotRoute
   '/api/inngest': typeof ApiInngestRoute
+  '/background-agents/$orchestratorId': typeof BackgroundAgentsOrchestratorIdRoute
   '/history_/$runId': typeof HistoryRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/review-bot'
     | '/api/inngest'
+    | '/background-agents/$orchestratorId'
     | '/history/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/review-bot'
     | '/api/inngest'
+    | '/background-agents/$orchestratorId'
     | '/history/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
@@ -220,6 +232,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/review-bot'
     | '/api/inngest'
+    | '/background-agents/$orchestratorId'
     | '/history_/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
@@ -234,7 +247,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  BackgroundAgentsRoute: typeof BackgroundAgentsRoute
+  BackgroundAgentsRoute: typeof BackgroundAgentsRouteWithChildren
   CredentialsRoute: typeof CredentialsRoute
   DashboardRoute: typeof DashboardRoute
   HistoryRoute: typeof HistoryRoute
@@ -309,6 +322,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HistoryRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/background-agents/$orchestratorId': {
+      id: '/background-agents/$orchestratorId'
+      path: '/$orchestratorId'
+      fullPath: '/background-agents/$orchestratorId'
+      preLoaderRoute: typeof BackgroundAgentsOrchestratorIdRouteImport
+      parentRoute: typeof BackgroundAgentsRoute
+    }
     '/api/inngest': {
       id: '/api/inngest'
       path: '/api/inngest'
@@ -375,6 +395,17 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface BackgroundAgentsRouteChildren {
+  BackgroundAgentsOrchestratorIdRoute: typeof BackgroundAgentsOrchestratorIdRoute
+}
+
+const BackgroundAgentsRouteChildren: BackgroundAgentsRouteChildren = {
+  BackgroundAgentsOrchestratorIdRoute: BackgroundAgentsOrchestratorIdRoute,
+}
+
+const BackgroundAgentsRouteWithChildren =
+  BackgroundAgentsRoute._addFileChildren(BackgroundAgentsRouteChildren)
+
 interface ApiGithubInstallRouteChildren {
   ApiGithubInstallCallbackRoute: typeof ApiGithubInstallCallbackRoute
 }
@@ -388,7 +419,7 @@ const ApiGithubInstallRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  BackgroundAgentsRoute: BackgroundAgentsRoute,
+  BackgroundAgentsRoute: BackgroundAgentsRouteWithChildren,
   CredentialsRoute: CredentialsRoute,
   DashboardRoute: DashboardRoute,
   HistoryRoute: HistoryRoute,
