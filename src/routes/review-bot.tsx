@@ -575,12 +575,32 @@ function ReviewBotPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 pt-2">
-                {reviewBotState.repositoryLoadError ? (
-                  <Alert variant="destructive">
+                {reviewBotState.repositoryLoadIssue ? (
+                  <Alert variant="destructive" className="border-rose-500/30 bg-rose-500/10">
                     <IconShieldCheck />
-                    <AlertTitle>Repositories could not be loaded</AlertTitle>
-                    <AlertDescription>
-                      {reviewBotState.repositoryLoadError}
+                    <AlertTitle>{reviewBotState.repositoryLoadIssue.title}</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>{reviewBotState.repositoryLoadIssue.description}</p>
+                      {reviewBotState.repositoryLoadIssue.detail ? (
+                        <p className="text-xs text-rose-200/80">
+                          GitHub response: {reviewBotState.repositoryLoadIssue.detail}
+                        </p>
+                      ) : null}
+                      {reviewBotState.repositoryLoadIssue.kind === "github-auth" ? (
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="rounded-xl"
+                            onClick={() => {
+                              window.location.assign("/api/github/connect")
+                            }}
+                          >
+                            Reconnect GitHub
+                            <IconArrowRight className="size-4" />
+                          </Button>
+                        </div>
+                      ) : null}
                     </AlertDescription>
                   </Alert>
                 ) : null}
@@ -733,24 +753,37 @@ function ReviewBotPage() {
                           return (
                             <div
                               key={pullRequest.number}
-                              className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm transition-all duration-200 ease-out hover:border-border hover:bg-background/80"
+                              className="flex min-h-44 flex-col rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm transition-all duration-200 ease-out hover:border-border hover:bg-background/80"
                             >
-                              <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <p className="text-sm font-medium text-foreground">
+                                  #{pullRequest.number} {pullRequest.title}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {pullRequest.authorLogin
+                                    ? `@${pullRequest.authorLogin} • `
+                                    : ""}
+                                  Updated{" "}
+                                  {formatDistanceToNow(new Date(pullRequest.updatedAt), {
+                                    addSuffix: true,
+                                  })}
+                                </p>
+                              </div>
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <StatusBadge status={pullRequest.state} />
+                                <Badge
+                                  variant="outline"
+                                  className="border-slate-700/80 bg-slate-800 text-slate-100"
+                                >
+                                  {pullRequest.headBranch}
+                                </Badge>
+                                {trackedPullRequest?.latestReview?.status ? (
+                                  <StatusBadge status={trackedPullRequest.latestReview.status} />
+                                ) : null}
+                              </div>
+                              <div className="mt-auto flex justify-end pt-4">
                                 <div className="space-y-1">
-                                  <p className="text-sm font-medium text-foreground">
-                                    #{pullRequest.number} {pullRequest.title}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {pullRequest.authorLogin
-                                      ? `@${pullRequest.authorLogin} • `
-                                      : ""}
-                                    Updated{" "}
-                                    {formatDistanceToNow(new Date(pullRequest.updatedAt), {
-                                      addSuffix: true,
-                                    })}
-                                  </p>
-                                </div>
-                                {trackedPullRequest ? (
+                                  {trackedPullRequest ? (
                                   <Button
                                     variant="outline"
                                     className="rounded-2xl"
@@ -781,19 +814,8 @@ function ReviewBotPage() {
                                     )}
                                     Track review
                                   </Button>
-                                )}
-                              </div>
-                              <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <StatusBadge status={pullRequest.state} />
-                                  <Badge
-                                    variant="outline"
-                                    className="border-slate-700/80 bg-slate-800 text-slate-100"
-                                  >
-                                    {pullRequest.headBranch}
-                                  </Badge>
-                                {trackedPullRequest?.latestReview?.status ? (
-                                  <StatusBadge status={trackedPullRequest.latestReview.status} />
-                                ) : null}
+                                  )}
+                                </div>
                               </div>
                             </div>
                           )

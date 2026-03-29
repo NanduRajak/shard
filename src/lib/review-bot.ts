@@ -11,6 +11,13 @@ type RepoSelection = {
   owner: string
 }
 
+export type RepositoryLoadIssue = {
+  description: string
+  detail: string | null
+  kind: "github-auth" | "generic"
+  title: string
+}
+
 function parseRepoFullName(fullName: string) {
   const [owner, name] = fullName.split("/")
 
@@ -19,6 +26,40 @@ function parseRepoFullName(fullName: string) {
   }
 
   return { name, owner }
+}
+
+export function getRepositoryLoadIssue(error: unknown): RepositoryLoadIssue {
+  const detail =
+    error instanceof Error
+      ? error.message.trim()
+      : typeof error === "string"
+        ? error.trim()
+        : ""
+
+  const normalizedDetail = detail.toLowerCase()
+  const isGitHubAuthFailure =
+    normalizedDetail.includes("bad credentials") ||
+    normalizedDetail.includes("requires authentication") ||
+    normalizedDetail.includes("unauthorized") ||
+    normalizedDetail.includes("401")
+
+  if (isGitHubAuthFailure) {
+    return {
+      description:
+        "Your GitHub session is no longer valid, so Shard cannot fetch the repositories for this account. Reconnect GitHub to refresh access, then reload this list.",
+      detail: detail || null,
+      kind: "github-auth",
+      title: "GitHub session expired",
+    }
+  }
+
+  return {
+    description:
+      "Shard could not load your GitHub repositories right now. Try refreshing this section, and if it keeps failing reconnect GitHub to restore access.",
+    detail: detail || null,
+    kind: "generic",
+    title: "Repositories could not be loaded",
+  }
 }
 
 export const getReviewBotState = createServerFn({ method: "GET" }).handler(
@@ -51,7 +92,7 @@ export const getReviewBotState = createServerFn({ method: "GET" }).handler(
         accessibleRepositories: [],
         config,
         connection: null,
-        repositoryLoadError: null,
+        repositoryLoadIssue: null,
         trackedPullRequests: [],
         trackedRepos: [],
       }
@@ -67,7 +108,7 @@ export const getReviewBotState = createServerFn({ method: "GET" }).handler(
         accessibleRepositories: [],
         config,
         connection: null,
-        repositoryLoadError: null,
+        repositoryLoadIssue: null,
         trackedPullRequests: [],
         trackedRepos: [],
       }
@@ -78,7 +119,7 @@ export const getReviewBotState = createServerFn({ method: "GET" }).handler(
     })
     let accessibleRepositories: Array<RepoSelection> = []
     let trackedPullRequests: Array<any> = snapshot?.trackedPullRequests ?? []
-    let repositoryLoadError: string | null = null
+    let repositoryLoadIssue: RepositoryLoadIssue | null = null
 
     if (config.isReady) {
       try {
@@ -116,10 +157,7 @@ export const getReviewBotState = createServerFn({ method: "GET" }).handler(
           })
         )
       } catch (error) {
-        repositoryLoadError =
-          error instanceof Error
-            ? error.message
-            : "GitHub repositories could not be loaded."
+        repositoryLoadIssue = getRepositoryLoadIssue(error)
       }
     }
 
@@ -127,7 +165,7 @@ export const getReviewBotState = createServerFn({ method: "GET" }).handler(
       accessibleRepositories,
       config,
       connection: snapshot?.connection ?? null,
-      repositoryLoadError,
+      repositoryLoadIssue,
       trackedPullRequests,
       trackedRepos: snapshot?.trackedRepos ?? [],
     }
