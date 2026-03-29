@@ -5,20 +5,42 @@ import { motion } from "framer-motion";
 import {
   IconAlertTriangle,
   IconArrowLeft,
+  IconBolt,
   IconCheck,
   IconCircleCheck,
+  IconClockHour4,
+  IconBrandAndroid,
   IconExternalLink,
   IconHourglassEmpty,
+  IconInfoCircle,
   IconLoader3,
+  IconMapPin,
   IconPhoto,
   IconPlayerPlay,
+  IconPlayerStop,
   IconRadar2,
+  IconRoute,
+  IconRosetteDiscountCheck,
+  IconShieldExclamation,
+  IconStack2,
+  IconTrash,
+  IconWorldWww,
   IconX,
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   AgentPlan,
   type TimelineEvent as AgentPlanEvent,
@@ -39,6 +61,14 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   getBackgroundAgentLaneLabel,
   getBackgroundTaskLabel,
@@ -52,6 +82,8 @@ import {
   filterTimelineEventsForQaView,
   sortTimelineEvents,
 } from "@/lib/run-report";
+import { cn } from "@/lib/utils";
+import { deleteBackgroundOrchestrator } from "@/lib/delete-background-orchestrator";
 import { requestBackgroundOrchestratorStop } from "@/lib/request-background-orchestrator-stop";
 import { requestRunStop } from "@/lib/request-run-stop";
 
@@ -76,12 +108,23 @@ function BackgroundOrchestratorDetailPage() {
   const stopOrchestratorMutation = useMutation({
     mutationFn: requestBackgroundOrchestratorStop,
   });
+  const deleteOrchestratorMutation = useMutation({
+    mutationFn: deleteBackgroundOrchestrator,
+  });
   const stopRunMutation = useMutation({
     mutationFn: requestRunStop,
   });
   const [selectedAgentId, setSelectedAgentId] = useState<Id<"runs"> | null>(
     null,
   );
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedReportAgentId, setSelectedReportAgentId] = useState<
+    Id<"runs"> | null
+  >(null);
+  const [selectedReportSeverity, setSelectedReportSeverity] = useState<
+    "critical" | "high" | "medium" | null
+  >(null);
+  const [showAllMergedFindings, setShowAllMergedFindings] = useState(false);
   const [activeTab, setActiveTab] = useState<"report" | "timeline" | null>(
     null,
   );
@@ -120,6 +163,12 @@ function BackgroundOrchestratorDetailPage() {
     }
   }, [activeTab, detail]);
 
+  useEffect(() => {
+    if (!selectedReportAgentId) {
+      setSelectedReportSeverity(null);
+    }
+  }, [selectedReportAgentId]);
+
   const selectedAgent = useMemo(
     () =>
       report?.agentRuns.find(
@@ -133,6 +182,26 @@ function BackgroundOrchestratorDetailPage() {
       null,
     [detail, selectedAgentId],
   );
+  const selectedReportAgent = useMemo(
+    () =>
+      report?.agentRuns.find(
+        (agentRun: any) => agentRun.run._id === selectedReportAgentId,
+      ) ?? null,
+    [report, selectedReportAgentId],
+  );
+  const selectedReportFindings = useMemo(() => {
+    const findings = selectedReportAgent?.findings ?? [];
+    if (!selectedReportSeverity) {
+      return findings;
+    }
+    return findings.filter(
+      (finding: any) => finding.severity === selectedReportSeverity,
+    );
+  }, [selectedReportAgent, selectedReportSeverity]);
+  const visibleMergedFindings = useMemo(() => {
+    const findings = report?.mergedFindings ?? [];
+    return showAllMergedFindings ? findings : findings.slice(0, 4);
+  }, [report, showAllMergedFindings]);
   const mergedSeverityCounts = useMemo(() => {
     const findings = report?.mergedFindings ?? [];
 
@@ -177,12 +246,87 @@ function BackgroundOrchestratorDetailPage() {
 
   if (!detail || !report || !activeTab) {
     return (
-      <div className="mx-auto min-h-128 max-w-7xl animate-pulse rounded-2xl bg-muted/20 m-4 md:m-8" />
+      <div className="mx-auto grid max-w-8xl gap-4">
+        <PageLoadingSkeleton />
+      </div>
     );
   }
 
   const canStopOrchestrator = isBackgroundOrchestratorActive(detail.status);
+  const canDeleteOrchestrator = !canStopOrchestrator;
   const isReportReady = isBackgroundOrchestratorReportReady(detail.status);
+  const overallRiskLabel =
+    report.scoreSummary.overall >= 85
+      ? "Low"
+      : report.scoreSummary.overall >= 60
+        ? "Medium"
+        : "High";
+  const overallRiskTone =
+    overallRiskLabel === "Low"
+      ? "text-emerald-400"
+      : overallRiskLabel === "Medium"
+        ? "text-amber-400"
+        : "text-rose-400";
+  const metricsStrip = (
+    <div className="grid gap-4 md:grid-cols-5">
+      <MetricCard
+        label="Elapsed Time"
+        value={formatSessionDuration(detail.durationMs)}
+      />
+      <MetricCard
+        label="Lanes Deployed"
+        value={`${detail.orchestrator.agentCount}`}
+      />
+      <MetricCard
+        label="Agents Running"
+        value={`${detail.counts.running}`}
+      />
+      <MetricCard
+        label="Agents Completed"
+        value={`${detail.counts.completed}`}
+      />
+      <MetricCard
+        label="Auth Profile"
+        value={detail.credential?.login ?? "No stored login"}
+      />
+    </div>
+  );
+  const tabSwitcher = (
+    <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground w-fit shadow-sm relative">
+      <button
+        onClick={() => setActiveTab("report")}
+        disabled={!isReportReady}
+        title={
+          isReportReady
+            ? undefined
+            : "QA report unlocks after every background agent finishes."
+        }
+        className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "report" ? "text-foreground" : "hover:text-foreground"}`}
+      >
+        {activeTab === "report" && (
+          <motion.div
+            layoutId="activeTabIndicator"
+            className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
+            transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
+          />
+        )}
+        QA Report
+      </button>
+      <button
+        onClick={() => setActiveTab("timeline")}
+        className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "timeline" ? "text-foreground" : "hover:text-foreground"}`}
+      >
+        {activeTab === "timeline" && (
+          <motion.div
+            layoutId="activeTabIndicator"
+            className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
+            transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
+          />
+        )}
+        Agent Timelines
+      </button>
+    </div>
+  );
 
   return (
     <div className="mx-auto grid max-w-8xl gap-4">
@@ -200,213 +344,169 @@ function BackgroundOrchestratorDetailPage() {
                 >
                   <IconArrowLeft className="size-4" />
                 </Button>
-                <Badge
-                  variant="outline"
-                  className="tracking-[0.18em] uppercase"
-                >
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Orchestrator
-                </Badge>
+                </span>
                 <StatusBadge status={detail.status} />
-                {canStopOrchestrator ? (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="h-6 rounded-md px-2 text-[10px] uppercase tracking-widest bg-red-500/15 text-red-500 hover:bg-red-500/25 border-0 shadow-none ml-2"
-                    disabled={
-                      stopOrchestratorMutation.isPending ||
-                      Boolean(detail.orchestrator.stopRequestedAt)
-                    }
-                    onClick={() => {
-                      void stopOrchestratorMutation
-                        .mutateAsync({
-                          data: { orchestratorId: typedOrchestratorId },
-                        })
-                        .then((result) => {
-                          if (!result.ok)
-                            toast.error("Could not stop orchestrator.");
-                          else toast.success("Stop requested.");
-                        })
-                        .catch((error) => toast.error(error.message));
-                    }}
-                  >
-                    {stopOrchestratorMutation.isPending ||
-                    detail.orchestrator.stopRequestedAt
-                      ? "STOPPING..."
-                      : "STOP RUN"}
-                  </Button>
-                ) : null}
               </div>
-              <CardTitle className="text-2xl leading-tight text-foreground break-all max-w-[50rem]">
-                {detail.orchestrator.url}
-              </CardTitle>
-              <CardDescription className="max-w-3xl text-sm/6">
+              <CardTitle className="text-2xl leading-tight text-foreground max-w-[50rem]">
                 {getBackgroundTaskLabel(detail.orchestrator.instructions)}
+              </CardTitle>
+              <CardDescription className="max-w-3xl break-all font-mono text-sm/6 text-muted-foreground/90">
+                {detail.orchestrator.url}
               </CardDescription>
             </div>
 
-            <div className="grid min-w-52 gap-2 sm:grid-cols-2">
-              <MetricCard
-                label="Overall score"
-                value={`${report.scoreSummary.overall.toFixed(0)}/100`}
-              />
-              <MetricCard
-                label="Total Findings"
-                value={`${report.mergedFindings.length}`}
-              />
+            <div className="flex min-w-52 flex-col items-end gap-3 sm:min-w-64">
+              {canStopOrchestrator ? (
+                <Button
+                  variant="destructive"
+                  className="rounded-[0.85rem] h-9 px-4 text-xs tracking-wide uppercase font-semibold border-0 shadow-sm"
+                  disabled={
+                    stopOrchestratorMutation.isPending ||
+                    Boolean(detail.orchestrator.stopRequestedAt)
+                  }
+                  onClick={() => {
+                    void stopOrchestratorMutation
+                      .mutateAsync({
+                        data: { orchestratorId: typedOrchestratorId },
+                      })
+                      .then((result) => {
+                        if (!result.ok)
+                          toast.error("Could not stop orchestrator.");
+                        else toast.success("Stop requested.");
+                      })
+                      .catch((error) => toast.error(error.message));
+                  }}
+                >
+                  {stopOrchestratorMutation.isPending ||
+                  detail.orchestrator.stopRequestedAt
+                    ? "Stopping..."
+                    : "Stop run"}
+                  <IconPlayerStop className="ml-1.5 size-3.5" />
+                </Button>
+              ) : null}
+              {canDeleteOrchestrator ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-9 rounded-[0.85rem] border-0 bg-transparent text-destructive shadow-none hover:bg-destructive/10 hover:text-destructive"
+                  disabled={deleteOrchestratorMutation.isPending}
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  title="Delete background agent report"
+                  aria-label="Delete background agent report"
+                >
+                  <IconTrash className="size-4" />
+                </Button>
+              ) : null}
+
+              <div className="grid w-full gap-2 sm:grid-cols-2">
+                <MetricCard
+                  label="Overall Risk"
+                  value={overallRiskLabel}
+                  icon={<IconShieldExclamation className={`size-4 ${overallRiskTone}`} />}
+                  helperIcon={
+                    <div className="group relative flex items-center">
+                      <IconInfoCircle className="size-3.5 cursor-help text-muted-foreground transition-colors hover:text-foreground" />
+                      <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-72 rounded-xl border border-border/70 bg-background/95 p-3 text-[11px] normal-case tracking-normal text-muted-foreground shadow-xl group-hover:block">
+                        Overall risk is derived from the existing quality calculation:
+                        lower remaining quality means higher risk. This report labels
+                        the result as Low, Medium, or High instead of showing a raw
+                        numeric score.
+                      </div>
+                    </div>
+                  }
+                  valueClassName={`${overallRiskTone} text-base font-semibold uppercase tracking-[0.12em]`}
+                />
+                <MetricCard
+                  label="Total Findings"
+                  value={`${report.mergedFindings.length}`}
+                  icon={<IconStack2 className="size-4 text-sky-400" />}
+                  valueClassName="text-sky-400"
+                />
+              </div>
             </div>
           </div>
-
-          <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground mt-4 mb-2 w-fit shadow-sm relative">
-            <button
-              onClick={() => setActiveTab("report")}
-              disabled={!isReportReady}
-              title={
-                isReportReady
-                  ? undefined
-                  : "QA report unlocks after every background agent finishes."
-              }
-              className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "report" ? "text-foreground" : "hover:text-foreground"}`}
-            >
-              {activeTab === "report" && (
-                <motion.div
-                  layoutId="activeTabIndicator"
-                  className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
-                  transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
-                />
-              )}
-              QA Report
-            </button>
-            <button
-              onClick={() => setActiveTab("timeline")}
-              className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "timeline" ? "text-foreground" : "hover:text-foreground"}`}
-            >
-              {activeTab === "timeline" && (
-                <motion.div
-                  layoutId="activeTabIndicator"
-                  className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
-                  transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
-                />
-              )}
-              Agent Timelines
-            </button>
-          </div>
-          {!isReportReady ? (
-            <p className="text-xs text-muted-foreground">
-              QA report unlocks when all agent lanes finish. Live timelines and
-              artifacts are available now.
-            </p>
-          ) : null}
         </CardHeader>
 
         {activeTab === "report" && isReportReady && (
-          <CardContent className="grid gap-4 pt-4 md:grid-cols-5">
-            <MetricCard
-              label="Elapsed Time"
-              value={formatSessionDuration(detail.durationMs)}
-            />
-            <MetricCard
-              label="Lanes Deployed"
-              value={`${detail.orchestrator.agentCount}`}
-            />
-            <MetricCard
-              label="Agents Running"
-              value={`${detail.counts.running}`}
-            />
-            <MetricCard
-              label="Agents Completed"
-              value={`${detail.counts.completed}`}
-            />
-            <MetricCard
-              label="Auth Profile"
-              value={detail.credential?.login ?? "No stored login"}
-            />
+          <CardContent className="grid gap-4 pt-4">
+            {metricsStrip}
+            {tabSwitcher}
+            {!isReportReady ? (
+              <p className="text-xs text-muted-foreground">
+                QA report unlocks when all agent lanes finish. Live timelines and
+                artifacts are available now.
+              </p>
+            ) : null}
+          </CardContent>
+        )}
+
+        {activeTab === "timeline" && (
+          <CardContent className="grid gap-4 pt-4">
+            {metricsStrip}
+            {tabSwitcher}
+            {!isReportReady ? (
+              <p className="text-xs text-muted-foreground">
+                QA report unlocks when all agent lanes finish. Live timelines and
+                artifacts are available now.
+              </p>
+            ) : null}
           </CardContent>
         )}
       </Card>
 
       {/* MERGED QA REPORT TAB */}
       {activeTab === "report" && isReportReady && (
-        <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-          <Card className="border border-border/70 bg-card/80 h-full">
-            <CardHeader className="gap-3 border-b border-border/70">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <IconCheck className="size-4" />
-                Actionable Deduplicated Summary
-              </CardTitle>
-              <CardDescription>
-                Unique issues identified across all agent lanes during the
-                orchestrator sweep.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-4 grid gap-4">
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <MetricCard
-                  label="Critical Issues"
-                  value={`${mergedSeverityCounts.critical}`}
-                />
-                <MetricCard
-                  label="High Issues"
-                  value={`${mergedSeverityCounts.high}`}
-                />
-                <MetricCard
-                  label="Medium Issues"
-                  value={`${mergedSeverityCounts.medium}`}
-                />
-                <MetricCard
-                  label="Perf Audits"
-                  value={`${report.mergedPerformanceAudits.length}`}
-                />
-              </div>
-
-              {/* Merged Findings List */}
-              <div className="space-y-3">
-                {report.mergedFindings.length ? (
-                  report.mergedFindings.map((finding: any) => (
-                    <article
-                      key={finding._id}
-                      className="rounded-2xl border border-border/70 bg-background/70 p-4"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline">{finding.source}</Badge>
-                        <Badge variant="secondary">{finding.severity}</Badge>
-                        {finding.browserSignal ? (
-                          <Badge
-                            variant="outline"
-                            className="text-amber-500 border-amber-500/30"
-                          >
-                            {finding.browserSignal}
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <h3 className="mt-3 text-sm font-medium text-foreground">
-                        {finding.title}
-                      </h3>
-                      <p className="mt-1 text-sm leading-6 text-muted-foreground break-words text-pretty">
-                        {finding.description}
-                      </p>
-                      {finding.pageOrFlow ? (
-                        <div className="mt-3 text-xs text-muted-foreground">
-                          Location: {finding.pageOrFlow}
-                        </div>
-                      ) : null}
-                    </article>
-                  ))
-                ) : (
-                  <EmptyStateCopy
-                    icon={<IconCircleCheck className="size-4" />}
-                    title="No findings yet"
-                    body="Findings will automatically populate here as they are discovered by background agents."
-                  />
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4 h-max content-start">
+        <div className="grid gap-4">
+          <div className="grid gap-4 xl:grid-cols-2">
             <Card className="border border-border/70 bg-card/80">
               <CardHeader className="gap-3 border-b border-border/70">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <IconRadar2 className="size-4" />
+                  <IconStack2 className="size-4 text-emerald-400" />
+                  Agent Breakdown
+                </CardTitle>
+                <CardDescription>
+                  Contribution and status summary by agent lane.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4 grid gap-3">
+                {report.agentRuns.map((agentRun: any) => (
+                  <button
+                    key={agentRun.run._id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedReportAgentId(agentRun.run._id);
+                      setSelectedReportSeverity(null);
+                    }}
+                    className="cursor-pointer flex flex-col gap-2 rounded-2xl border border-border/70 bg-background/70 p-4 text-left transition-colors hover:border-border"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <IconBrandAndroid className="size-4 text-violet-400" />
+                        Agent {agentRun.run.agentOrdinal ?? "?"}
+                      </span>
+                      <StatusBadge status={agentRun.run.status} />
+                    </div>
+                    <div className="flex justify-between items-center text-xs text-muted-foreground mt-1 tabular-nums">
+                      <span className="flex items-center gap-1.5">
+                        <IconClockHour4 className="size-3.5 text-emerald-400/90" />
+                        {formatSessionDuration(agentRun.durationMs)}
+                      </span>
+                      <span className="flex items-center gap-1.5 text-yellow-200">
+                        <IconAlertTriangle className="size-3.5 text-yellow-400/90" />
+                        {agentRun.findings.length} findings
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="border border-border/70 bg-card/80">
+              <CardHeader className="gap-3 border-b border-border/70">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <IconRoute className="size-4 text-cyan-400" />
                   Routes Explored
                 </CardTitle>
                 <CardDescription>
@@ -415,7 +515,8 @@ function BackgroundOrchestratorDetailPage() {
               </CardHeader>
               <CardContent className="pt-4">
                 <div className="rounded-[1.1rem] border border-border/70 bg-background/70 p-4">
-                  <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                  <p className="flex items-center gap-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                    <IconRadar2 className="size-3.5 text-cyan-400/90" />
                     Coverage Map
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -424,8 +525,9 @@ function BackgroundOrchestratorDetailPage() {
                         <Badge
                           key={route}
                           variant="outline"
-                          className="max-w-full truncate font-normal"
+                          className="max-w-full truncate border-cyan-500/20 text-cyan-100"
                         >
+                          <IconMapPin className="mr-1.5 size-3 text-cyan-400" />
                           {route}
                         </Badge>
                       ))
@@ -438,37 +540,184 @@ function BackgroundOrchestratorDetailPage() {
                 </div>
               </CardContent>
             </Card>
-
-            <Card className="border border-border/70 bg-card/80">
-              <CardHeader className="gap-3 border-b border-border/70">
-                <CardTitle className="text-base">Agent Breakdown</CardTitle>
-                <CardDescription>
-                  Contribution and status summary by agent lane.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-4 grid gap-3">
-                {report.agentRuns.map((agentRun: any) => (
-                  <div
-                    key={agentRun.run._id}
-                    className="flex flex-col gap-2 rounded-2xl border border-border/70 bg-background/70 p-4"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-foreground">
-                        Agent {agentRun.run.agentOrdinal ?? "?"}
-                      </span>
-                      <StatusBadge status={agentRun.run.status} />
-                    </div>
-                    <div className="flex justify-between items-center text-xs text-muted-foreground mt-1 tabular-nums">
-                      <span>{formatSessionDuration(agentRun.durationMs)}</span>
-                      <span>{agentRun.findings.length} findings</span>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
           </div>
+
+          <Card className="border border-border/70 bg-card/80 h-full">
+            <CardHeader className="gap-3 border-b border-border/70">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <IconShieldExclamation className="size-4 text-amber-400" />
+                Actionable Deduplicated Summary
+              </CardTitle>
+              <CardDescription>
+                Unique issues identified across all agent lanes during the
+                orchestrator sweep.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4 grid gap-4">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <MetricCard
+                  label="Critical Issues"
+                  value={`${mergedSeverityCounts.critical}`}
+                  variant="summary"
+                  icon={<IconAlertTriangle className="size-4 text-red-400" />}
+                  accentClassName="border-red-500/20 bg-red-500/[0.05]"
+                  valueClassName="text-red-100"
+                />
+                <MetricCard
+                  label="High Issues"
+                  value={`${mergedSeverityCounts.high}`}
+                  variant="summary"
+                  icon={
+                    <IconShieldExclamation className="size-4 text-amber-400" />
+                  }
+                  accentClassName="border-amber-500/20 bg-amber-500/[0.05]"
+                  valueClassName="text-amber-100"
+                />
+                <MetricCard
+                  label="Medium Issues"
+                  value={`${mergedSeverityCounts.medium}`}
+                  variant="summary"
+                  icon={<IconInfoCircle className="size-4 text-sky-400" />}
+                  accentClassName="border-sky-500/20 bg-sky-500/[0.05]"
+                  valueClassName="text-sky-100"
+                />
+                <MetricCard
+                  label="Perf Audits"
+                  value={`${report.mergedPerformanceAudits.length}`}
+                  variant="summary"
+                  icon={<IconBolt className="size-4 text-violet-400" />}
+                  accentClassName="border-violet-500/20 bg-violet-500/[0.05]"
+                  valueClassName="text-violet-100"
+                />
+              </div>
+
+              <div className="space-y-3">
+                {report.mergedFindings.length ? (
+                  <>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {visibleMergedFindings.map((finding: any) => (
+                        <FindingReportCard key={finding._id} finding={finding} />
+                      ))}
+                    </div>
+                    {report.mergedFindings.length > 4 ? (
+                      <div className="flex justify-center pt-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-sm px-4 text-xs"
+                          onClick={() =>
+                            setShowAllMergedFindings((current) => !current)
+                          }
+                        >
+                          {showAllMergedFindings ? "View Less" : "View More"}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <EmptyStateCopy
+                    icon={<IconCircleCheck className="size-4" />}
+                    title="No findings yet"
+                    body="Findings will automatically populate here as they are discovered by background agents."
+                  />
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
+
+      <Sheet
+        open={selectedReportAgentId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedReportAgentId(null);
+          }
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="w-full border-border/70 bg-card sm:max-w-2xl"
+        >
+          <SheetHeader className="border-b border-border/70">
+            <SheetTitle className="flex items-center gap-2">
+              <IconRosetteDiscountCheck className="size-4 text-emerald-400" />
+              {selectedReportAgent
+                ? `Agent ${selectedReportAgent.run.agentOrdinal ?? "?"} Findings`
+                : "Agent Findings"}
+            </SheetTitle>
+            <SheetDescription>
+              {selectedReportAgent
+                ? `Filtered issue cards generated by this agent lane only.`
+                : "Filtered issue cards for the selected agent."}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="grid gap-4 border-b border-border/70 p-4 sm:grid-cols-3">
+            <MetricFilterCard
+              label="Critical Issues"
+              value={`${(selectedReportAgent?.findings ?? []).filter((finding: any) => finding.severity === "critical").length}`}
+              icon={<IconAlertTriangle className="size-4 text-red-400" />}
+              accentClassName="border-red-500/20 bg-red-500/[0.05]"
+              valueClassName="text-red-100"
+              active={selectedReportSeverity === "critical"}
+              onClick={() =>
+                setSelectedReportSeverity((current) =>
+                  current === "critical" ? null : "critical",
+                )
+              }
+            />
+            <MetricFilterCard
+              label="High Issues"
+              value={`${(selectedReportAgent?.findings ?? []).filter((finding: any) => finding.severity === "high").length}`}
+              icon={<IconShieldExclamation className="size-4 text-amber-400" />}
+              accentClassName="border-amber-500/20 bg-amber-500/[0.05]"
+              valueClassName="text-amber-100"
+              active={selectedReportSeverity === "high"}
+              onClick={() =>
+                setSelectedReportSeverity((current) =>
+                  current === "high" ? null : "high",
+                )
+              }
+            />
+            <MetricFilterCard
+              label="Medium Issues"
+              value={`${(selectedReportAgent?.findings ?? []).filter((finding: any) => finding.severity === "medium").length}`}
+              icon={<IconInfoCircle className="size-4 text-sky-400" />}
+              accentClassName="border-sky-500/20 bg-sky-500/[0.05]"
+              valueClassName="text-sky-100"
+              active={selectedReportSeverity === "medium"}
+              onClick={() =>
+                setSelectedReportSeverity((current) =>
+                  current === "medium" ? null : "medium",
+                )
+              }
+            />
+          </div>
+
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
+            {selectedReportFindings.length ? (
+              selectedReportFindings.map((finding: any) => (
+                <FindingReportCard key={finding._id} finding={finding} />
+              ))
+            ) : (
+              <EmptyStateCopy
+                icon={<IconCircleCheck className="size-4" />}
+                title={
+                  selectedReportSeverity
+                    ? `No ${selectedReportSeverity} findings`
+                    : "No findings for this agent"
+                }
+                body={
+                  selectedReportSeverity
+                    ? "This agent lane has no persisted issue cards for the selected severity."
+                    : "This agent lane finished without persisted issue cards."
+                }
+              />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* LIVE AGENT TIMELINES TAB */}
       {activeTab === "timeline" && (
@@ -646,6 +895,59 @@ function BackgroundOrchestratorDetailPage() {
           )}
         </div>
       )}
+
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete background agent report?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the orchestrator, all agent runs,
+              findings, screenshots, sessions, and related artifacts for{" "}
+              {detail.orchestrator.url}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteOrchestratorMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleteOrchestratorMutation.isPending}
+              onClick={() => {
+                void deleteOrchestratorMutation
+                  .mutateAsync({
+                    data: { orchestratorId: typedOrchestratorId },
+                  })
+                  .then((result) => {
+                    if (!result.ok) {
+                      toast.error(
+                        result.reason === "active"
+                          ? "Stop the orchestrator before deleting it."
+                          : "Could not delete background agent report.",
+                      );
+                      return;
+                    }
+
+                    toast.success("Background agent report deleted.");
+                    navigate({ to: "/background-agents" });
+                  })
+                  .catch((error) =>
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to delete background agent report.",
+                    ),
+                  );
+              }}
+            >
+              {deleteOrchestratorMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -654,16 +956,190 @@ function canStopRunState(status: string) {
   return status === "queued" || status === "starting" || status === "running";
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+function MetricCard({
+  label,
+  value,
+  variant = "default",
+  icon,
+  helperIcon,
+  accentClassName,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  variant?: "default" | "summary";
+  icon?: ReactNode;
+  helperIcon?: ReactNode;
+  accentClassName?: string;
+  valueClassName?: string;
+}) {
+  const isSummary = variant === "summary";
+
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
-      <dt className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-        {label}
+    <div
+      className={cn(
+        isSummary
+          ? "flex min-h-[84px] flex-col rounded-2xl border border-border/70 bg-background/70 p-3 transition-colors"
+          : "rounded-2xl border border-border/70 bg-background/70 p-4 transition-colors",
+        accentClassName,
+      )}
+    >
+      <dt
+        className={cn(
+          "flex items-center gap-2 font-semibold tracking-wider text-muted-foreground uppercase",
+          isSummary ? "text-[11px]" : "text-[11px]",
+        )}
+      >
+        {icon ? <span className="shrink-0">{icon}</span> : null}
+        <span>{label}</span>
+        {helperIcon ? <span className="ml-auto shrink-0">{helperIcon}</span> : null}
       </dt>
-      <dd className="mt-1 break-all text-[14px] font-medium text-foreground">
+      <dd
+        className={cn(
+          isSummary
+            ? "mt-auto self-end break-all text-right text-[1.5rem] leading-none font-semibold text-foreground"
+            : "mt-1 break-all text-[14px] font-medium text-foreground",
+          valueClassName,
+        )}
+      >
         {value}
       </dd>
     </div>
+  );
+}
+
+function MetricFilterCard({
+  active,
+  onClick,
+  accentClassName,
+  ...props
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  value: string;
+  icon?: ReactNode;
+  helperIcon?: ReactNode;
+  accentClassName?: string;
+  valueClassName?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "cursor-pointer rounded-2xl text-left transition-colors",
+        active
+          ? "ring-2 ring-foreground/30"
+          : "opacity-65 saturate-75 hover:opacity-90",
+      )}
+    >
+      <MetricCard
+        {...props}
+        accentClassName={cn(
+          accentClassName,
+          active
+            ? "shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+            : "border-border/50 bg-background/40",
+        )}
+      />
+    </button>
+  );
+}
+
+function FindingSourceBadge({ source }: { source: string }) {
+  const normalizedSource = source.toLowerCase();
+  const isBrowser = normalizedSource === "browser";
+
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "gap-1.5 rounded-full border px-3 py-1 font-medium",
+        isBrowser
+          ? "border-cyan-500/30 text-cyan-300"
+          : "border-border/70 text-muted-foreground",
+      )}
+    >
+      {isBrowser ? (
+        <IconWorldWww className="size-3" />
+      ) : (
+        <IconStack2 className="size-3" />
+      )}
+      {source}
+    </Badge>
+  );
+}
+
+function FindingSeverityBadge({ severity }: { severity: string }) {
+  const normalizedSeverity = severity.toLowerCase();
+
+  if (normalizedSeverity === "critical") {
+    return (
+      <Badge className="gap-1.5 rounded-full border-0 bg-red-500/15 px-3 py-1 font-medium text-red-300 hover:bg-red-500/20">
+        <IconAlertTriangle className="size-3" />
+        {severity}
+      </Badge>
+    );
+  }
+
+  if (normalizedSeverity === "high") {
+    return (
+      <Badge className="gap-1.5 rounded-full border-0 bg-amber-500/15 px-3 py-1 font-medium text-amber-300 hover:bg-amber-500/20">
+        <IconShieldExclamation className="size-3" />
+        {severity}
+      </Badge>
+    );
+  }
+
+  if (normalizedSeverity === "medium") {
+    return (
+      <Badge className="gap-1.5 rounded-full border-0 bg-sky-500/15 px-3 py-1 font-medium text-sky-300 hover:bg-sky-500/20">
+        <IconInfoCircle className="size-3" />
+        {severity}
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge
+      variant="secondary"
+      className="gap-1.5 rounded-full bg-muted/60 px-3 py-1 font-medium text-muted-foreground"
+    >
+      <IconInfoCircle className="size-3" />
+      {severity}
+    </Badge>
+  );
+}
+
+function FindingReportCard({ finding }: { finding: any }) {
+  return (
+    <article className="rounded-2xl border border-border/70 bg-background/70 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <FindingSourceBadge source={finding.source} />
+        <FindingSeverityBadge severity={finding.severity} />
+        {finding.browserSignal ? (
+          <Badge
+            variant="outline"
+            className="gap-1.5 border-amber-500/30 text-amber-400"
+          >
+            <IconWorldWww className="size-3" />
+            {finding.browserSignal}
+          </Badge>
+        ) : null}
+      </div>
+      <h3 className="mt-3 text-sm font-medium text-foreground">
+        {finding.title}
+      </h3>
+      <p className="mt-1 text-sm leading-6 text-muted-foreground break-words text-pretty">
+        {finding.description}
+      </p>
+      {finding.pageOrFlow ? (
+        <div className="mt-3 text-xs text-muted-foreground">
+          Location: {finding.pageOrFlow}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -756,6 +1232,151 @@ function StatusBadge({
       <IconHourglassEmpty className="size-3.5" stroke={2.5} />
       PENDING
     </Badge>
+  );
+}
+
+function MetricCardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 p-4 flex flex-col justify-center">
+      <div className="flex items-center gap-2">
+        <Skeleton className="size-4 rounded-full shrink-0" />
+        <Skeleton className="h-3 w-16" />
+      </div>
+      <Skeleton className="h-5 w-8 mt-2.5" />
+    </div>
+  );
+}
+
+function FindingCardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Skeleton className="h-5 w-16 rounded-full" />
+        <Skeleton className="h-5 w-16 rounded-full" />
+      </div>
+      <Skeleton className="mt-3 h-4 w-48" />
+      <div className="mt-2 space-y-1.5">
+        <Skeleton className="h-3.5 w-full" />
+        <Skeleton className="h-3.5 w-[85%]" />
+      </div>
+      <Skeleton className="mt-3 h-3 w-40" />
+    </div>
+  );
+}
+
+function PageLoadingSkeleton() {
+  return (
+    <>
+      <Card className="border border-border/70 bg-card/80">
+        <CardHeader className="gap-4 border-b border-border/70">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-3 w-full max-w-2xl">
+              <div className="flex flex-wrap items-center gap-2">
+                <Skeleton className="size-7 rounded-sm shrink-0 mr-0.5" />
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-5 w-20 rounded-md" />
+              </div>
+              <Skeleton className="h-8 w-[90%] sm:w-[50rem]" />
+              <Skeleton className="h-5 w-[70%] sm:w-[40rem]" />
+            </div>
+            <div className="grid min-w-52 gap-2 sm:grid-cols-2 mt-1 lg:mt-0">
+              <MetricCardSkeleton />
+              <MetricCardSkeleton />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-4 pt-4">
+          <div className="grid gap-4 md:grid-cols-5">
+            <MetricCardSkeleton />
+            <MetricCardSkeleton />
+            <MetricCardSkeleton />
+            <MetricCardSkeleton />
+            <MetricCardSkeleton />
+          </div>
+          <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] w-[260px] shadow-sm">
+             <Skeleton className="h-full w-full rounded-md" />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <Card className="border border-border/70 bg-card/80 h-full">
+          <CardHeader className="gap-3 border-b border-border/70">
+            <div className="flex items-center gap-2">
+               <Skeleton className="size-4 rounded-full shrink-0" />
+               <Skeleton className="h-5 w-64" />
+            </div>
+            <Skeleton className="h-4 w-96 max-w-full" />
+          </CardHeader>
+          <CardContent className="pt-4 grid gap-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <MetricCardSkeleton />
+              <MetricCardSkeleton />
+              <MetricCardSkeleton />
+              <MetricCardSkeleton />
+            </div>
+            <div className="space-y-3">
+              <FindingCardSkeleton />
+              <FindingCardSkeleton />
+              <FindingCardSkeleton />
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 h-max content-start">
+          <Card className="border border-border/70 bg-card/80">
+            <CardHeader className="gap-3 border-b border-border/70">
+              <div className="flex items-center gap-2">
+                 <Skeleton className="size-4 rounded-full shrink-0" />
+                 <Skeleton className="h-5 w-40" />
+              </div>
+              <Skeleton className="h-4 w-72 max-w-full" />
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="rounded-[1.1rem] border border-border/70 bg-background/70 p-4">
+                <Skeleton className="h-3 w-32" />
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Skeleton className="h-6 w-32 rounded-full" />
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                  <Skeleton className="h-6 w-48 rounded-full" />
+                  <Skeleton className="h-6 w-20 rounded-full" />
+                  <Skeleton className="h-6 w-36 rounded-full" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-border/70 bg-card/80">
+            <CardHeader className="gap-3 border-b border-border/70">
+              <Skeleton className="h-5 w-48" />
+              <Skeleton className="h-4 w-64 max-w-full" />
+            </CardHeader>
+            <CardContent className="pt-4 grid gap-3">
+              <div className="flex flex-col gap-2 rounded-2xl border border-border/70 bg-background/70 p-4">
+                 <div className="flex items-center justify-between">
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-5 w-16 rounded-md" />
+                 </div>
+                 <div className="flex justify-between items-center mt-1">
+                    <Skeleton className="h-3 w-16" />
+                    <Skeleton className="h-3 w-20" />
+                 </div>
+              </div>
+              <div className="flex flex-col gap-2 rounded-2xl border border-border/70 bg-background/70 p-4">
+                 <div className="flex items-center justify-between">
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-5 w-16 rounded-md" />
+                 </div>
+                 <div className="flex justify-between items-center mt-1">
+                    <Skeleton className="h-3 w-16" />
+                    <Skeleton className="h-3 w-20" />
+                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </>
   );
 }
 

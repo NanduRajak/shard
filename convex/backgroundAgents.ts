@@ -49,6 +49,58 @@ async function getRunsForOrchestrator(ctx: any, orchestratorId: string) {
     .collect()
 }
 
+async function deleteBackgroundRunCascade(ctx: any, runId: any) {
+  const [findings, artifacts, sessions, runEvents, performanceAudits] =
+    await Promise.all([
+      ctx.db
+        .query("findings")
+        .withIndex("by_run", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("artifacts")
+        .withIndex("by_run_and_created_at", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("sessions")
+        .withIndex("by_run_and_started_at", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("runEvents")
+        .withIndex("by_run_and_created_at", (q: any) => q.eq("runId", runId))
+        .collect(),
+      ctx.db
+        .query("performanceAudits")
+        .withIndex("by_run_and_created_at", (q: any) => q.eq("runId", runId))
+        .collect(),
+    ])
+
+  await Promise.all(
+    artifacts.map(async (artifact: any) => {
+      if (artifact.storageId) {
+        await ctx.storage.delete(artifact.storageId).catch(() => undefined)
+      }
+    }),
+  )
+
+  await Promise.all([
+    ...findings.map((finding: any) => ctx.db.delete(finding._id)),
+    ...artifacts.map((artifact: any) => ctx.db.delete(artifact._id)),
+    ...sessions.map((session: any) => ctx.db.delete(session._id)),
+    ...runEvents.map((event: any) => ctx.db.delete(event._id)),
+    ...performanceAudits.map((audit: any) => ctx.db.delete(audit._id)),
+  ])
+
+  await ctx.db.delete(runId)
+
+  return {
+    artifacts: artifacts.length,
+    findings: findings.length,
+    performanceAudits: performanceAudits.length,
+    runEvents: runEvents.length,
+    sessions: sessions.length,
+  }
+}
+
 async function buildAgentRunReport(ctx: any, run: any) {
   const [rawArtifacts, rawFindings, runEvents, session, performanceAudits] = await Promise.all([
     ctx.db
@@ -471,6 +523,54 @@ export const requestBackgroundOrchestratorStop = mutation({
       ok: true as const,
       stopRequestedAt,
       stoppedRuns: activeRuns.length,
+    }
+  },
+})
+
+export const deleteBackgroundOrchestrator = mutation({
+  args: {
+    orchestratorId: v.id("backgroundOrchestrators"),
+  },
+  handler: async (ctx, args) => {
+    const orchestrator = await ctx.db.get(args.orchestratorId)
+
+    if (!orchestrator) {
+      return { ok: false as const, reason: "not_found" as const }
+    }
+
+    const runs = await getRunsForOrchestrator(ctx, orchestrator._id)
+
+    if (runs.some((run: any) => isActiveRun(run.status))) {
+      return { ok: false as const, reason: "active" as const }
+    }
+
+    const deletedCounts = await Promise.all(
+      runs.map((run: any) => deleteBackgroundRunCascade(ctx, run._id)),
+    )
+
+    await ctx.db.delete(orchestrator._id)
+
+    return {
+      ok: true as const,
+      counts: deletedCounts.reduce(
+        (acc, current) => ({
+          artifacts: acc.artifacts + current.artifacts,
+          findings: acc.findings + current.findings,
+          performanceAudits:
+            acc.performanceAudits + current.performanceAudits,
+          runEvents: acc.runEvents + current.runEvents,
+          runs: acc.runs + 1,
+          sessions: acc.sessions + current.sessions,
+        }),
+        {
+          artifacts: 0,
+          findings: 0,
+          performanceAudits: 0,
+          runEvents: 0,
+          runs: 0,
+          sessions: 0,
+        },
+      ),
     }
   },
 })
