@@ -543,6 +543,39 @@ export const getRunExecutionState = query({
   },
 })
 
+export const getClaimedLocalRunCredentialAccess = query({
+  args: {
+    helperId: v.string(),
+    runId: v.id("runs"),
+  },
+  handler: async (ctx, args) => {
+    const helper = await ctx.db
+      .query("localHelpers")
+      .withIndex("by_helper_id", (q) => q.eq("helperId", args.helperId))
+      .first()
+
+    if (!helper || helper.currentClaimedRunId !== args.runId) {
+      return {
+        authorized: false as const,
+      }
+    }
+
+    const run = await ctx.db.get(args.runId)
+
+    if (!run || normalizeBrowserProvider(run.browserProvider) !== "local_chrome") {
+      return {
+        authorized: false as const,
+      }
+    }
+
+    return {
+      authorized: true as const,
+      credentialId: run.credentialId,
+      runOrigin: new URL(run.url).origin,
+    }
+  },
+})
+
 async function getLatestLocalHelperOverview(ctx: QueryCtx) {
   const helper = await ctx.db
     .query("localHelpers")

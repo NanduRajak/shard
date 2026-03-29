@@ -7,6 +7,7 @@ import {
   claimLocalRunRequestSchema,
   createPerformanceAuditRequestSchema,
   finalizeLocalRunRequestSchema,
+  getLocalRunCredentialRequestSchema,
   getLocalRunStateRequestSchema,
   registerLocalHelperRequestSchema,
   updateLocalRunRequestSchema,
@@ -64,6 +65,32 @@ export const Route = createFileRoute("/api/local-helper/$action")({
             })
 
             return json({ ok: true, state })
+          }
+
+          case "credential": {
+            const payload = getLocalRunCredentialRequestSchema.parse(body)
+            const { getLocalHelperStoredCredential } = await import(
+              "@/lib/local-helper-credentials"
+            )
+
+            try {
+              const credential = await getLocalHelperStoredCredential({
+                convex,
+                helperId: payload.helperId,
+                runId: payload.runId as Id<"runs">,
+              })
+
+              return json({ credential, ok: true })
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                error.message === "Unauthorized local helper credential request."
+              ) {
+                return json({ error: error.message }, { status: 403 })
+              }
+
+              throw error
+            }
           }
 
           case "progress": {

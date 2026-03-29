@@ -68,6 +68,11 @@ export const getLocalRunStateRequestSchema = z.object({
   runId: z.string().min(1),
 })
 
+export const getLocalRunCredentialRequestSchema = z.object({
+  helperId: z.string().min(1),
+  runId: z.string().min(1),
+})
+
 export const updateLocalRunRequestSchema = z.object({
   runId: z.string().min(1),
   status: runStatusSchema.optional(),

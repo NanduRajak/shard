@@ -30,6 +30,7 @@ import {
   QaRunCancelledError,
   runQaSession,
 } from "../src/lib/qa-engine.ts"
+import { applyStoredLoginToPage } from "../src/lib/stored-login.ts"
 
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000
 const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000
@@ -54,7 +55,7 @@ type SessionStatus = "active" | "closed" | "creating" | "failed"
 type RunRecord = {
   _id: string
   browserProvider?: BrowserProvider
-  credentialNamespace?: string
+  credentialId?: string
   currentStep?: string
   instructions?: string
   mode?: RunMode
@@ -365,6 +366,26 @@ async function runLocalQaWorkflow({
         maxAgentSteps: MAX_AGENT_STEPS,
         maxDiscoveredPages: MAX_DISCOVERED_PAGES,
       },
+      getStoredCredential: run.credentialId
+        ? (() => {
+            let credentialPromise:
+              | Promise<{
+                  login: string
+                  origin: string
+                  password: string
+                } | null>
+              | null = null
+
+            return async () => {
+              credentialPromise ??= api.credential({
+                helperId,
+                runId: run._id,
+              })
+
+              return await credentialPromise
+            }
+          })()
+        : undefined,
       instructions: run.instructions,
       mode: run.mode ?? "explore",
       model: google(DEFAULT_MODEL),
@@ -492,6 +513,11 @@ function createLocalQaBrowser(browser: LocalChromeBrowser) {
       await browser.startRuntimeCapture(startUrl, bufferedFindings)
     },
     takeScreenshot: async () => await browser.takeScreenshot(),
+    useStoredLogin: async (credential: {
+      login: string
+      origin: string
+      password: string
+    }) => await browser.useStoredLogin(credential),
   }
 }
 
@@ -1939,6 +1965,19 @@ class LocalHelperApi {
     return response.state
   }
 
+  async credential(payload: { helperId: string; runId: string }) {
+    const response = await this.post("credential", payload) as {
+      credential: {
+        login: string
+        origin: string
+        password: string
+      } | null
+      ok: boolean
+    }
+
+    return response.credential
+  }
+
   async progress(payload: {
     runId: string
     status?: RunStatus
@@ -2187,6 +2226,14 @@ class LocalChromeBrowser {
         type: "png",
       }),
     )
+  }
+
+  async useStoredLogin(credential: {
+    login: string
+    origin: string
+    password: string
+  }) {
+    return await applyStoredLoginToPage(await this.requirePage(), credential)
   }
 
   private async requirePage() {
