@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { convexQuery } from "@convex-dev/react-query"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
+  IconArrowRight,
   IconTimeline,
   IconTrash,
   IconX,
@@ -15,7 +16,7 @@ import {
   IconSubtask
 } from "@tabler/icons-react"
 import { formatDistanceToNow } from "date-fns"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { motion, type Variants } from "motion/react"
 import type { Id } from "../../convex/_generated/dataModel"
@@ -23,6 +24,15 @@ import { api } from "../../convex/_generated/api"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import {
   Card,
   CardContent,
@@ -46,7 +56,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { deleteRun } from "@/lib/delete-run"
-import { describeBrowserProvider, formatSessionDuration } from "@/lib/run-report"
+import { describeBrowserProvider } from "@/lib/run-report"
 import { env } from "~/env"
 
 export const Route = createFileRoute("/history")({
@@ -68,6 +78,8 @@ const itemVariants: Variants = {
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } },
 }
 
+const RUNS_PER_PAGE = 10
+
 function HistoryPage() {
   const navigate = useNavigate()
   const {
@@ -79,6 +91,7 @@ function HistoryPage() {
     id: Id<"runs">
     label: string
   } | null>(null)
+  const [page, setPage] = useState(1)
   const deleteMutation = useMutation({
     mutationFn: deleteRun,
   })
@@ -102,45 +115,33 @@ function HistoryPage() {
   if (isPending) {
     return (
       <div className="grid gap-4">
-        <Card className="border border-border/70 bg-card/80">
-          <CardHeader className="border-b border-border/70">
-            <CardTitle>Run history</CardTitle>
-            <CardDescription>
-              Every terminal run stays explorable, including cancelled sessions with partial artifacts.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-4 px-2 sm:px-6">
-            <div className="grid gap-5 grid-cols-1 md:grid-cols-2 2xl:grid-cols-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="rounded-[1.35rem] border border-border/70 bg-background/50 p-5 shadow-sm h-full flex flex-col">
-                  {/* Top Header & Right Badges */}
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 space-y-2 pb-2">
-                      <Skeleton className="h-6 w-4/5 bg-border/40" />
-                      <Skeleton className="h-4 w-3/4 bg-border/40 mt-3" />
-                      <Skeleton className="h-4 w-1/2 bg-border/40" />
-                    </div>
-                    {/* Top Right */}
-                    <div className="flex flex-col items-end gap-2 shrink-0 max-w-[120px]">
-                      <Skeleton className="size-8 rounded-full bg-border/40 mb-1" />
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <Skeleton className="h-6 w-20 rounded-lg bg-border/40" />
-                        <Skeleton className="h-6 w-16 rounded-lg bg-border/40" />
-                        <Skeleton className="h-6 w-24 rounded-lg bg-border/40" />
-                      </div>
-                    </div>
-                  </div>
-                  {/* Grid of metrics mapped to remaining space */}
-                  <div className="mt-auto pt-4 grid grid-cols-2 gap-2">
-                    {Array.from({ length: 4 }).map((_, j) => (
-                      <Skeleton key={j} className="h-16 w-full rounded-xl bg-border/20" />
-                    ))}
+        <div className="space-y-1 px-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Run history</h1>
+          <p className="text-sm text-muted-foreground">
+            Every terminal run stays explorable, including cancelled sessions with partial artifacts.
+          </p>
+        </div>
+        <div className="overflow-hidden rounded-[1.5rem] border border-border/60 bg-card/80">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="border-b border-border/50 px-4 py-4 last:border-b-0 sm:px-5">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="space-y-3 xl:min-w-0 xl:flex-1">
+                  <Skeleton className="h-6 w-3/4 bg-border/40" />
+                  <div className="flex flex-wrap gap-2">
+                    <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
+                    <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
+                    <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
                   </div>
                 </div>
-              ))}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[320px]">
+                  {Array.from({ length: 4 }).map((_, j) => (
+                    <Skeleton key={j} className="h-14 w-full rounded-2xl bg-border/20" />
+                  ))}
+                </div>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          ))}
+        </div>
       </div>
     )
   }
@@ -179,24 +180,30 @@ function HistoryPage() {
     )
   }
 
+  const totalPages = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE))
+  const currentPage = Math.min(page, totalPages)
+  const pagedRuns = runs.slice(
+    (currentPage - 1) * RUNS_PER_PAGE,
+    currentPage * RUNS_PER_PAGE,
+  )
+  const paginationItems = buildPaginationItems(currentPage, totalPages)
+
   return (
     <div className="grid gap-4">
-      <Card className="border border-border/70 bg-card/80">
-        <CardHeader className="border-b border-border/70">
-          <CardTitle>Run history</CardTitle>
-          <CardDescription>
-            Every terminal run stays explorable, including cancelled sessions with partial artifacts.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="pt-4 px-2 sm:px-6">
-          <motion.div 
-            className="grid gap-5 grid-cols-1 md:grid-cols-2 2xl:grid-cols-3"
-            variants={containerVariants}
-            initial="hidden"
-            animate="show"
-          >
-            {runs.map(({ currentAuditTrend, latestReportArtifact, latestScreenshot, run, session, sessionDurationMs }) => {
-              const isSteelRun = (run.browserProvider ?? "steel") === "steel"
+      <div className="space-y-1 px-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Run history</h1>
+        <p className="text-sm text-muted-foreground">
+          Every terminal run stays explorable, including cancelled sessions with partial artifacts.
+        </p>
+      </div>
+      <div className="overflow-hidden rounded-[1.5rem] border border-border/60 bg-card/80">
+        <motion.div
+          className="divide-y divide-border/50"
+          variants={containerVariants}
+          initial="hidden"
+          animate="show"
+        >
+            {pagedRuns.map(({ currentAuditTrend, latestReportArtifact, latestScreenshot, run, session }) => {
               const hasInstruction = !!run.goalSummary
               const targetUrl = run.status === "queued" || run.status === "starting" || run.status === "running"
                   ? "/runs/$runId"
@@ -207,117 +214,162 @@ function HistoryPage() {
                   key={run._id}
                   variants={itemVariants}
                   onClick={() => navigate({ to: targetUrl, params: { runId: run._id } })}
-                  className="group relative cursor-pointer overflow-hidden rounded-[1.35rem] border border-border/70 bg-background/50 hover:bg-background/80 transition-colors duration-300 p-5 shadow-sm h-full flex flex-col"
+                  className="group cursor-pointer px-4 py-4 transition-colors duration-200 hover:bg-muted/20 sm:px-5"
                 >
-                  <div className="flex items-start justify-between gap-5 pb-4">
-                    {/* Left: Header Block */}
-                    <div className="flex-1 space-y-2 min-w-0">
-                      <h3 className="line-clamp-3 text-[1.05rem] font-semibold text-foreground tracking-tight leading-snug">
-                        {hasInstruction ? run.goalSummary : run.url}
-                      </h3>
-                      <div className="flex flex-col gap-1.5 text-[13px] text-muted-foreground/80 pt-1">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="min-w-0 space-y-3 xl:flex-1">
+                      <div className="flex items-center gap-3">
+                        <span className={statusDotClassName(run.status)} />
+                        <h3 className="truncate text-lg font-semibold tracking-tight text-foreground">
+                          {hasInstruction ? run.goalSummary : run.url}
+                        </h3>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
                         {hasInstruction && (
-                          <span className="truncate w-full block bg-background/40 py-1 px-2 rounded-md border border-border/40">{run.url}</span>
+                          <Badge variant="outline" className="max-w-full truncate rounded-md border-border/50 bg-background/70 px-3 py-1 font-normal text-muted-foreground">
+                            {run.url}
+                          </Badge>
                         )}
-                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <span className="flex items-center gap-1 whitespace-nowrap px-1.5 py-[3px] rounded bg-muted/30 border border-border/30 text-xs font-medium text-muted-foreground/90">
-                            <IconClock className="size-[14px] opacity-70" stroke={2.5} />
-                            {formatDistanceToNow(run.startedAt, { addSuffix: true })}
-                          </span>
-                          
-                          <span className="flex items-center gap-1 whitespace-nowrap px-1.5 py-[3px] rounded bg-muted/30 border border-border/30 text-xs font-medium text-muted-foreground/90 capitalize">
-                            <IconBrandChrome className="size-[14px] opacity-70" stroke={2} />
-                            {describeBrowserProvider(run.browserProvider)}
-                          </span>
-
-                          <span className="flex items-center gap-1 whitespace-nowrap px-1.5 py-[3px] rounded bg-muted/30 border border-border/30 text-xs font-medium text-muted-foreground/90 capitalize">
-                            <IconSubtask className="size-[14px] opacity-70" stroke={2} />
-                            {run.mode}
-                          </span>
-
-                          {run.executionMode === "background" && (
-                            <span className="flex items-center gap-1 whitespace-nowrap px-1.5 py-[3px] rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-xs font-medium">
-                              <IconServer className="size-[14px]" stroke={2} />
-                              Background
-                            </span>
-                          )}
-
-                          {run.goalStatus && run.goalStatus !== "not_requested" && (
-                            <span className="flex items-center gap-1 whitespace-nowrap px-1.5 py-[3px] rounded bg-muted/30 border border-border/30 text-xs font-medium text-muted-foreground/90 capitalize">
-                              <IconListCheck className="size-[14px] opacity-70" stroke={2} />
-                              {run.goalStatus.replaceAll("_", " ")}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right: Essential Badges Group */}
-                    <div className="flex flex-col items-end gap-2 shrink-0 max-w-[120px] relative z-10">
-                      {/* Delete icon first */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors -mr-1"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteTarget({
-                            id: run._id,
-                            label: run.url,
-                          })
-                        }}
-                      >
-                        <IconTrash className="size-4" />
-                        <span className="sr-only">Delete action</span>
-                      </Button>
-                      
-                      {/* Essential Badges aligned right */}
-                      <div className="flex flex-col items-end gap-1.5 mt-[-4px]">
                         <StatusBadge status={run.status} />
-                        <Badge variant="outline" className="gap-1 border-border/60 bg-background/50 rounded-lg py-1 px-2.5 shadow-none text-muted-foreground font-semibold uppercase text-[10px] tracking-wider">
-                          SCORE {run.finalScore?.toFixed(0) ?? "PENDING"}
-                        </Badge>
+                        <MetaBadge icon={<IconClock className="size-3.5" stroke={2.2} />}>
+                          {formatDistanceToNow(run.startedAt, { addSuffix: true })}
+                        </MetaBadge>
+                        <MetaBadge icon={<IconBrandChrome className="size-3.5" stroke={2} />}>
+                          {describeBrowserProvider(run.browserProvider)}
+                        </MetaBadge>
+                        <MetaBadge icon={<IconSubtask className="size-3.5" stroke={2} />}>
+                          {run.mode}
+                        </MetaBadge>
+                        {run.executionMode === "background" && (
+                          <Badge className="rounded-md border border-indigo-500/25 bg-indigo-500/10 px-3 py-1 text-indigo-300" variant="outline">
+                            <IconServer className="size-3.5" stroke={2} />
+                            Background
+                          </Badge>
+                        )}
+                        {run.goalStatus && run.goalStatus !== "not_requested" && (
+                          <Badge variant="outline" className="rounded-md border-border/50 bg-background/70 px-3 py-1 capitalize text-muted-foreground">
+                            <IconListCheck className="size-3.5" stroke={2} />
+                            {run.goalStatus.replaceAll("_", " ")}
+                          </Badge>
+                        )}
+                        {!session?.replayUrl && !latestScreenshot && !latestReportArtifact ? null : (
+                          <Badge variant="outline" className="rounded-md border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-emerald-300">
+                            Artifacts ready
+                          </Badge>
+                        )}
                       </div>
                     </div>
-                  </div>
 
-                  {/* Minimal Metrics Grid aligned to bottom */}
-                  <div className="mt-auto grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3 gap-2 pt-2">
-                    <HistoryMetric
-                      label="Performance"
-                      value={formatTrendMetric(currentAuditTrend.performance.delta)}
-                    />
-                    <HistoryMetric
-                      label="Accessibility"
-                      value={formatTrendMetric(currentAuditTrend.accessibility.delta)}
-                    />
-                    <HistoryMetric
-                      label={isSteelRun ? "Replay" : "Screenshot"}
-                      value={
-                        isSteelRun
-                          ? session?.replayUrl
-                            ? "Available"
-                            : "Missing"
-                          : latestScreenshot
-                            ? "Available"
-                            : "Missing"
-                      }
-                    />
-                    <HistoryMetric
-                      label="Report artifact"
-                      value={latestReportArtifact ? "Available" : "Missing"}
-                    />
-                    <HistoryMetric
-                      label="Duration"
-                      value={formatSessionDuration(sessionDurationMs)}
-                    />
+                    <div className="flex flex-col gap-3 xl:items-end">
+                      <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 rounded-md text-red-400 hover:bg-destructive/10 hover:text-red-300"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleteTarget({
+                              id: run._id,
+                              label: run.url,
+                            })
+                          }}
+                        >
+                          <IconTrash className="size-4" />
+                          <span className="sr-only">Delete action</span>
+                        </Button>
+                        <Button variant="outline" className="rounded-md border-border/60 bg-background/70 px-4">
+                          {run.status === "queued" || run.status === "starting" || run.status === "running" ? "Monitor" : "Report"}
+                          <IconArrowRight className="size-4" />
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-2 overflow-hidden rounded-md border border-white/14 bg-transparent sm:grid-cols-4 xl:min-w-[360px]">
+                        <ScoreCell
+                          label="Perf"
+                          value={currentAuditTrend.performance.current}
+                          toneClassName="text-blue-400"
+                          className="border-b border-white/16 sm:border-b-0 sm:border-r"
+                        />
+                        <ScoreCell
+                          label="A11y"
+                          value={currentAuditTrend.accessibility.current}
+                          toneClassName="text-emerald-400"
+                          className="border-b border-white/16 sm:border-b-0 sm:border-r"
+                        />
+                        <ScoreCell
+                          label="BP"
+                          value={currentAuditTrend.bestPractices.current}
+                          toneClassName="text-amber-400"
+                          className="sm:border-r sm:border-white/16"
+                        />
+                        <ScoreCell
+                          label="SEO"
+                          value={currentAuditTrend.seo.current}
+                          toneClassName="text-violet-400"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </motion.div>
               )
             })}
-          </motion.div>
-        </CardContent>
-      </Card>
+        </motion.div>
+      </div>
+
+      {totalPages > 1 ? (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                href="#history-pagination"
+                text="Previous"
+                className="rounded-md"
+                aria-disabled={currentPage === 1}
+                onClick={(event) => {
+                  event.preventDefault()
+                  if (currentPage > 1) {
+                    setPage(currentPage - 1)
+                  }
+                }}
+              />
+            </PaginationItem>
+            {paginationItems.map((item, index) => (
+              <PaginationItem key={`${item}-${index}`}>
+                {item === "ellipsis" ? (
+                  <PaginationEllipsis />
+                ) : (
+                  <PaginationLink
+                    href="#history-pagination"
+                    isActive={item === currentPage}
+                    className="rounded-md"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      setPage(item)
+                    }}
+                  >
+                    {item}
+                  </PaginationLink>
+                )}
+              </PaginationItem>
+            ))}
+            <PaginationItem>
+              <PaginationNext
+                href="#history-pagination"
+                text="Next"
+                className="rounded-md"
+                aria-disabled={currentPage === totalPages}
+                onClick={(event) => {
+                  event.preventDefault()
+                  if (currentPage < totalPages) {
+                    setPage(currentPage + 1)
+                  }
+                }}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      ) : null}
       
       <Dialog
         open={Boolean(deleteTarget)}
@@ -351,14 +403,35 @@ function HistoryPage() {
   )
 }
 
-function HistoryMetric({ label, value }: { label: string; value: string }) {
+function ScoreCell({
+  label,
+  value,
+  className,
+  toneClassName,
+}: {
+  label: string
+  value: number | null
+  className?: string
+  toneClassName?: string
+}) {
   return (
-    <div className="rounded-xl border border-border/40 bg-black/20 p-2.5 transition-colors group-hover:bg-black/40">
-      <p className="text-[10px] font-semibold tracking-wider text-muted-foreground/80 uppercase mb-1 drop-shadow-sm">
+    <div className={["px-3 py-2.5 text-center", className].filter(Boolean).join(" ")}>
+      <p className={["text-[10px] font-semibold uppercase tracking-[0.22em]", toneClassName ?? "text-muted-foreground/70"].filter(Boolean).join(" ")}>
         {label}
       </p>
-      <p className="text-sm font-medium text-foreground/90">{value}</p>
+      <p className={["mt-1 text-2xl font-semibold tracking-tight", toneClassName ?? "text-foreground"].filter(Boolean).join(" ")}>
+        {formatAuditScore(value)}
+      </p>
     </div>
+  )
+}
+
+function MetaBadge({ children, icon }: { children: ReactNode; icon?: ReactNode }) {
+  return (
+    <Badge variant="outline" className="rounded-md border-border/50 bg-background/70 px-3 py-1 font-normal text-muted-foreground">
+      {icon}
+      {children}
+    </Badge>
   )
 }
 
@@ -369,7 +442,7 @@ function StatusBadge({
 }) {
   if (status === "failed") {
     return (
-      <Badge variant="destructive" className="items-center gap-1 bg-red-500/15 text-red-500 hover:bg-red-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none">
+      <Badge variant="destructive" className="items-center gap-1 rounded-md border-0 bg-red-500/15 px-3 py-1 text-red-400 shadow-none hover:bg-red-500/25">
         <IconX className="size-3.5" stroke={2.5} />
         FAILED
       </Badge>
@@ -378,7 +451,7 @@ function StatusBadge({
 
   if (status === "completed") {
     return (
-      <Badge className="items-center gap-1 bg-teal-500/15 text-teal-400 hover:bg-teal-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none" variant="secondary">
+      <Badge className="items-center gap-1 rounded-md border-0 bg-teal-500/15 px-3 py-1 text-teal-300 shadow-none hover:bg-teal-500/25" variant="secondary">
         <IconCheck className="size-3.5" stroke={2.5} />
         COMPLETED
       </Badge>
@@ -387,7 +460,7 @@ function StatusBadge({
 
   if (status === "running" || status === "starting") {
     return (
-      <Badge className="items-center gap-1 bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none" variant="secondary">
+      <Badge className="items-center gap-1 rounded-md border-0 bg-sky-500/15 px-3 py-1 text-sky-300 shadow-none hover:bg-sky-500/25" variant="secondary">
         <IconPlayerPlay className="size-3.5 animate-pulse" stroke={2.5} />
         RUNNING
       </Badge>
@@ -396,7 +469,7 @@ function StatusBadge({
 
   if (status === "cancelled") {
     return (
-      <Badge className="items-center gap-1 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none" variant="secondary">
+      <Badge className="items-center gap-1 rounded-md border-0 bg-amber-500/15 px-3 py-1 text-amber-400 shadow-none hover:bg-amber-500/25" variant="secondary">
         <IconX className="size-3.5" stroke={2.5} />
         CANCELLED
       </Badge>
@@ -404,23 +477,41 @@ function StatusBadge({
   }
 
   return (
-    <Badge className="items-center gap-1 bg-yellow-500/15 text-yellow-500 hover:bg-yellow-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase" variant="secondary">
+    <Badge className="items-center gap-1 rounded-md border-0 bg-yellow-500/15 px-3 py-1 text-yellow-400 shadow-none uppercase hover:bg-yellow-500/25" variant="secondary">
       <IconHourglassEmpty className="size-3.5" stroke={2.5} />
       PENDING
     </Badge>
   )
 }
 
-
-
-function formatTrendMetric(delta: number | null) {
-  if (delta === null) {
-    return "No baseline"
+function formatAuditScore(value: number | null) {
+  if (value === null) {
+    return "--"
   }
 
-  if (delta === 0) {
-    return "No change"
+  return Math.round(value * 100).toString()
+}
+
+function statusDotClassName(status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting") {
+  if (status === "completed") return "h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.5)]"
+  if (status === "failed") return "h-2.5 w-2.5 rounded-full bg-red-400 shadow-[0_0_12px_rgba(248,113,113,0.45)]"
+  if (status === "running" || status === "starting") return "h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.5)]"
+  if (status === "cancelled") return "h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.45)]"
+  return "h-2.5 w-2.5 rounded-full bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.45)]"
+}
+
+function buildPaginationItems(currentPage: number, totalPages: number) {
+  if (totalPages <= 5) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
   }
 
-  return `${delta > 0 ? "+" : ""}${delta} from last run`
+  if (currentPage <= 3) {
+    return [1, 2, 3, 4, "ellipsis", totalPages] as const
+  }
+
+  if (currentPage >= totalPages - 2) {
+    return [1, "ellipsis", totalPages - 3, totalPages - 2, totalPages - 1, totalPages] as const
+  }
+
+  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages] as const
 }

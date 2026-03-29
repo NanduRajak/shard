@@ -12,7 +12,7 @@ import {
 import { motion, AnimatePresence, LayoutGroup } from "motion/react";
 import { formatDistanceToNowStrict } from "date-fns";
 
-type TimelineEvent = {
+export type TimelineEvent = {
   _id: string;
   artifactUrl?: string;
   body?: string;
