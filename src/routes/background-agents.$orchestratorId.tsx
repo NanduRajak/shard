@@ -1,7 +1,7 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router"
-import { convexQuery } from "@convex-dev/react-query"
-import { useMutation, useQuery } from "@tanstack/react-query"
-import { motion } from "framer-motion"
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { convexQuery } from "@convex-dev/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import {
   IconAlertTriangle,
   IconArrowLeft,
@@ -14,112 +14,139 @@ import {
   IconPlayerPlay,
   IconRadar2,
   IconX,
-} from "@tabler/icons-react"
-import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { toast } from "sonner"
-import type { Id } from "../../convex/_generated/dataModel"
-import { api } from "../../convex/_generated/api"
-import { AgentPlan, type TimelineEvent as AgentPlanEvent } from "@/components/ui/agent-plan"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+} from "@tabler/icons-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import type { Id } from "../../convex/_generated/dataModel";
+import { api } from "../../convex/_generated/api";
+import {
+  AgentPlan,
+  type TimelineEvent as AgentPlanEvent,
+} from "@/components/ui/agent-plan";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
+} from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/components/ui/empty"
-import { getBackgroundAgentLaneLabel, getBackgroundTaskLabel } from "@/lib/background-agent-task"
+} from "@/components/ui/empty";
+import {
+  getBackgroundAgentLaneLabel,
+  getBackgroundTaskLabel,
+} from "@/lib/background-agent-task";
 import {
   isBackgroundOrchestratorActive,
   isBackgroundOrchestratorReportReady,
-} from "@/lib/background-orchestrator-report"
-import { formatSessionDuration, filterTimelineEventsForQaView, sortTimelineEvents } from "@/lib/run-report"
-import { requestBackgroundOrchestratorStop } from "@/lib/request-background-orchestrator-stop"
-import { requestRunStop } from "@/lib/request-run-stop"
+} from "@/lib/background-orchestrator-report";
+import {
+  formatSessionDuration,
+  filterTimelineEventsForQaView,
+  sortTimelineEvents,
+} from "@/lib/run-report";
+import { requestBackgroundOrchestratorStop } from "@/lib/request-background-orchestrator-stop";
+import { requestRunStop } from "@/lib/request-run-stop";
 
 export const Route = createFileRoute("/background-agents/$orchestratorId")({
   component: BackgroundOrchestratorDetailPage,
-})
+});
 
 function BackgroundOrchestratorDetailPage() {
-  const { orchestratorId } = Route.useParams()
-  const navigate = useNavigate()
-  const typedOrchestratorId = orchestratorId as Id<"backgroundOrchestrators">
+  const { orchestratorId } = Route.useParams();
+  const navigate = useNavigate();
+  const typedOrchestratorId = orchestratorId as Id<"backgroundOrchestrators">;
   const { data: detail } = useQuery(
     convexQuery(api.backgroundAgents.getBackgroundOrchestratorDetail, {
       orchestratorId: typedOrchestratorId,
     }),
-  )
+  );
   const { data: report } = useQuery(
     convexQuery(api.backgroundAgents.getBackgroundOrchestratorReport, {
       orchestratorId: typedOrchestratorId,
     }),
-  )
+  );
   const stopOrchestratorMutation = useMutation({
     mutationFn: requestBackgroundOrchestratorStop,
-  })
+  });
   const stopRunMutation = useMutation({
     mutationFn: requestRunStop,
-  })
-  const [selectedAgentId, setSelectedAgentId] = useState<Id<"runs"> | null>(null)
-  const [activeTab, setActiveTab] = useState<"report" | "timeline" | null>(null)
+  });
+  const [selectedAgentId, setSelectedAgentId] = useState<Id<"runs"> | null>(
+    null,
+  );
+  const [activeTab, setActiveTab] = useState<"report" | "timeline" | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!detail?.agents.length) {
-      return
+      return;
     }
 
     setSelectedAgentId((current) =>
       current && detail.agents.some((agent: any) => agent.run._id === current)
         ? current
         : detail.agents[0]!.run._id,
-    )
-  }, [detail])
+    );
+  }, [detail]);
 
   useEffect(() => {
     if (!detail || activeTab) {
-      return
+      return;
     }
 
-    setActiveTab(isBackgroundOrchestratorReportReady(detail.status) ? "report" : "timeline")
-  }, [activeTab, detail])
+    setActiveTab(
+      isBackgroundOrchestratorReportReady(detail.status)
+        ? "report"
+        : "timeline",
+    );
+  }, [activeTab, detail]);
 
   useEffect(() => {
     if (!detail || activeTab !== "report") {
-      return
+      return;
     }
 
     if (!isBackgroundOrchestratorReportReady(detail.status)) {
-      setActiveTab("timeline")
+      setActiveTab("timeline");
     }
-  }, [activeTab, detail])
+  }, [activeTab, detail]);
 
   const selectedAgent = useMemo(
-    () => report?.agentRuns.find((agentRun: any) => agentRun.run._id === selectedAgentId) ?? null,
+    () =>
+      report?.agentRuns.find(
+        (agentRun: any) => agentRun.run._id === selectedAgentId,
+      ) ?? null,
     [report, selectedAgentId],
-  )
+  );
   const selectedAgentDetail = useMemo(
-    () => detail?.agents.find((agent: any) => agent.run._id === selectedAgentId) ?? null,
+    () =>
+      detail?.agents.find((agent: any) => agent.run._id === selectedAgentId) ??
+      null,
     [detail, selectedAgentId],
-  )
+  );
   const mergedSeverityCounts = useMemo(() => {
-    const findings = report?.mergedFindings ?? []
+    const findings = report?.mergedFindings ?? [];
 
     return {
-      critical: findings.filter((finding: any) => finding.severity === "critical").length,
-      high: findings.filter((finding: any) => finding.severity === "high").length,
+      critical: findings.filter(
+        (finding: any) => finding.severity === "critical",
+      ).length,
+      high: findings.filter((finding: any) => finding.severity === "high")
+        .length,
       low: findings.filter((finding: any) => finding.severity === "low").length,
-      medium: findings.filter((finding: any) => finding.severity === "medium").length,
-    }
-  }, [report])
+      medium: findings.filter((finding: any) => finding.severity === "medium")
+        .length,
+    };
+  }, [report]);
   const selectedTimeline = useMemo(
     () =>
       selectedAgent
@@ -128,7 +155,7 @@ function BackgroundOrchestratorDetailPage() {
           ) as AgentPlanEvent[])
         : [],
     [selectedAgent],
-  )
+  );
 
   if (detail === null || report === null) {
     return (
@@ -145,33 +172,38 @@ function BackgroundOrchestratorDetailPage() {
           </EmptyHeader>
         </Empty>
       </div>
-    )
+    );
   }
 
   if (!detail || !report || !activeTab) {
-    return <div className="mx-auto min-h-128 max-w-7xl animate-pulse rounded-2xl bg-muted/20 m-4 md:m-8" />
+    return (
+      <div className="mx-auto min-h-128 max-w-7xl animate-pulse rounded-2xl bg-muted/20 m-4 md:m-8" />
+    );
   }
 
-  const canStopOrchestrator = isBackgroundOrchestratorActive(detail.status)
-  const isReportReady = isBackgroundOrchestratorReportReady(detail.status)
+  const canStopOrchestrator = isBackgroundOrchestratorActive(detail.status);
+  const isReportReady = isBackgroundOrchestratorReportReady(detail.status);
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-4 p-3 md:p-5">
+    <div className="mx-auto grid max-w-8xl gap-4">
       {/* Top Main Hero Stats Card */}
       <Card className="border border-border/70 bg-card/80">
         <CardHeader className="gap-4 border-b border-border/70">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="icon" 
+                <Button
+                  variant="outline"
+                  size="icon"
                   className="size-7 rounded-sm text-foreground/80 hover:bg-background/80 transition-colors bg-background/50 border-border/70 mr-0.5"
                   onClick={() => navigate({ to: "/background-agents" })}
                 >
                   <IconArrowLeft className="size-4" />
                 </Button>
-                <Badge variant="outline" className="tracking-[0.18em] uppercase">
+                <Badge
+                  variant="outline"
+                  className="tracking-[0.18em] uppercase"
+                >
                   Orchestrator
                 </Badge>
                 <StatusBadge status={detail.status} />
@@ -180,18 +212,27 @@ function BackgroundOrchestratorDetailPage() {
                     variant="destructive"
                     size="sm"
                     className="h-6 rounded-md px-2 text-[10px] uppercase tracking-widest bg-red-500/15 text-red-500 hover:bg-red-500/25 border-0 shadow-none ml-2"
-                    disabled={stopOrchestratorMutation.isPending || Boolean(detail.orchestrator.stopRequestedAt)}
+                    disabled={
+                      stopOrchestratorMutation.isPending ||
+                      Boolean(detail.orchestrator.stopRequestedAt)
+                    }
                     onClick={() => {
                       void stopOrchestratorMutation
-                        .mutateAsync({ data: { orchestratorId: typedOrchestratorId } })
-                        .then((result) => {
-                          if (!result.ok) toast.error("Could not stop orchestrator.")
-                          else toast.success("Stop requested.")
+                        .mutateAsync({
+                          data: { orchestratorId: typedOrchestratorId },
                         })
-                        .catch((error) => toast.error(error.message))
+                        .then((result) => {
+                          if (!result.ok)
+                            toast.error("Could not stop orchestrator.");
+                          else toast.success("Stop requested.");
+                        })
+                        .catch((error) => toast.error(error.message));
                     }}
                   >
-                    {stopOrchestratorMutation.isPending || detail.orchestrator.stopRequestedAt ? "STOPPING..." : "STOP RUN"}
+                    {stopOrchestratorMutation.isPending ||
+                    detail.orchestrator.stopRequestedAt
+                      ? "STOPPING..."
+                      : "STOP RUN"}
                   </Button>
                 ) : null}
               </div>
@@ -202,16 +243,19 @@ function BackgroundOrchestratorDetailPage() {
                 {getBackgroundTaskLabel(detail.orchestrator.instructions)}
               </CardDescription>
             </div>
-            
+
             <div className="grid min-w-52 gap-2 sm:grid-cols-2">
               <MetricCard
                 label="Overall score"
                 value={`${report.scoreSummary.overall.toFixed(0)}/100`}
               />
-              <MetricCard label="Total Findings" value={`${report.mergedFindings.length}`} />
+              <MetricCard
+                label="Total Findings"
+                value={`${report.mergedFindings.length}`}
+              />
             </div>
           </div>
-          
+
           <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground mt-4 mb-2 w-fit shadow-sm relative">
             <button
               onClick={() => setActiveTab("report")}
@@ -248,18 +292,34 @@ function BackgroundOrchestratorDetailPage() {
           </div>
           {!isReportReady ? (
             <p className="text-xs text-muted-foreground">
-              QA report unlocks when all agent lanes finish. Live timelines and artifacts are available now.
+              QA report unlocks when all agent lanes finish. Live timelines and
+              artifacts are available now.
             </p>
           ) : null}
         </CardHeader>
-        
+
         {activeTab === "report" && isReportReady && (
           <CardContent className="grid gap-4 pt-4 md:grid-cols-5">
-            <MetricCard label="Elapsed Time" value={formatSessionDuration(detail.durationMs)} />
-            <MetricCard label="Lanes Deployed" value={`${detail.orchestrator.agentCount}`} />
-            <MetricCard label="Agents Running" value={`${detail.counts.running}`} />
-            <MetricCard label="Agents Completed" value={`${detail.counts.completed}`} />
-            <MetricCard label="Auth Profile" value={detail.credential?.login ?? "No stored login"} />
+            <MetricCard
+              label="Elapsed Time"
+              value={formatSessionDuration(detail.durationMs)}
+            />
+            <MetricCard
+              label="Lanes Deployed"
+              value={`${detail.orchestrator.agentCount}`}
+            />
+            <MetricCard
+              label="Agents Running"
+              value={`${detail.counts.running}`}
+            />
+            <MetricCard
+              label="Agents Completed"
+              value={`${detail.counts.completed}`}
+            />
+            <MetricCard
+              label="Auth Profile"
+              value={detail.credential?.login ?? "No stored login"}
+            />
           </CardContent>
         )}
       </Card>
@@ -274,15 +334,28 @@ function BackgroundOrchestratorDetailPage() {
                 Actionable Deduplicated Summary
               </CardTitle>
               <CardDescription>
-                Unique issues identified across all agent lanes during the orchestrator sweep.
+                Unique issues identified across all agent lanes during the
+                orchestrator sweep.
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-4 grid gap-4">
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <MetricCard label="Critical Issues" value={`${mergedSeverityCounts.critical}`} />
-                <MetricCard label="High Issues" value={`${mergedSeverityCounts.high}`} />
-                <MetricCard label="Medium Issues" value={`${mergedSeverityCounts.medium}`} />
-                <MetricCard label="Perf Audits" value={`${report.mergedPerformanceAudits.length}`} />
+                <MetricCard
+                  label="Critical Issues"
+                  value={`${mergedSeverityCounts.critical}`}
+                />
+                <MetricCard
+                  label="High Issues"
+                  value={`${mergedSeverityCounts.high}`}
+                />
+                <MetricCard
+                  label="Medium Issues"
+                  value={`${mergedSeverityCounts.medium}`}
+                />
+                <MetricCard
+                  label="Perf Audits"
+                  value={`${report.mergedPerformanceAudits.length}`}
+                />
               </div>
 
               {/* Merged Findings List */}
@@ -297,12 +370,17 @@ function BackgroundOrchestratorDetailPage() {
                         <Badge variant="outline">{finding.source}</Badge>
                         <Badge variant="secondary">{finding.severity}</Badge>
                         {finding.browserSignal ? (
-                          <Badge variant="outline" className="text-amber-500 border-amber-500/30">
+                          <Badge
+                            variant="outline"
+                            className="text-amber-500 border-amber-500/30"
+                          >
                             {finding.browserSignal}
                           </Badge>
                         ) : null}
                       </div>
-                      <h3 className="mt-3 text-sm font-medium text-foreground">{finding.title}</h3>
+                      <h3 className="mt-3 text-sm font-medium text-foreground">
+                        {finding.title}
+                      </h3>
                       <p className="mt-1 text-sm leading-6 text-muted-foreground break-words text-pretty">
                         {finding.description}
                       </p>
@@ -341,12 +419,20 @@ function BackgroundOrchestratorDetailPage() {
                     Coverage Map
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {report.coverageUrls.length ? report.coverageUrls.slice(0, 18).map((route: string) => (
-                      <Badge key={route} variant="outline" className="max-w-full truncate font-normal">
-                        {route}
-                      </Badge>
-                    )) : (
-                      <span className="text-sm text-muted-foreground">No routes visited yet.</span>
+                    {report.coverageUrls.length ? (
+                      report.coverageUrls.slice(0, 18).map((route: string) => (
+                        <Badge
+                          key={route}
+                          variant="outline"
+                          className="max-w-full truncate font-normal"
+                        >
+                          {route}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        No routes visited yet.
+                      </span>
                     )}
                   </div>
                 </div>
@@ -391,15 +477,17 @@ function BackgroundOrchestratorDetailPage() {
           <Card className="flex flex-col border border-border/70 bg-card/80 h-[calc(100svh-16rem)] min-h-[500px]">
             <CardHeader className="shrink-0 border-b border-border/70 pb-4">
               <CardTitle className="text-base">Agents</CardTitle>
-              <CardDescription>Select an agent to view its output.</CardDescription>
+              <CardDescription>
+                Select an agent to view its output.
+              </CardDescription>
             </CardHeader>
             <CardContent className="flex-1 overflow-y-auto p-3 space-y-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {detail.agents.map((agent: any) => {
                 const laneLabel = getBackgroundAgentLaneLabel({
                   agentCount: detail.orchestrator.agentCount,
                   agentIndex: Math.max((agent.run.agentOrdinal ?? 1) - 1, 0),
-                })
-                const isActive = selectedAgentId === agent.run._id
+                });
+                const isActive = selectedAgentId === agent.run._id;
 
                 return (
                   <button
@@ -425,7 +513,7 @@ function BackgroundOrchestratorDetailPage() {
                       {formatSessionDuration(agent.durationMs)}
                     </p>
                   </button>
-                )
+                );
               })}
             </CardContent>
           </Card>
@@ -449,27 +537,41 @@ function BackgroundOrchestratorDetailPage() {
                         variant="ghost"
                         size="sm"
                         className="h-6 px-2 text-[10px] uppercase font-bold text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
-                        disabled={stopRunMutation.isPending || Boolean(selectedAgentDetail.run.stopRequestedAt)}
+                        disabled={
+                          stopRunMutation.isPending ||
+                          Boolean(selectedAgentDetail.run.stopRequestedAt)
+                        }
                         onClick={() => {
                           void stopRunMutation
-                            .mutateAsync({ data: { runId: selectedAgentDetail.run._id } })
-                            .then((res) => {
-                              if (!res.ok) toast.error("Could not stop agent.")
-                              else toast.success("Stop requested for agent.")
+                            .mutateAsync({
+                              data: { runId: selectedAgentDetail.run._id },
                             })
-                            .catch((e) => toast.error(e.message))
+                            .then((res) => {
+                              if (!res.ok) toast.error("Could not stop agent.");
+                              else toast.success("Stop requested for agent.");
+                            })
+                            .catch((e) => toast.error(e.message));
                         }}
                       >
-                        {stopRunMutation.isPending || selectedAgentDetail.run.stopRequestedAt ? "STOPPING..." : "STOP AGENT"}
+                        {stopRunMutation.isPending ||
+                        selectedAgentDetail.run.stopRequestedAt
+                          ? "STOPPING..."
+                          : "STOP AGENT"}
                       </Button>
                     ) : (
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-6 px-2 text-[10px] uppercase font-bold text-muted-foreground hover:bg-background"
-                        onClick={() => navigate({ to: "/runs/$runId", params: { runId: selectedAgentDetail.run._id } })}
+                        onClick={() =>
+                          navigate({
+                            to: "/runs/$runId",
+                            params: { runId: selectedAgentDetail.run._id },
+                          })
+                        }
                       >
-                        VIEW RAW LOGS <IconExternalLink className="ml-1 size-3" />
+                        VIEW RAW LOGS{" "}
+                        <IconExternalLink className="ml-1 size-3" />
                       </Button>
                     )}
                   </div>
@@ -516,10 +618,15 @@ function BackgroundOrchestratorDetailPage() {
                                 {screenshot.title ?? "Screenshot captured"}
                               </p>
                               <p className="truncate text-xs text-muted-foreground mt-0.5">
-                                {screenshot.pageUrl ?? selectedAgentDetail.run.url}
+                                {screenshot.pageUrl ??
+                                  selectedAgentDetail.run.url}
                               </p>
                             </div>
-                            <Button variant="outline" size="icon" className="size-8 rounded-full pointer-events-none opacity-50 group-hover:opacity-100">
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="size-8 rounded-full pointer-events-none opacity-50 group-hover:opacity-100"
+                            >
                               <IconExternalLink className="size-3.5" />
                             </Button>
                           </div>
@@ -540,11 +647,11 @@ function BackgroundOrchestratorDetailPage() {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function canStopRunState(status: string) {
-  return status === "queued" || status === "starting" || status === "running"
+  return status === "queued" || status === "starting" || status === "running";
 }
 
 function MetricCard({ label, value }: { label: string; value: string }) {
@@ -553,9 +660,11 @@ function MetricCard({ label, value }: { label: string; value: string }) {
       <dt className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
         {label}
       </dt>
-      <dd className="mt-1 break-all text-[14px] font-medium text-foreground">{value}</dd>
+      <dd className="mt-1 break-all text-[14px] font-medium text-foreground">
+        {value}
+      </dd>
     </div>
-  )
+  );
 }
 
 function EmptyStateCopy({
@@ -563,9 +672,9 @@ function EmptyStateCopy({
   icon,
   title,
 }: {
-  body: string
-  icon: ReactNode
-  title: string
+  body: string;
+  icon: ReactNode;
+  title: string;
 }) {
   return (
     <div className="rounded-[1.75rem] border border-dashed border-border/70 bg-background/70 p-6 text-sm text-center text-muted-foreground flex flex-col items-center justify-center min-h-[16rem]">
@@ -573,75 +682,107 @@ function EmptyStateCopy({
         {icon}
       </div>
       <p className="font-medium text-foreground text-center">{title}</p>
-      <p className="mt-2 text-center max-w-[16rem] leading-relaxed mx-auto">{body}</p>
+      <p className="mt-2 text-center max-w-[16rem] leading-relaxed mx-auto">
+        {body}
+      </p>
     </div>
-  )
+  );
 }
 
 function StatusBadge({
   status,
 }: {
-  status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
+  status:
+    | "cancelled"
+    | "completed"
+    | "failed"
+    | "queued"
+    | "running"
+    | "starting";
 }) {
   if (status === "failed") {
     return (
-      <Badge variant="destructive" className="items-center gap-1 bg-red-500/15 text-red-500 hover:bg-red-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs">
+      <Badge
+        variant="destructive"
+        className="items-center gap-1 bg-red-500/15 text-red-500 hover:bg-red-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs"
+      >
         <IconX className="size-3.5" stroke={2.5} />
         FAILED
       </Badge>
-    )
+    );
   }
 
   if (status === "completed") {
     return (
-      <Badge className="items-center gap-1 bg-teal-500/15 text-teal-400 hover:bg-teal-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+      <Badge
+        className="items-center gap-1 bg-teal-500/15 text-teal-400 hover:bg-teal-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs"
+        variant="secondary"
+      >
         <IconCheck className="size-3.5" stroke={2.5} />
         COMPLETED
       </Badge>
-    )
+    );
   }
 
   if (status === "running" || status === "starting") {
     return (
-      <Badge className="items-center gap-1 bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+      <Badge
+        className="items-center gap-1 bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs"
+        variant="secondary"
+      >
         <IconPlayerPlay className="size-3.5 animate-pulse" stroke={2.5} />
         RUNNING
       </Badge>
-    )
+    );
   }
 
   if (status === "cancelled") {
     return (
-      <Badge className="items-center gap-1 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+      <Badge
+        className="items-center gap-1 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs"
+        variant="secondary"
+      >
         <IconX className="size-3.5" stroke={2.5} />
         CANCELLED
       </Badge>
-    )
+    );
   }
 
   return (
-    <Badge className="items-center gap-1 bg-yellow-500/15 text-yellow-500 hover:bg-yellow-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+    <Badge
+      className="items-center gap-1 bg-yellow-500/15 text-yellow-500 hover:bg-yellow-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs"
+      variant="secondary"
+    >
       <IconHourglassEmpty className="size-3.5" stroke={2.5} />
       PENDING
     </Badge>
-  )
+  );
 }
 
 function AgentStatusDot({
   status,
 }: {
-  status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
+  status:
+    | "cancelled"
+    | "completed"
+    | "failed"
+    | "queued"
+    | "running"
+    | "starting";
 }) {
-  if (status === "completed") return <div className="size-2 rounded-full bg-teal-500" />
-  if (status === "failed") return <div className="size-2 rounded-full bg-red-500" />
-  if (status === "cancelled") return <div className="size-2 rounded-full bg-zinc-400" />
+  if (status === "completed")
+    return <div className="size-2 rounded-full bg-teal-500" />;
+  if (status === "failed")
+    return <div className="size-2 rounded-full bg-red-500" />;
+  if (status === "cancelled")
+    return <div className="size-2 rounded-full bg-zinc-400" />;
   if (status === "running" || status === "starting") {
     return (
       <div className="relative flex size-2 items-center justify-center">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
         <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
       </div>
-    )
+    );
   }
-  return <div className="size-2 animate-pulse rounded-full bg-amber-500" />
+  return <div className="size-2 animate-pulse rounded-full bg-amber-500" />;
 }

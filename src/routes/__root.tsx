@@ -4,9 +4,9 @@ import {
   Link,
   createRootRoute,
   useRouterState,
-} from "@tanstack/react-router"
-import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
-import { TanStackDevtools } from "@tanstack/react-devtools"
+} from "@tanstack/react-router";
+import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { TanStackDevtools } from "@tanstack/react-devtools";
 import {
   IconStack2,
   IconHome2,
@@ -14,18 +14,23 @@ import {
   IconMessage2Bolt,
   IconKey,
   IconHistory,
-} from "@tabler/icons-react"
-import { AppProviders } from "@/components/app-providers"
-import { HomeRunGuide } from "@/components/home-run-guide"
-import { Toaster } from "@/components/ui/sonner"
-import { AppSidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
-import { ThemeProvider } from "@/components/theme-provider"
-import { Button } from "@/components/ui/button"
-import { env } from "~/env"
+} from "@tabler/icons-react";
+import { AppProviders } from "@/components/app-providers";
+import { HomeRunGuide } from "@/components/home-run-guide";
+import { Toaster } from "@/components/ui/sonner";
+import {
+  AppSidebar,
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { ThemeProvider } from "@/components/theme-provider";
+import { Button } from "@/components/ui/button";
+import { env } from "~/env";
 
-import appCss from "../styles.css?url"
+import appCss from "../styles.css?url";
 
-void env.VITE_CONVEX_URL
+void env.VITE_CONVEX_URL;
 
 const themeInitScript = `
   (() => {
@@ -34,7 +39,7 @@ const themeInitScript = `
       document.documentElement.style.colorScheme = "dark"
     } catch {}
   })();
-`
+`;
 
 export const Route = createRootRoute({
   head: () => ({
@@ -72,26 +77,33 @@ export const Route = createRootRoute({
   }),
   notFoundComponent: RootNotFound,
   shellComponent: RootDocument,
-})
+});
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
-  })
+  });
   const getPageHeader = (path: string) => {
-    if (path === "/") return { title: "Home", icon: IconHome2 }
-    if (path.startsWith("/review-bot")) return { title: "Review Bot", icon: IconMessage2Bolt }
-    if (path.startsWith("/dashboard")) return { title: "Dashboard", icon: IconLayoutDashboard }
-    if (path.startsWith("/background-agents")) return { title: "Background Agents", icon: IconStack2 }
-    if (path.startsWith("/credentials")) return { title: "Credentials", icon: IconKey }
-    if (path.startsWith("/history")) return { title: "History", icon: IconHistory }
+    if (path === "/") return { title: "Home", icon: IconHome2 };
+    if (path.startsWith("/review-bot"))
+      return { title: "Review Bot", icon: IconMessage2Bolt };
+    if (path.startsWith("/dashboard"))
+      return { title: "Dashboard", icon: IconLayoutDashboard };
+    if (path.startsWith("/background-agents"))
+      return { title: "Background Agents", icon: IconStack2 };
+    if (path.startsWith("/credentials"))
+      return { title: "Credentials", icon: IconKey };
+    if (path.startsWith("/history"))
+      return { title: "History", icon: IconHistory };
 
-    const segment = path.split("/").filter(Boolean)[0]
-    const title = segment ? segment.charAt(0).toUpperCase() + segment.slice(1).replace(/-/g, " ") : "Home"
-    return { title, icon: IconHome2 }
-  }
+    const segment = path.split("/").filter(Boolean)[0];
+    const title = segment
+      ? segment.charAt(0).toUpperCase() + segment.slice(1).replace(/-/g, " ")
+      : "Home";
+    return { title, icon: IconHome2 };
+  };
 
-  const { title, icon: PageIcon } = getPageHeader(pathname)
+  const { title, icon: PageIcon } = getPageHeader(pathname);
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -143,7 +155,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         </ThemeProvider>
       </body>
     </html>
-  )
+  );
 }
 
 function RootNotFound() {
@@ -157,17 +169,22 @@ function RootNotFound() {
           This route does not exist.
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Return to the command center or open the run history to inspect archived QA reports.
+          Return to the command center or open the run history to inspect
+          archived QA reports.
         </p>
         <div className="mt-6 flex items-center justify-center gap-3">
           <Button render={<Link to="/" />} className="rounded-2xl">
             Go home
           </Button>
-          <Button render={<Link to="/history" />} variant="outline" className="rounded-2xl">
+          <Button
+            render={<Link to="/history" />}
+            variant="outline"
+            className="rounded-2xl"
+          >
             Open history
           </Button>
         </div>
       </div>
     </div>
-  )
+  );
 }
