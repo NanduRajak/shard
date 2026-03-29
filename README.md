@@ -1,75 +1,49 @@
 # Shard
 
-Shard is an autonomous web QA app with a GitHub review bot.
+Shard is an autonomous web QA app with a built-in GitHub review bot. It can run live browser sessions, launch background QA agents, store reusable site credentials, and turn runs into reports that are easier to review and share.
 
-It can:
+## What It Does
 
-- run live QA sessions against a URL in Steel cloud or your own local Chrome
-- execute task-driven browser workflows such as adding an item to cart or creating a record
-- queue multi-agent background QA orchestrators for a site
-- capture findings, screenshots, traces, performance audits, and run timelines
-- generate archived QA reports with coverage, task outcome, and prioritized defects
-- review GitHub pull requests with tracked repositories and rerunnable PR reviews
+Shard currently supports these use cases:
 
-## Product areas
+- Exploratory QA by pasting a URL
+- Task-driven QA by pasting a URL with instructions
+- Live cloud browser sessions through Steel
+- Live local browser sessions through the local helper and your own Chrome install
+- Multi-agent background QA automation for a single site
+- Saved login profiles matched to site origin
+- Live run timelines with streamed status, findings, and artifacts
+- Archived reports with findings, coverage, screenshots, traces, replay links, and Lighthouse data
+- Dashboard views for recent runs and Lighthouse deltas
+- GitHub PR reviews with repo tracking, pull request selection, reruns, and review summaries
 
-### Web QA
+## Quick Start
 
-Shard supports three QA execution paths:
+```bash
+pnpm install
+pnpm dev
+docker-compose up -d
+```
 
-- `Cloud session`: interactive run in Steel with live preview
-- `Local session`: interactive run in your own Chrome through the local helper
-- `Background agents`: queued Playwright workers coordinated through a site orchestrator
+Optional local Chrome support:
 
-All three paths now use the same shared QA engine for:
+```bash
+pnpm local-helper
+```
 
-- planning and fallback behavior
-- safe action rules
-- task completion checks
-- browser finding capture
-- Lighthouse selection
-- scoring and report generation
+The app runs on `http://localhost:3000`.
 
-### Saved credentials
+Full setup, environment variables, and service wiring live in [SETUP.md](./SETUP.md).
 
-Shard can store website credentials and use them during QA runs when a login wall blocks useful exploration. Credentials stay outside the model and are injected by runtime code.
+## Typical Workflow
 
-### Reports and history
+1. Start the app and Inngest worker.
+2. Open `http://localhost:3000`.
+3. Paste a URL for exploratory QA, or a URL plus instructions for task-driven QA.
+4. Review the live run at `/runs/:runId` and archived results in `/history`.
+5. Use `/credentials`, `/background-agents`, `/dashboard`, and `/review-bot` as needed.
 
-Every run stores:
-
-- findings with severity, confidence, impact, and score
-- runtime browser signals for console, network, and page errors
-- screenshots and HTML report artifacts
-- optional Playwright trace or Steel replay links
-- route coverage and performance audit results
-
-Completed runs can be reviewed from the history page. Active runs stream a filtered timeline focused on QA-relevant actions and findings.
-
-### Dashboard
-
-The dashboard shows recent QA runs, run status counts, and Lighthouse deltas for completed scans.
-
-### Review bot
-
-Shard also includes a GitHub review bot that can:
-
-- connect to GitHub
-- track repositories and pull requests
-- run PR reviews
-- surface findings and review summaries
-- rerun reviews for tracked PRs
-
-## How QA runs work
-
-### Prompt format
-
-The home page accepts a prompt that contains:
-
-- a URL only for exploratory QA
-- a URL plus instructions for task-driven QA
-
-Examples:
+Example prompts:
 
 ```text
 https://shop.example.com
@@ -79,44 +53,17 @@ https://shop.example.com
 https://shop.example.com add Sony headphones to cart and verify the cart flow
 ```
 
-### Run modes
+## Architecture Overview
 
-- If the prompt contains only a URL, Shard creates an `explore` run.
-- If the prompt contains a URL plus extra text, Shard creates a `task` run.
+- `src/routes`: TanStack Start routes for the app UI and API entry points
+- `src/lib`: shared QA, reporting, scoring, and workflow logic
+- `convex/`: persistent data layer for runs, findings, credentials, artifacts, and review state
+- `inngest/`: background jobs for QA runs and PR review workflows
+- `scripts/local-helper.ts`: local Chrome bridge for on-machine browser runs
 
-### Browser providers
+At a high level, the app uses React and TanStack Start for the UI, Convex for state and storage, Inngest for async orchestration, and Playwright or Steel for browser execution.
 
-- `steel`: hosted cloud session with live preview
-- `local_chrome`: your own Chrome through the local helper
-- `playwright`: background worker mode used by background agents
-
-## Background agents
-
-Shard supports a site-first background orchestrator:
-
-- one site URL, one optional shared task, and multiple auto-sharded agents
-- default credential auto-selection based on the target site origin
-- a dedicated orchestrator detail page with merged report and per-agent timeline lanes
-
-Each orchestrator produces a merged report with:
-
-- deduped findings
-- shared coverage summary
-- merged performance audits
-- per-agent timeline lanes
-
-## Main routes
-
-- `/` home run launcher
-- `/runs/$runId` live run timeline
-- `/history` archived run list
-- `/history/$runId` archived QA report
-- `/background-agents` queued and merged background QA
-- `/credentials` saved website logins
-- `/dashboard` recent QA overview
-- `/review-bot` GitHub review bot
-
-## Tech stack
+## Stack
 
 - TanStack Start
 - React
@@ -125,151 +72,49 @@ Each orchestrator produces a merged report with:
 - Playwright
 - Steel
 - AI SDK
-- Gemini
+- OpenAI SDK
 - Lighthouse
-- Probot and Octokit
+- Octokit and Probot
 
-## Local development
+## Screenshots
 
-### Requirements
-
-- Node.js
-- pnpm
-- a Convex deployment
-- Steel API access for cloud runs
-- Gemini API access
-- optional GitHub app credentials for the review bot
-- optional local Chrome setup for local runs
-
-### Main scripts
-
-```bash
-pnpm dev
-pnpm inngest:dev
-pnpm local-helper
-pnpm test
-pnpm typecheck
-pnpm lint
-```
-
-### Typical dev workflow
-
-1. Start the app:
-
-```bash
-pnpm dev
-```
-
-2. Start the Inngest worker in another terminal:
-
-```bash
-pnpm inngest:dev
-```
-
-3. If you want local Chrome runs, start the helper:
-
-```bash
-pnpm local-helper
-```
-
-4. If you use Convex locally, run your Convex dev process in parallel.
-
-### Local Chrome troubleshooting
-
-The helper supports two local Chrome modes:
-
-- default local launch mode, where the helper opens a fresh visible Chrome window and drives it directly with Playwright
-- optional `LOCAL_CHROME_BROWSER_URL`, which attaches to an explicit Chrome remote debugging endpoint such as `http://127.0.0.1:9222`
-
-For most machines, the default flow is the most reliable:
-
-1. Start the helper:
-
-```bash
-pnpm local-helper
-```
-
-2. Create a local Chrome run from the app.
-
-3. Let the helper open its dedicated Chrome window and keep that window open until the run finishes.
-
-If you explicitly want to reuse a Chrome instance you started yourself, use the advanced attach flow:
-
-1. Start Chrome with a dedicated debugging profile:
-
-```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/shard-chrome-profile
-```
-
-2. Start the helper against that port:
-
-```bash
-LOCAL_CHROME_BROWSER_URL=http://127.0.0.1:9222 pnpm local-helper
-```
-
-3. Open at least one normal Chrome tab in that debugging session before starting the run.
-
-If the explicit attach flow is misconfigured, the helper now surfaces a direct endpoint error on the run page instead of failing with a vague browser crash.
-
-## Environment variables
-
-Important server-side environment variables include:
-
-- `VITE_CONVEX_URL`
-- `STEEL_API_KEY`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL` default: `gpt-4o-mini`
-- `CREDENTIAL_ENCRYPTION_KEY`
-- `LOCAL_HELPER_SECRET`
-- `QA_DIRECT_RUN_FALLBACK`
-- `APP_BASE_URL`
-
-Optional GitHub and review-bot variables include:
-
-- `GITHUB_APP_ID`
-- `GITHUB_APP_PRIVATE_KEY`
-- `GITHUB_APP_SLUG`
-- `GITHUB_OAUTH_CLIENT_ID`
-- `GITHUB_OAUTH_CLIENT_SECRET`
-- `GITHUB_TOKEN`
-- `GITHUB_WEBHOOK_SECRET`
-- `REVIEW_BOT_SECRET`
-
-Inngest-related variables include:
-
-- `INNGEST_BASE_URL`
-- `INNGEST_DEV`
-- `INNGEST_EVENT_KEY`
-- `INNGEST_SERVE_ORIGIN`
-- `INNGEST_SIGNING_KEY`
-
-## Data model
-
-Core records stored in Convex include:
-
-- `runs`
-- `runEvents`
-- `findings`
-- `artifacts`
-- `performanceAudits`
-- `sessions`
-- `backgroundOrchestrators`
-- `credentials`
-- `localHelpers`
-- `trackedRepos`
-- `trackedPullRequests`
-- `prReviews`
-
-## Current behavior
-
-- Shard focuses on web application QA.
-- Mobile application testing is not in scope.
-- The agent is allowed to perform safe, reversible task actions.
-- The agent blocks destructive actions, final purchase submission, payment submission, and irreversible confirmations.
-- Task runs are marked complete only when the visible UI provides proof.
+-SCREENSHOTS HERE
 
 ## Notes
 
-- Cloud and local interactive runs are launched from the home page.
-- Background Playwright runs are launched from the background agents page.
-- The dashboard is intentionally lightweight today and can be expanded later.
+### Challenges
+
+- Keeping cloud runs, local Chrome runs, and background agents aligned behind one QA flow
+- Capturing useful artifacts without overwhelming the report surface
+- Supporting stored credentials without exposing them directly to the model
+- Making PR review state, reruns, and repository tracking feel consistent with the QA side of the app
+
+### Assumptions
+
+- A working Convex deployment is available
+- OpenAI and Steel credentials are available for the environments where the app runs
+- Site credentials are created inside the app when a target flow needs authentication
+
+### Current Limitations
+
+- Full functionality depends on external services such as Convex, Inngest, Steel, and OpenAI
+- Local Chrome runs require the helper process and a compatible Chrome install on the same machine
+- The GitHub review bot only works after the full GitHub App and OAuth configuration is in place
+- No demo credentials or screenshots are bundled with the repo
+
+## Verification
+
+Useful commands:
+
+```bash
+pnpm test
+pnpm lint
+pnpm typecheck
+pnpm build
+```
+
+Pre-submission checklist:
+
+- Keep commits focused and readable
+- Run the validation commands above
+- Get a teammate review before submission
