@@ -124,6 +124,8 @@ export function RunReportView({ report }: { report: any }) {
         ? pageErrorFindings
         : []
   const selectedSignalMeta = signalMeta(selectedSignal ?? "pageerror")
+  const hasReportIntroContent = Boolean(run.instructions)
+    || Boolean(run.goalStatus && run.goalStatus !== "not_requested")
 
   useEffect(() => {
     if (!selectedScreenshot) {
@@ -149,14 +151,14 @@ export function RunReportView({ report }: { report: any }) {
     >
       <motion.div variants={itemVariants} className="xl:col-span-2">
         <Card className="border border-border/70 bg-card/80">
-          <CardHeader className="gap-4 border-b border-border/70">
+          <CardHeader className={hasReportIntroContent && activeTab === "report" ? "gap-3 border-b border-border/70" : "gap-3"}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <Button 
                     variant="outline" 
                     size="icon" 
-                    className="size-7 rounded-sm text-foreground/80 hover:bg-background/80 transition-colors bg-background/50 border-border/70 mr-0.5"
+                    className="size-7 rounded-lg text-foreground/80 transition-colors bg-background/50 border-border/70 hover:bg-background/80 mr-0.5"
                     onClick={() => navigate({ to: "/history" })}
                   >
                     <IconArrowLeft className="size-4" />
@@ -173,6 +175,10 @@ export function RunReportView({ report }: { report: any }) {
                 <CardDescription className="max-w-3xl break-all text-sm/6">
                   {run.url}
                 </CardDescription>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <IconClock className="size-4 text-emerald-300" />
+                  <span>Time taken {formatSessionDuration(sessionDurationMs)}</span>
+                </div>
               </div>
               <div className="grid min-w-52 gap-2 sm:grid-cols-2">
                 <MetricCard
@@ -183,15 +189,15 @@ export function RunReportView({ report }: { report: any }) {
               </div>
             </div>
             
-            <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground mt-4 mb-2 w-fit shadow-sm relative">
+            <div className="relative mt-3 flex h-9 w-fit items-center rounded-xl border border-border/70 bg-background p-[3px] text-muted-foreground shadow-sm">
               <button
                 onClick={() => setActiveTab("report")}
-                className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "report" ? "text-foreground" : "hover:text-foreground"}`}
+                className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-lg px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "report" ? "text-foreground" : "hover:text-foreground"}`}
               >
                 {activeTab === "report" && (
                   <motion.div
                     layoutId="activeTabIndicator"
-                    className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
+                    className="absolute inset-0 z-[-1] rounded-lg bg-muted/80 shadow-sm"
                     transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
                   />
                 )}
@@ -199,12 +205,12 @@ export function RunReportView({ report }: { report: any }) {
               </button>
               <button
                 onClick={() => setActiveTab("timeline")}
-                className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "timeline" ? "text-foreground" : "hover:text-foreground"}`}
+                className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-lg px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "timeline" ? "text-foreground" : "hover:text-foreground"}`}
               >
                 {activeTab === "timeline" && (
                   <motion.div
                     layoutId="activeTabIndicator"
-                    className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
+                    className="absolute inset-0 z-[-1] rounded-lg bg-muted/80 shadow-sm"
                     transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
                   />
                 )}
@@ -213,7 +219,7 @@ export function RunReportView({ report }: { report: any }) {
             </div>
           </CardHeader>
           
-          {activeTab === "report" && (
+          {activeTab === "report" && hasReportIntroContent && (
             <CardContent className="grid gap-4 pt-4">
               {run.instructions ? (
                 <div className="rounded-[1.1rem] border border-border/70 bg-background/70 p-4">
@@ -364,7 +370,7 @@ export function RunReportView({ report }: { report: any }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 pt-4">
-            <div className="rounded-none border border-border/70 bg-background/70 p-4">
+            <div className="rounded-[1rem] border border-border/70 bg-background/70 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
                   <div className="mt-0.5 shrink-0 text-emerald-300">
@@ -417,7 +423,7 @@ export function RunReportView({ report }: { report: any }) {
                     rel="noreferrer"
                     className={buttonVariants({
                       variant: "outline",
-                      className: "justify-between rounded-none",
+                      className: "justify-between rounded-lg",
                     })}
                   >
                     Open Steel replay
@@ -431,7 +437,7 @@ export function RunReportView({ report }: { report: any }) {
                     rel="noreferrer"
                     className={buttonVariants({
                       variant: "outline",
-                      className: "justify-between rounded-none",
+                      className: "justify-between rounded-lg",
                     })}
                   >
                     Open latest screenshot
@@ -445,7 +451,7 @@ export function RunReportView({ report }: { report: any }) {
                     rel="noreferrer"
                     className={buttonVariants({
                       variant: "outline",
-                      className: "justify-between rounded-none",
+                      className: "justify-between rounded-lg",
                     })}
                   >
                     Open latest report artifact
@@ -565,7 +571,7 @@ export function RunReportView({ report }: { report: any }) {
                       key={audit._id}
                       className="flex h-full flex-col rounded-2xl border border-border/70 bg-background/70 p-4"
                     >
-                      <div className="rounded-none border border-border/70 bg-card/70 p-3">
+                      <div className="rounded-[1rem] border border-border/70 bg-card/70 p-3">
                         <div className="flex items-start gap-3">
                           <div className="shrink-0 text-sky-300">
                             <IconWorldWww className="size-4" />
@@ -608,7 +614,7 @@ export function RunReportView({ report }: { report: any }) {
                     <Button
                       type="button"
                       variant="outline"
-                      className="rounded-none"
+                      className="rounded-lg"
                       onClick={() => setShowAllLighthouseReports((current) => !current)}
                     >
                       {showAllLighthouseReports ? "View less" : `View more (${(performanceAudits as any[]).length - 4})`}
@@ -854,7 +860,7 @@ export function RunReportView({ report }: { report: any }) {
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-none border border-border/70 bg-background/70 p-4">
+    <div className="rounded-[1rem] border border-border/70 bg-background/70 p-4">
       <dt className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
         {label}
       </dt>
@@ -875,7 +881,7 @@ function HighlightMetricCard({
   value: string
 }) {
   return (
-    <div className={["rounded-none border p-4", toneClassName].join(" ")}>
+    <div className={["rounded-[1rem] border p-4", toneClassName].join(" ")}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold tracking-wider uppercase text-white/60">
@@ -896,7 +902,7 @@ function StatusBadge({
 }) {
   if (status === "failed") {
     return (
-      <Badge variant="destructive" className="items-center gap-1 bg-red-500/15 text-red-500 hover:bg-red-500/25 border-0 rounded-none py-1 px-2.5 shadow-none uppercase text-xs">
+      <Badge variant="destructive" className="items-center gap-1 bg-red-500/15 text-red-500 hover:bg-red-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs">
         <IconX className="size-3.5" stroke={2.5} />
         FAILED
       </Badge>
@@ -905,7 +911,7 @@ function StatusBadge({
 
   if (status === "completed") {
     return (
-      <Badge className="items-center gap-1 bg-teal-500/15 text-teal-400 hover:bg-teal-500/25 border-0 rounded-none py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+      <Badge className="items-center gap-1 bg-teal-500/15 text-teal-400 hover:bg-teal-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
         <IconCheck className="size-3.5" stroke={2.5} />
         COMPLETED
       </Badge>
@@ -914,7 +920,7 @@ function StatusBadge({
 
   if (status === "running" || status === "starting") {
     return (
-      <Badge className="items-center gap-1 bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border-0 rounded-none py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+      <Badge className="items-center gap-1 bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
         <IconPlayerPlay className="size-3.5 animate-pulse" stroke={2.5} />
         RUNNING
       </Badge>
@@ -923,7 +929,7 @@ function StatusBadge({
 
   if (status === "cancelled") {
     return (
-      <Badge className="items-center gap-1 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border-0 rounded-none py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+      <Badge className="items-center gap-1 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
         <IconX className="size-3.5" stroke={2.5} />
         CANCELLED
       </Badge>
@@ -931,7 +937,7 @@ function StatusBadge({
   }
 
   return (
-    <Badge className="items-center gap-1 bg-yellow-500/15 text-yellow-500 hover:bg-yellow-500/25 border-0 rounded-none py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
+    <Badge className="items-center gap-1 bg-yellow-500/15 text-yellow-500 hover:bg-yellow-500/25 border-0 rounded-lg py-1 px-2.5 shadow-none uppercase text-xs" variant="secondary">
       <IconHourglassEmpty className="size-3.5" stroke={2.5} />
       PENDING
     </Badge>
@@ -950,7 +956,7 @@ function InfoRow({
   value: string
 }) {
   return (
-    <div className="rounded-none border border-border/70 bg-background/70 p-4">
+    <div className="rounded-[1rem] border border-border/70 bg-background/70 p-4">
       <div className="flex items-start gap-3">
         {icon ? (
           <div className={["shrink-0", iconClassName ?? "text-foreground"].join(" ")}>
@@ -985,7 +991,7 @@ function SignalTriggerRow({
     <button
       type="button"
       onClick={onClick}
-      className="rounded-none border border-border/70 bg-background/70 p-4 text-left transition-colors hover:border-foreground/20 hover:bg-background/85"
+      className="rounded-[1rem] border border-border/70 bg-background/70 p-4 text-left transition-colors hover:border-foreground/20 hover:bg-background/85"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
@@ -1069,7 +1075,7 @@ function ToneInfoRow({ label, value }: { label: string; value: string }) {
   const toneClassName = summaryToneClassName(label)
 
   return (
-    <div className={["rounded-none border bg-background/70 p-4", toneClassName].join(" ")}>
+    <div className={["rounded-[1rem] border bg-background/70 p-4", toneClassName].join(" ")}>
       <p className="text-[11px] font-semibold tracking-wider uppercase text-white/60">
         {label}
       </p>
@@ -1082,7 +1088,7 @@ function AuditMetric({ label, score }: { label: string; score: number }) {
   const toneClassName = auditToneClassName(label)
 
   return (
-    <div className="rounded-none border border-border/70 bg-card p-3">
+    <div className="rounded-[1rem] border border-border/70 bg-card p-3">
       <p className={["text-[11px] font-semibold tracking-wider uppercase", toneClassName].join(" ")}>
         {label}
       </p>
@@ -1105,7 +1111,7 @@ function TrendMetricCard({
   const toneClassName = auditToneClassName(label)
 
   return (
-    <div className="rounded-none border border-border/70 bg-background/70 p-4">
+    <div className="rounded-[1rem] border border-border/70 bg-background/70 p-4">
       <p className={["text-[11px] font-semibold tracking-wider uppercase", toneClassName].join(" ")}>
         {label}
       </p>

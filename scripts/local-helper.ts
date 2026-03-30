@@ -1,18 +1,18 @@
-import { rm } from "node:fs/promises"
-import { hostname, tmpdir } from "node:os"
-import { join } from "node:path"
-import { randomUUID } from "node:crypto"
-import { generateObject, generateText, stepCountIs, tool } from "ai"
-import { openai } from "@ai-sdk/openai"
-import { Launcher } from "chrome-launcher"
+import { rm } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { generateObject, generateText, stepCountIs, tool } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { Launcher } from "chrome-launcher";
 import {
   type Browser,
   chromium,
   type BrowserContext,
   type Locator,
   type Page,
-} from "playwright"
-import { z } from "zod"
+} from "playwright";
+import { z } from "zod";
 import {
   buildActionSignature,
   isSameHostname,
@@ -20,112 +20,123 @@ import {
   shouldStopForNoOps,
   shouldStopForRepeatActions,
   wouldExceedPageLimit,
-} from "../src/lib/qa-guards.ts"
-import { pickQaFallbackAction } from "../src/lib/qa-fallback.ts"
+} from "../src/lib/qa-guards.ts";
+import { pickQaFallbackAction } from "../src/lib/qa-fallback.ts";
 import {
   computeFindingScore,
   impactWeightForSource,
-} from "../src/lib/scoring.ts"
-import {
-  QaRunCancelledError,
-  runQaSession,
-} from "../src/lib/qa-engine.ts"
-import { applyStoredLoginToPage } from "../src/lib/stored-login.ts"
+} from "../src/lib/scoring.ts";
+import { QaRunCancelledError, runQaSession } from "../src/lib/qa-engine.ts";
+import { applyStoredLoginToPage } from "../src/lib/stored-login.ts";
 
-const SESSION_TIMEOUT_MS = 10 * 60 * 1000
-const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000
-const MAX_AGENT_STEPS = 36
-const MAX_DISCOVERED_PAGES = 12
-const MAX_PAGE_FINDINGS = 2
-const POLL_INTERVAL_MS = Number(process.env.LOCAL_HELPER_POLL_INTERVAL_MS ?? 3_000)
-const HEARTBEAT_INTERVAL_MS = Number(process.env.LOCAL_HELPER_HEARTBEAT_MS ?? 10_000)
+const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+const AGENT_TIME_BUDGET_MS = 8 * 60 * 1000;
+const MAX_AGENT_STEPS = 36;
+const MAX_DISCOVERED_PAGES = 12;
+const MAX_PAGE_FINDINGS = 2;
+const POLL_INTERVAL_MS = Number(
+  process.env.LOCAL_HELPER_POLL_INTERVAL_MS ?? 3_000,
+);
+const HEARTBEAT_INTERVAL_MS = Number(
+  process.env.LOCAL_HELPER_HEARTBEAT_MS ?? 10_000,
+);
 const STOP_POLL_INTERVAL_MS = Number(
   process.env.LOCAL_HELPER_STOP_POLL_INTERVAL_MS ?? 500,
-)
-const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini"
-const ACTION_HIGHLIGHT_DELAY_MS = 350
+);
+const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
+const ACTION_HIGHLIGHT_DELAY_MS = 350;
 
-type BrowserProvider = "local_chrome" | "steel"
-type RunMode = "explore" | "task"
-type RunStatus = "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
-type RunGoalStatus = "blocked" | "completed" | "not_requested" | "partially_completed"
-type LocalHelperStatus = "busy" | "error" | "idle" | "offline"
-type SessionStatus = "active" | "closed" | "creating" | "failed"
+type BrowserProvider = "local_chrome" | "steel";
+type RunMode = "explore" | "task";
+type RunStatus =
+  | "cancelled"
+  | "completed"
+  | "failed"
+  | "queued"
+  | "running"
+  | "starting";
+type RunGoalStatus =
+  | "blocked"
+  | "completed"
+  | "not_requested"
+  | "partially_completed";
+type LocalHelperStatus = "busy" | "error" | "idle" | "offline";
+type SessionStatus = "active" | "closed" | "creating" | "failed";
 
 type RunRecord = {
-  _id: string
-  browserProvider?: BrowserProvider
-  credentialId?: string
-  currentStep?: string
-  instructions?: string
-  mode?: RunMode
-  status: RunStatus
-  url: string
-}
+  _id: string;
+  browserProvider?: BrowserProvider;
+  credentialId?: string;
+  currentStep?: string;
+  instructions?: string;
+  mode?: RunMode;
+  status: RunStatus;
+  url: string;
+};
 
 type InteractiveElement = {
-  href?: string | null
-  id: number
-  label: string
-  role: string
-  tagName: string
-  type?: string | null
-  uid: string
-}
+  href?: string | null;
+  id: number;
+  label: string;
+  role: string;
+  tagName: string;
+  type?: string | null;
+  uid: string;
+};
 
 type PageSnapshot = {
-  formsSummary: string
-  interactives: InteractiveElement[]
-  signature: string
-  textExcerpt: string
-  title: string
-  url: string
-}
+  formsSummary: string;
+  interactives: InteractiveElement[];
+  signature: string;
+  textExcerpt: string;
+  title: string;
+  url: string;
+};
 
 type ToolOutcome = {
-  actionKey?: string
-  artifactCreated?: boolean
-  changed: boolean
-  currentUrl: string
-  fallback?: boolean
-  goalOutcome?: GoalOutcome
-  note: string
-  target?: string
-  toolName: string
-}
+  actionKey?: string;
+  artifactCreated?: boolean;
+  changed: boolean;
+  currentUrl: string;
+  fallback?: boolean;
+  goalOutcome?: GoalOutcome;
+  note: string;
+  target?: string;
+  toolName: string;
+};
 
 type GoalOutcome = {
-  status: "blocked" | "completed" | "partially_completed"
-  summary: string
-}
+  status: "blocked" | "completed" | "partially_completed";
+  summary: string;
+};
 
 type BufferedFinding = {
-  confidence: number
-  description: string
-  pageOrFlow?: string
-  severity: "critical" | "high" | "low" | "medium"
-  signature: string
-  source: "browser" | "perf"
-  suggestedFix?: string
-  title: string
-}
+  confidence: number;
+  description: string;
+  pageOrFlow?: string;
+  severity: "critical" | "high" | "low" | "medium";
+  signature: string;
+  source: "browser" | "perf";
+  suggestedFix?: string;
+  title: string;
+};
 
 type SavedFinding = {
-  score: number
-  source: "browser" | "perf"
-}
+  score: number;
+  source: "browser" | "perf";
+};
 
 type PageCandidate = {
-  findingCount: number
-  firstSeenAt: number
-  interactionCount: number
-  url: string
-}
+  findingCount: number;
+  firstSeenAt: number;
+  interactionCount: number;
+  url: string;
+};
 
 type SessionRecord = {
-  sessionId: string
-  externalSessionId: string
-}
+  sessionId: string;
+  externalSessionId: string;
+};
 
 const pageReviewSchema = z.object({
   findings: z
@@ -139,25 +150,25 @@ const pageReviewSchema = z.object({
       }),
     )
     .max(MAX_PAGE_FINDINGS),
-})
+});
 
 async function main() {
-  const appBaseUrl = requiredEnv("APP_BASE_URL")
-  const helperSecret = requiredEnv("LOCAL_HELPER_SECRET")
-  const openaiApiKey = requiredEnv("OPENAI_API_KEY")
-  const helperId = process.env.LOCAL_HELPER_ID ?? randomUUID()
-  const machineLabel = process.env.LOCAL_HELPER_MACHINE_LABEL ?? hostname()
-  const version = process.env.LOCAL_HELPER_VERSION ?? "0.1.0"
-  const api = new LocalHelperApi(appBaseUrl, helperSecret)
+  const appBaseUrl = requiredEnv("APP_BASE_URL");
+  const helperSecret = requiredEnv("LOCAL_HELPER_SECRET");
+  const openaiApiKey = requiredEnv("OPENAI_API_KEY");
+  const helperId = process.env.LOCAL_HELPER_ID ?? randomUUID();
+  const machineLabel = process.env.LOCAL_HELPER_MACHINE_LABEL ?? hostname();
+  const version = process.env.LOCAL_HELPER_VERSION ?? "0.1.0";
+  const api = new LocalHelperApi(appBaseUrl, helperSecret);
 
-  process.env.OPENAI_API_KEY = openaiApiKey
+  process.env.OPENAI_API_KEY = openaiApiKey;
 
   const heartbeatState: {
-    currentClaimedRunId?: string
-    status: LocalHelperStatus
+    currentClaimedRunId?: string;
+    status: LocalHelperStatus;
   } = {
     status: "idle",
-  }
+  };
 
   const heartbeat = windowlessInterval(async () => {
     await api.register({
@@ -166,13 +177,13 @@ async function main() {
       version,
       status: heartbeatState.status,
       currentClaimedRunId: heartbeatState.currentClaimedRunId,
-    })
-  }, HEARTBEAT_INTERVAL_MS)
+    });
+  }, HEARTBEAT_INTERVAL_MS);
 
   process.on("SIGINT", async () => {
-    heartbeatState.currentClaimedRunId = undefined
-    heartbeatState.status = "offline"
-    await heartbeat.stop().catch(() => undefined)
+    heartbeatState.currentClaimedRunId = undefined;
+    heartbeatState.status = "offline";
+    await heartbeat.stop().catch(() => undefined);
     await api
       .register({
         helperId,
@@ -180,35 +191,35 @@ async function main() {
         version,
         status: "offline",
       })
-      .catch(() => undefined)
-    process.exit(0)
-  })
+      .catch(() => undefined);
+    process.exit(0);
+  });
 
   await api.register({
     helperId,
     machineLabel,
     version,
     status: "idle",
-  })
+  });
 
   while (true) {
-    const claim = await api.claim({ helperId })
+    const claim = await api.claim({ helperId });
 
     if (!claim.ok) {
-      heartbeatState.status = "error"
-      await sleep(POLL_INTERVAL_MS)
-      continue
+      heartbeatState.status = "error";
+      await sleep(POLL_INTERVAL_MS);
+      continue;
     }
 
     if (!claim.run) {
-      heartbeatState.currentClaimedRunId = undefined
-      heartbeatState.status = "idle"
-      await sleep(POLL_INTERVAL_MS)
-      continue
+      heartbeatState.currentClaimedRunId = undefined;
+      heartbeatState.status = "idle";
+      await sleep(POLL_INTERVAL_MS);
+      continue;
     }
 
-    heartbeatState.currentClaimedRunId = claim.run._id
-    heartbeatState.status = "busy"
+    heartbeatState.currentClaimedRunId = claim.run._id;
+    heartbeatState.status = "busy";
 
     try {
       await runLocalQaWorkflow({
@@ -216,24 +227,28 @@ async function main() {
         helperId,
         machineLabel,
         run: claim.run,
-      })
-      heartbeatState.status = "idle"
+      });
+      heartbeatState.status = "idle";
     } catch (error) {
-      heartbeatState.status = "error"
+      heartbeatState.status = "error";
 
-      const message = error instanceof Error ? error.message : "Unknown local helper failure"
+      const message =
+        error instanceof Error ? error.message : "Unknown local helper failure";
       const status =
-        error instanceof RunCancelledError || error instanceof QaRunCancelledError
+        error instanceof RunCancelledError ||
+        error instanceof QaRunCancelledError
           ? "cancelled"
-          : "failed"
+          : "failed";
       const currentStep =
-        error instanceof RunCancelledError || error instanceof QaRunCancelledError
+        error instanceof RunCancelledError ||
+        error instanceof QaRunCancelledError
           ? error.message
-          : "Local Chrome QA run failed"
+          : "Local Chrome QA run failed";
       const currentUrl =
-        error instanceof RunCancelledError || error instanceof QaRunCancelledError
-          ? error.currentUrl ?? claim.run.url
-          : claim.run.url
+        error instanceof RunCancelledError ||
+        error instanceof QaRunCancelledError
+          ? (error.currentUrl ?? claim.run.url)
+          : claim.run.url;
 
       await api
         .event({
@@ -244,7 +259,7 @@ async function main() {
           body: message,
           pageUrl: currentUrl,
         })
-        .catch(() => undefined)
+        .catch(() => undefined);
 
       await api
         .finalize({
@@ -254,15 +269,16 @@ async function main() {
           currentStep,
           currentUrl,
           errorMessage:
-            error instanceof RunCancelledError || error instanceof QaRunCancelledError
+            error instanceof RunCancelledError ||
+            error instanceof QaRunCancelledError
               ? undefined
               : message,
         })
-        .catch(() => undefined)
+        .catch(() => undefined);
     } finally {
-      heartbeatState.currentClaimedRunId = undefined
+      heartbeatState.currentClaimedRunId = undefined;
       if (heartbeatState.status !== "error") {
-        heartbeatState.status = "idle"
+        heartbeatState.status = "idle";
       }
     }
   }
@@ -274,24 +290,24 @@ async function runLocalQaWorkflow({
   machineLabel,
   run,
 }: {
-  api: LocalHelperApi
-  helperId: string
-  machineLabel: string
-  run: RunRecord
+  api: LocalHelperApi;
+  helperId: string;
+  machineLabel: string;
+  run: RunRecord;
 }) {
-  const browser = new LocalChromeBrowser()
-  const stopController = new AbortController()
-  const externalSessionId = `local:${helperId}:${run._id}`
-  let session: SessionRecord | null = null
-  let finalStatus: "cancelled" | "completed" | "failed" = "completed"
+  const browser = new LocalChromeBrowser();
+  const stopController = new AbortController();
+  const externalSessionId = `local:${helperId}:${run._id}`;
+  let session: SessionRecord | null = null;
+  let finalStatus: "cancelled" | "completed" | "failed" = "completed";
   const stopWatcher = createImmediateRunStopWatcher({
     api,
     runId: run._id,
     onStop: async () => {
-      stopController.abort("stop_requested")
-      await browser.close().catch(() => undefined)
+      stopController.abort("stop_requested");
+      await browser.close().catch(() => undefined);
     },
-  })
+  });
 
   try {
     await api.progress({
@@ -301,7 +317,7 @@ async function runLocalQaWorkflow({
       currentStep: "Connecting local Chrome helper",
       currentUrl: run.url,
       errorMessage: null,
-    })
+    });
     await api.event({
       runId: run._id,
       kind: "status",
@@ -309,14 +325,14 @@ async function runLocalQaWorkflow({
       title: "Local run starting",
       body: `Local helper ${machineLabel} is preparing a visible local Chrome window for live QA automation.`,
       pageUrl: run.url,
-    })
+    });
 
     session = await api.session({
       runId: run._id,
       provider: "local_chrome",
       externalSessionId,
       status: "creating",
-    })
+    });
 
     await api.event({
       runId: run._id,
@@ -326,12 +342,12 @@ async function runLocalQaWorkflow({
       title: "Preparing local Chrome session",
       body: "Shard is starting the local Chrome session now. By default the helper launches a fresh visible Chrome window; if LOCAL_CHROME_BROWSER_URL is set, it will attach to that explicit debugging endpoint instead.",
       pageUrl: run.url,
-    })
+    });
 
-    await browser.connect()
-    await browser.open(run.url)
+    await browser.connect();
+    await browser.open(run.url);
 
-    const openedUrl = await browser.getCurrentUrl()
+    const openedUrl = await browser.getCurrentUrl();
 
     await api.progress({
       runId: run._id,
@@ -339,7 +355,7 @@ async function runLocalQaWorkflow({
       currentStep: "Booting autonomous QA agent",
       currentUrl: openedUrl,
       queueState: "picked_up",
-    })
+    });
 
     await api.session({
       runId: run._id,
@@ -347,7 +363,7 @@ async function runLocalQaWorkflow({
       provider: "local_chrome",
       externalSessionId,
       status: "active",
-    })
+    });
 
     await api.event({
       runId: run._id,
@@ -357,7 +373,7 @@ async function runLocalQaWorkflow({
       title: "Local Chrome attached",
       body: `Shard is driving ${browser.connectionLabel()}. Watch the local Chrome window for live interactions while steps and findings stream here.`,
       pageUrl: openedUrl,
-    })
+    });
 
     const sessionResult = await runQaSession({
       browser: createLocalQaBrowser(browser),
@@ -368,22 +384,20 @@ async function runLocalQaWorkflow({
       },
       getStoredCredential: run.credentialId
         ? (() => {
-            let credentialPromise:
-              | Promise<{
-                  login: string
-                  origin: string
-                  password: string
-                } | null>
-              | null = null
+            let credentialPromise: Promise<{
+              login: string;
+              origin: string;
+              password: string;
+            } | null> | null = null;
 
             return async () => {
               credentialPromise ??= api.credential({
                 helperId,
                 runId: run._id,
-              })
+              });
 
-              return await credentialPromise
-            }
+              return await credentialPromise;
+            };
           })()
         : undefined,
       instructions: run.instructions,
@@ -396,9 +410,9 @@ async function runLocalQaWorkflow({
         sessionId: session.sessionId,
       }),
       startUrl: run.url,
-    })
+    });
 
-    const finalScore = sessionResult.finalScore
+    const finalScore = sessionResult.finalScore;
 
     await api.event({
       runId: run._id,
@@ -411,7 +425,7 @@ async function runLocalQaWorkflow({
           ? `Final quality score: ${finalScore}/100.\nTask outcome: ${sessionResult.goalOutcome.status}.\n${sessionResult.goalOutcome.summary}`
           : `Final quality score: ${finalScore}/100.`,
       pageUrl: await browser.getCurrentUrl(),
-    })
+    });
 
     await api.finalize({
       helperId,
@@ -424,7 +438,7 @@ async function runLocalQaWorkflow({
       goalSummary: sessionResult.goalOutcome?.summary,
       sessionId: session.sessionId,
       sessionStatus: "closed",
-    })
+    });
   } catch (error) {
     const stopState =
       error instanceof RunCancelledError || error instanceof QaRunCancelledError
@@ -437,14 +451,14 @@ async function runLocalQaWorkflow({
               currentUrl: stopWatcher.currentUrl() ?? run.url,
               stopRequestedAt: Date.now(),
             }
-          : await api.state({ runId: run._id }).catch(() => null)
+          : await api.state({ runId: run._id }).catch(() => null);
 
     finalStatus =
       error instanceof RunCancelledError ||
       error instanceof QaRunCancelledError ||
       stopState?.stopRequestedAt
         ? "cancelled"
-        : "failed"
+        : "failed";
 
     if (
       finalStatus === "cancelled" &&
@@ -454,12 +468,12 @@ async function runLocalQaWorkflow({
       throw new RunCancelledError(
         "Stop requested, shutting down local Chrome run",
         stopState?.currentUrl ?? run.url,
-      )
+      );
     }
 
-    throw error
+    throw error;
   } finally {
-    stopWatcher.stop()
+    stopWatcher.stop();
 
     if (session && finalStatus !== "completed") {
       await api
@@ -471,54 +485,60 @@ async function runLocalQaWorkflow({
           status: finalStatus === "failed" ? "failed" : "closed",
           finishedAt: Date.now(),
         })
-        .catch(() => undefined)
+        .catch(() => undefined);
     }
 
-    await browser.close().catch(() => undefined)
+    await browser.close().catch(() => undefined);
   }
 }
 
 function createLocalQaBrowser(browser: LocalChromeBrowser) {
   return {
-    captureRuntimeFindings: async (startUrl: string, bufferedFindings: BufferedFinding[]) => {
-      await browser.collectRuntimeFindings(startUrl, bufferedFindings)
+    captureRuntimeFindings: async (
+      startUrl: string,
+      bufferedFindings: BufferedFinding[],
+    ) => {
+      await browser.collectRuntimeFindings(startUrl, bufferedFindings);
     },
     click: async (ref: string) => {
-      await browser.click(ref)
+      await browser.click(ref);
     },
     fill: async (ref: string, value: string) => {
-      await browser.fill(ref, value)
+      await browser.fill(ref, value);
     },
     getCurrentUrl: async () => await browser.getCurrentUrl(),
     goBack: async () => {
-      await browser.goBack()
+      await browser.goBack();
     },
     inspectCurrentPage: async () => {
-      const snapshot = await browser.inspectCurrentPage()
+      const snapshot = await browser.inspectCurrentPage();
       return {
         ...snapshot,
         interactives: snapshot.interactives.map((item) => ({
           ...item,
           ref: item.uid,
         })),
-      }
+      };
     },
     navigate: async (url: string) => {
-      await browser.navigate(url)
+      await browser.navigate(url);
     },
     pressKey: async (key: string) => {
-      await browser.pressKey(key)
+      await browser.pressKey(key);
     },
-    startRuntimeCapture: async (startUrl: string, bufferedFindings: BufferedFinding[]) => {
-      await browser.startRuntimeCapture(startUrl, bufferedFindings)
+    startRuntimeCapture: async (
+      startUrl: string,
+      bufferedFindings: BufferedFinding[],
+    ) => {
+      await browser.startRuntimeCapture(startUrl, bufferedFindings);
     },
     takeScreenshot: async () => await browser.takeScreenshot(),
     useStoredLogin: async (credential: {
-      login: string
-      origin: string
-      password: string
+      login: string;
+      origin: string;
+      password: string;
     }) => await browser.useStoredLogin(credential),
-  }
+  };
 }
 
 function createLocalQaRuntime({
@@ -527,18 +547,18 @@ function createLocalQaRuntime({
   runId,
   sessionId,
 }: {
-  api: LocalHelperApi
-  abortSignal: AbortSignal
-  runId: string
-  sessionId: string
+  api: LocalHelperApi;
+  abortSignal: AbortSignal;
+  runId: string;
+  sessionId: string;
 }) {
   return {
     createArtifact: async (payload: {
-      body: Uint8Array
-      contentType: string
-      pageUrl?: string
-      title?: string
-      type: "html-report" | "replay" | "screenshot" | "trace"
+      body: Uint8Array;
+      contentType: string;
+      pageUrl?: string;
+      title?: string;
+      type: "html-report" | "replay" | "screenshot" | "trace";
     }) => {
       const artifact = await api.artifact({
         base64: Buffer.from(payload.body).toString("base64"),
@@ -547,83 +567,95 @@ function createLocalQaRuntime({
         runId,
         title: payload.title,
         type: payload.type,
-      })
+      });
 
-      return artifact.artifactId
+      return artifact.artifactId;
     },
     createFinding: async (payload: {
-      artifactId?: string
-      browserSignal?: "console" | "network" | "pageerror"
-      confidence: number
-      description: string
-      impact: number
-      pageOrFlow?: string
-      score: number
-      severity: "critical" | "high" | "low" | "medium"
-      source: "browser" | "perf"
-      stepIndex?: number
-      suggestedFix?: string
-      title: string
+      artifactId?: string;
+      browserSignal?: "console" | "network" | "pageerror";
+      confidence: number;
+      description: string;
+      impact: number;
+      pageOrFlow?: string;
+      score: number;
+      severity: "critical" | "high" | "low" | "medium";
+      source: "browser" | "perf";
+      stepIndex?: number;
+      suggestedFix?: string;
+      title: string;
     }) => {
       await api.finding({
         ...payload,
         runId,
-      })
+      });
     },
     createPerformanceAudit: async (payload: {
-      accessibilityScore: number
-      bestPracticesScore: number
-      pageUrl: string
-      performanceScore: number
-      reportArtifactId?: string
-      seoScore: number
+      accessibilityScore: number;
+      bestPracticesScore: number;
+      pageUrl: string;
+      performanceScore: number;
+      reportArtifactId?: string;
+      seoScore: number;
     }) => {
       await api.performanceAudit({
         ...payload,
         runId,
-      })
+      });
     },
     emitEvent: async (payload: {
-      artifactId?: string
-      body?: string
-      kind: "agent" | "artifact" | "audit" | "finding" | "navigation" | "session" | "status" | "system"
-      pageUrl?: string
-      status?: RunStatus
-      stepIndex?: number
-      title: string
+      artifactId?: string;
+      body?: string;
+      kind:
+        | "agent"
+        | "artifact"
+        | "audit"
+        | "finding"
+        | "navigation"
+        | "session"
+        | "status"
+        | "system";
+      pageUrl?: string;
+      status?: RunStatus;
+      stepIndex?: number;
+      title: string;
     }) => {
       await api.event({
         ...payload,
         runId,
         sessionId,
-      })
+      });
     },
     getAbortSignal: () => abortSignal,
     getStopState: async () => {
-      const state = await api.state({ runId })
-      return state
+      const state = await api.state({ runId });
+      return state;
     },
     updateRun: async (payload: {
-      currentStep?: string
-      currentUrl?: string | null
-      errorMessage?: string | null
-      finalScore?: number
-      finishedAt?: number
-      goalStatus?: RunGoalStatus | null
-      goalSummary?: string | null
-      queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
-      status?: RunStatus
+      currentStep?: string;
+      currentUrl?: string | null;
+      errorMessage?: string | null;
+      finalScore?: number;
+      finishedAt?: number;
+      goalStatus?: RunGoalStatus | null;
+      goalSummary?: string | null;
+      queueState?:
+        | "pending"
+        | "picked_up"
+        | "waiting_for_worker"
+        | "worker_unreachable";
+      status?: RunStatus;
     }) => {
       await api.progress({
         ...payload,
         runId,
-      })
+      });
     },
-  }
+  };
 }
 
-void runAgentLoop
-void selectAuditUrls
+void runAgentLoop;
+void selectAuditUrls;
 
 async function runAgentLoop({
   api,
@@ -638,27 +670,27 @@ async function runAgentLoop({
   sessionId,
   startUrl,
 }: {
-  api: LocalHelperApi
-  browser: LocalChromeBrowser
-  bufferedFindings: BufferedFinding[]
-  findingSignatures: Set<string>
-  instructions?: string
-  mode: RunMode
-  pageCandidates: Map<string, PageCandidate>
-  runId: string
-  savedFindings: SavedFinding[]
-  sessionId: string
-  startUrl: string
+  api: LocalHelperApi;
+  browser: LocalChromeBrowser;
+  bufferedFindings: BufferedFinding[];
+  findingSignatures: Set<string>;
+  instructions?: string;
+  mode: RunMode;
+  pageCandidates: Map<string, PageCandidate>;
+  runId: string;
+  savedFindings: SavedFinding[];
+  sessionId: string;
+  startUrl: string;
 }) {
-  const initialUrl = await browser.getCurrentUrl()
-  const visitedPages = new Set<string>([initialUrl])
-  const actionHistory: string[] = []
-  const triedActions = new Set<string>()
-  const analyzedSnapshots = new Set<string>()
-  const deadlineAt = Date.now() + AGENT_TIME_BUDGET_MS
-  let goalOutcome: GoalOutcome | undefined
-  let noOpCount = 0
-  let screenshotCount = 0
+  const initialUrl = await browser.getCurrentUrl();
+  const visitedPages = new Set<string>([initialUrl]);
+  const actionHistory: string[] = [];
+  const triedActions = new Set<string>();
+  const analyzedSnapshots = new Set<string>();
+  const deadlineAt = Date.now() + AGENT_TIME_BUDGET_MS;
+  let goalOutcome: GoalOutcome | undefined;
+  let noOpCount = 0;
+  let screenshotCount = 0;
   let stopReason:
     | "goal"
     | "max_pages"
@@ -666,15 +698,15 @@ async function runAgentLoop({
     | "no_ops"
     | "planner_unavailable"
     | "repeat_actions"
-    | "time_budget" = "max_steps"
+    | "time_budget" = "max_steps";
 
   for (let stepIndex = 1; stepIndex <= MAX_AGENT_STEPS; stepIndex += 1) {
     if (Date.now() >= deadlineAt) {
-      stopReason = "time_budget"
-      break
+      stopReason = "time_budget";
+      break;
     }
 
-    const snapshot = await browser.inspectCurrentPage()
+    const snapshot = await browser.inspectCurrentPage();
     pageCandidates.set(
       snapshot.url,
       pageCandidates.get(snapshot.url) ?? {
@@ -683,14 +715,14 @@ async function runAgentLoop({
         findingCount: 0,
         firstSeenAt: pageCandidates.size,
       },
-    )
+    );
 
     await throwIfStopRequested({
       api,
       currentStep: "Local run stopped during exploration",
       pageUrl: snapshot.url,
       runId,
-    })
+    });
 
     await api.progress({
       runId,
@@ -700,7 +732,7 @@ async function runAgentLoop({
           : `Exploration step ${stepIndex} of ${MAX_AGENT_STEPS}`,
       currentUrl: snapshot.url,
       status: "running",
-    })
+    });
 
     const result = await generateText({
       model: openai(DEFAULT_MODEL),
@@ -724,21 +756,29 @@ async function runAgentLoop({
         startUrl,
         visitedPages,
       }),
-    }).catch(() => null)
+      providerOptions: {
+        openai: {
+          reasoningEffort: "none",
+        },
+      },
+    }).catch(() => null);
 
     if (!result) {
-      stopReason = "planner_unavailable"
-      break
+      stopReason = "planner_unavailable";
+      break;
     }
 
-    const plannerSummary = result.text.trim()
-    const plannerGoalOutcome = mode === "task" ? parseGoalOutcome(plannerSummary) : null
-    const toolResults = result.steps.flatMap((step: any) => step.toolResults ?? [])
-    const latestToolResult = [...toolResults].reverse().find(Boolean)
+    const plannerSummary = result.text.trim();
+    const plannerGoalOutcome =
+      mode === "task" ? parseGoalOutcome(plannerSummary) : null;
+    const toolResults = result.steps.flatMap(
+      (step: any) => step.toolResults ?? [],
+    );
+    const latestToolResult = [...toolResults].reverse().find(Boolean);
 
     if (plannerGoalOutcome && !latestToolResult) {
-      goalOutcome = plannerGoalOutcome
-      stopReason = "goal"
+      goalOutcome = plannerGoalOutcome;
+      stopReason = "goal";
       await api.event({
         runId,
         kind: "agent",
@@ -753,8 +793,8 @@ async function runAgentLoop({
               : "Task partially completed",
         body: plannerGoalOutcome.summary,
         pageUrl: snapshot.url,
-      })
-      break
+      });
+      break;
     }
 
     const outcome =
@@ -770,9 +810,9 @@ async function runAgentLoop({
             stepIndex,
             triedActions,
             visitedPages,
-          })
+          });
 
-    await browser.collectRuntimeFindings(startUrl, bufferedFindings)
+    await browser.collectRuntimeFindings(startUrl, bufferedFindings);
 
     await api.event({
       runId,
@@ -783,7 +823,7 @@ async function runAgentLoop({
       title: formatToolOutcomeTitle(outcome),
       body: outcome.note,
       pageUrl: outcome.currentUrl,
-    })
+    });
 
     actionHistory.push(
       outcome.actionKey ??
@@ -792,19 +832,19 @@ async function runAgentLoop({
           pageUrl: outcome.currentUrl,
           target: outcome.target,
         }),
-    )
-    triedActions.add(actionHistory[actionHistory.length - 1]!)
+    );
+    triedActions.add(actionHistory[actionHistory.length - 1]!);
 
     if (outcome.artifactCreated) {
-      screenshotCount += 1
+      screenshotCount += 1;
     }
 
     if (shouldStopForRepeatActions(actionHistory)) {
-      stopReason = "repeat_actions"
-      break
+      stopReason = "repeat_actions";
+      break;
     }
 
-    const beforeFindings = savedFindings.length
+    const beforeFindings = savedFindings.length;
     const browserFindingCount = await flushBufferedFindings({
       api,
       bufferedFindings,
@@ -814,24 +854,25 @@ async function runAgentLoop({
       savedFindings,
       sessionId,
       stepIndex,
-    })
+    });
 
-    const nextSnapshot = await browser.inspectCurrentPage()
-    visitedPages.add(nextSnapshot.url)
+    const nextSnapshot = await browser.inspectCurrentPage();
+    visitedPages.add(nextSnapshot.url);
 
-    const candidate = pageCandidates.get(nextSnapshot.url)
+    const candidate = pageCandidates.get(nextSnapshot.url);
     if (candidate && isInteractiveTool(outcome.toolName) && outcome.changed) {
-      candidate.interactionCount += 1
+      candidate.interactionCount += 1;
     }
 
     if (visitedPages.size > MAX_DISCOVERED_PAGES) {
-      stopReason = "max_pages"
-      break
+      stopReason = "max_pages";
+      break;
     }
 
-    const stateChanged = outcome.changed || nextSnapshot.signature !== snapshot.signature
+    const stateChanged =
+      outcome.changed || nextSnapshot.signature !== snapshot.signature;
     if (stateChanged) {
-      noOpCount = 0
+      noOpCount = 0;
       screenshotCount += await runSnapshotStage({
         analyzedSnapshots,
         api,
@@ -843,20 +884,20 @@ async function runAgentLoop({
         savedFindings,
         sessionId,
         stepIndex,
-      })
+      });
     } else if (
       browserFindingCount === 0 &&
       savedFindings.length === beforeFindings &&
       !outcome.artifactCreated
     ) {
-      noOpCount += 1
+      noOpCount += 1;
     } else {
-      noOpCount = 0
+      noOpCount = 0;
     }
 
     if (shouldStopForNoOps(noOpCount)) {
-      stopReason = "no_ops"
-      break
+      stopReason = "no_ops";
+      break;
     }
   }
 
@@ -864,15 +905,15 @@ async function runAgentLoop({
     screenshotCount,
     goalOutcome:
       mode === "task"
-        ? goalOutcome ??
+        ? (goalOutcome ??
           inferTaskOutcome({
             actionCount: actionHistory.length,
             instructions,
             stopReason,
             visitedPageCount: visitedPages.size,
-          })
+          }))
         : undefined,
-  }
+  };
 }
 
 async function runSnapshotStage({
@@ -887,18 +928,18 @@ async function runSnapshotStage({
   sessionId,
   stepIndex,
 }: {
-  analyzedSnapshots: Set<string>
-  api: LocalHelperApi
-  browser: LocalChromeBrowser
-  bufferedFindings: BufferedFinding[]
-  findingSignatures: Set<string>
-  pageCandidates: Map<string, PageCandidate>
-  runId: string
-  savedFindings: SavedFinding[]
-  sessionId: string
-  stepIndex: number
+  analyzedSnapshots: Set<string>;
+  api: LocalHelperApi;
+  browser: LocalChromeBrowser;
+  bufferedFindings: BufferedFinding[];
+  findingSignatures: Set<string>;
+  pageCandidates: Map<string, PageCandidate>;
+  runId: string;
+  savedFindings: SavedFinding[];
+  sessionId: string;
+  stepIndex: number;
 }) {
-  const snapshot = await browser.inspectCurrentPage()
+  const snapshot = await browser.inspectCurrentPage();
   pageCandidates.set(
     snapshot.url,
     pageCandidates.get(snapshot.url) ?? {
@@ -907,7 +948,7 @@ async function runSnapshotStage({
       findingCount: 0,
       firstSeenAt: pageCandidates.size,
     },
-  )
+  );
 
   const screenshotArtifactId = await saveScreenshot({
     api,
@@ -915,8 +956,11 @@ async function runSnapshotStage({
     runId,
     sessionId,
     stepIndex,
-    title: stepIndex === 0 ? "Landing page screenshot" : `Step ${stepIndex} screenshot`,
-  })
+    title:
+      stepIndex === 0
+        ? "Landing page screenshot"
+        : `Step ${stepIndex} screenshot`,
+  });
 
   await flushBufferedFindings({
     api,
@@ -927,13 +971,13 @@ async function runSnapshotStage({
     savedFindings,
     sessionId,
     stepIndex,
-  })
+  });
 
   if (analyzedSnapshots.has(snapshot.signature)) {
-    return 1
+    return 1;
   }
 
-  analyzedSnapshots.add(snapshot.signature)
+  analyzedSnapshots.add(snapshot.signature);
 
   const pageReview = await generateObject({
     model: openai(DEFAULT_MODEL),
@@ -950,25 +994,33 @@ async function runSnapshotStage({
       `Visible text excerpt: ${snapshot.textExcerpt}`,
       `Interactive elements: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} (${item.tagName})`).join("; ")}`,
     ].join("\n"),
-  }).catch(() => null)
+    providerOptions: {
+      openai: {
+        reasoningEffort: "none",
+      },
+    },
+  }).catch(() => null);
 
   if (!pageReview) {
-    return 1
+    return 1;
   }
 
-  for (const finding of pageReview.object.findings.slice(0, MAX_PAGE_FINDINGS)) {
-    const signature = `browser::${snapshot.url}::${finding.title}`
+  for (const finding of pageReview.object.findings.slice(
+    0,
+    MAX_PAGE_FINDINGS,
+  )) {
+    const signature = `browser::${snapshot.url}::${finding.title}`;
     if (findingSignatures.has(signature)) {
-      continue
+      continue;
     }
 
-    findingSignatures.add(signature)
-    const impact = impactWeightForSource("browser")
+    findingSignatures.add(signature);
+    const impact = impactWeightForSource("browser");
     const score = computeFindingScore({
       severity: finding.severity,
       confidence: finding.confidence,
       source: "browser",
-    })
+    });
 
     await api.finding({
       runId,
@@ -983,7 +1035,7 @@ async function runSnapshotStage({
       pageOrFlow: snapshot.url,
       artifactId: screenshotArtifactId,
       suggestedFix: finding.suggestedFix ?? undefined,
-    })
+    });
 
     await api.event({
       runId,
@@ -995,20 +1047,20 @@ async function runSnapshotStage({
       title: finding.title,
       body: finding.description,
       pageUrl: snapshot.url,
-    })
+    });
 
     savedFindings.push({
       source: "browser",
       score,
-    })
+    });
 
-    const candidate = pageCandidates.get(snapshot.url)
+    const candidate = pageCandidates.get(snapshot.url);
     if (candidate) {
-      candidate.findingCount += 1
+      candidate.findingCount += 1;
     }
   }
 
-  return 1
+  return 1;
 }
 
 async function flushBufferedFindings({
@@ -1021,30 +1073,30 @@ async function flushBufferedFindings({
   sessionId,
   stepIndex,
 }: {
-  api: LocalHelperApi
-  bufferedFindings: BufferedFinding[]
-  findingSignatures: Set<string>
-  pageCandidates: Map<string, PageCandidate>
-  runId: string
-  savedFindings: SavedFinding[]
-  sessionId: string
-  stepIndex: number
+  api: LocalHelperApi;
+  bufferedFindings: BufferedFinding[];
+  findingSignatures: Set<string>;
+  pageCandidates: Map<string, PageCandidate>;
+  runId: string;
+  savedFindings: SavedFinding[];
+  sessionId: string;
+  stepIndex: number;
 }) {
-  let createdCount = 0
+  let createdCount = 0;
 
   while (bufferedFindings.length > 0) {
-    const finding = bufferedFindings.shift()
+    const finding = bufferedFindings.shift();
     if (!finding || findingSignatures.has(finding.signature)) {
-      continue
+      continue;
     }
 
-    findingSignatures.add(finding.signature)
-    const impact = impactWeightForSource(finding.source)
+    findingSignatures.add(finding.signature);
+    const impact = impactWeightForSource(finding.source);
     const score = computeFindingScore({
       severity: finding.severity,
       confidence: finding.confidence,
       source: finding.source,
-    })
+    });
 
     await api.finding({
       runId,
@@ -1058,7 +1110,7 @@ async function flushBufferedFindings({
       stepIndex,
       pageOrFlow: finding.pageOrFlow,
       suggestedFix: finding.suggestedFix,
-    })
+    });
 
     await api.event({
       runId,
@@ -1069,24 +1121,24 @@ async function flushBufferedFindings({
       title: finding.title,
       body: finding.description,
       pageUrl: finding.pageOrFlow,
-    })
+    });
 
     savedFindings.push({
       source: finding.source,
       score,
-    })
-    createdCount += 1
+    });
+    createdCount += 1;
 
-    const candidateUrl = finding.pageOrFlow
+    const candidateUrl = finding.pageOrFlow;
     if (candidateUrl) {
-      const candidate = pageCandidates.get(candidateUrl)
+      const candidate = pageCandidates.get(candidateUrl);
       if (candidate) {
-        candidate.findingCount += 1
+        candidate.findingCount += 1;
       }
     }
   }
 
-  return createdCount
+  return createdCount;
 }
 
 function buildAgentTools({
@@ -1097,16 +1149,17 @@ function buildAgentTools({
   startUrl,
   visitedPages,
 }: {
-  api: LocalHelperApi
-  browser: LocalChromeBrowser
-  runId: string
-  sessionId: string
-  startUrl: string
-  visitedPages: Set<string>
+  api: LocalHelperApi;
+  browser: LocalChromeBrowser;
+  runId: string;
+  sessionId: string;
+  startUrl: string;
+  visitedPages: Set<string>;
 }) {
   return {
     inspectCurrentPage: tool({
-      description: "Inspect the current page and return its compact QA snapshot.",
+      description:
+        "Inspect the current page and return its compact QA snapshot.",
       inputSchema: z.object({}),
       execute: async () => await browser.inspectCurrentPage(),
     }),
@@ -1116,7 +1169,8 @@ function buildAgentTools({
       execute: async () => (await browser.inspectCurrentPage()).interactives,
     }),
     clickElement: tool({
-      description: "Click a visible interactive element by its current snapshot id.",
+      description:
+        "Click a visible interactive element by its current snapshot id.",
       inputSchema: z.object({
         id: z.number(),
       }),
@@ -1154,7 +1208,7 @@ function buildAgentTools({
           startUrl,
           currentUrl: await browser.getCurrentUrl(),
           nextUrl: url,
-        })
+        });
 
         if (!resolvedUrl) {
           return {
@@ -1163,7 +1217,7 @@ function buildAgentTools({
             currentUrl: await browser.getCurrentUrl(),
             note: `Blocked navigation to ${url}.`,
             target: url,
-          } satisfies ToolOutcome
+          } satisfies ToolOutcome;
         }
 
         return await performNavigationAction({
@@ -1171,7 +1225,7 @@ function buildAgentTools({
           resolvedUrl,
           targetLabel: resolvedUrl,
           visitedPages,
-        })
+        });
       },
     }),
     captureScreenshot: tool({
@@ -1187,7 +1241,7 @@ function buildAgentTools({
           sessionId,
           stepIndex: -1,
           title: title ?? "Agent requested screenshot",
-        })
+        });
 
         return {
           toolName: "captureScreenshot",
@@ -1196,10 +1250,10 @@ function buildAgentTools({
           currentUrl: await browser.getCurrentUrl(),
           note: "Captured screenshot.",
           target: title ?? undefined,
-        } satisfies ToolOutcome
+        } satisfies ToolOutcome;
       },
     }),
-  }
+  };
 }
 
 async function executePlannerFallback({
@@ -1213,15 +1267,15 @@ async function executePlannerFallback({
   triedActions,
   visitedPages,
 }: {
-  api: LocalHelperApi
-  browser: LocalChromeBrowser
-  runId: string
-  sessionId: string
-  snapshot: PageSnapshot
-  startUrl: string
-  stepIndex: number
-  triedActions: Set<string>
-  visitedPages: Set<string>
+  api: LocalHelperApi;
+  browser: LocalChromeBrowser;
+  runId: string;
+  sessionId: string;
+  snapshot: PageSnapshot;
+  startUrl: string;
+  stepIndex: number;
+  triedActions: Set<string>;
+  visitedPages: Set<string>;
 }) {
   const fallbackAction = pickQaFallbackAction({
     currentUrl: snapshot.url,
@@ -1230,7 +1284,7 @@ async function executePlannerFallback({
     startUrl,
     triedActions,
     visitedPages,
-  })
+  });
 
   if (fallbackAction.kind === "navigate") {
     return {
@@ -1242,7 +1296,7 @@ async function executePlannerFallback({
       })),
       fallback: true,
       note: fallbackAction.reason,
-    }
+    };
   }
 
   if (fallbackAction.kind === "click") {
@@ -1255,7 +1309,7 @@ async function executePlannerFallback({
       })),
       fallback: true,
       note: fallbackAction.reason,
-    }
+    };
   }
 
   if (fallbackAction.kind === "fill") {
@@ -1268,7 +1322,7 @@ async function executePlannerFallback({
       })),
       fallback: true,
       note: fallbackAction.reason,
-    }
+    };
   }
 
   await saveScreenshot({
@@ -1278,7 +1332,7 @@ async function executePlannerFallback({
     sessionId,
     stepIndex,
     title: `Fallback screenshot for step ${stepIndex}`,
-  })
+  });
 
   return {
     toolName: "captureScreenshot",
@@ -1287,7 +1341,7 @@ async function executePlannerFallback({
     currentUrl: await browser.getCurrentUrl(),
     fallback: true,
     note: fallbackAction.reason,
-  } satisfies ToolOutcome
+  } satisfies ToolOutcome;
 }
 
 async function performClickAction({
@@ -1296,13 +1350,13 @@ async function performClickAction({
   targetId,
   visitedPages,
 }: {
-  browser: LocalChromeBrowser
-  startUrl: string
-  targetId: number
-  visitedPages: Set<string>
+  browser: LocalChromeBrowser;
+  startUrl: string;
+  targetId: number;
+  visitedPages: Set<string>;
 }) {
-  const snapshot = await browser.inspectCurrentPage()
-  const target = snapshot.interactives.find((item) => item.id === targetId)
+  const snapshot = await browser.inspectCurrentPage();
+  const target = snapshot.interactives.find((item) => item.id === targetId);
 
   if (!target) {
     return {
@@ -1311,10 +1365,10 @@ async function performClickAction({
       changed: false,
       currentUrl: snapshot.url,
       note: `Element ${targetId} is no longer available.`,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 
-  const safetyDecision = getClickSafetyDecision(target)
+  const safetyDecision = getClickSafetyDecision(target);
   if (!safetyDecision.allowed) {
     return {
       actionKey: `click::${snapshot.url}::${target.id}`,
@@ -1323,10 +1377,13 @@ async function performClickAction({
       currentUrl: snapshot.url,
       note: safetyDecision.reason,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 
-  if (target.href && !isSameHostname(startUrl, new URL(target.href, snapshot.url).toString())) {
+  if (
+    target.href &&
+    !isSameHostname(startUrl, new URL(target.href, snapshot.url).toString())
+  ) {
     return {
       actionKey: `click::${snapshot.url}::${target.id}`,
       toolName: "clickElement",
@@ -1334,11 +1391,13 @@ async function performClickAction({
       currentUrl: snapshot.url,
       note: `Blocked external link ${target.href}.`,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 
-  const before = snapshot
-  const resolvedHref = target.href ? new URL(target.href, snapshot.url).toString() : null
+  const before = snapshot;
+  const resolvedHref = target.href
+    ? new URL(target.href, snapshot.url).toString()
+    : null;
 
   if (
     resolvedHref &&
@@ -1355,15 +1414,15 @@ async function performClickAction({
       currentUrl: snapshot.url,
       note: `Skipped ${target.label} because it would exceed the page limit.`,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 
   try {
-    await browser.click(target.uid)
-    const currentUrl = await browser.getCurrentUrl()
+    await browser.click(target.uid);
+    const currentUrl = await browser.getCurrentUrl();
 
     if (!isSameHostname(startUrl, currentUrl)) {
-      await browser.goBack()
+      await browser.goBack();
       return {
         actionKey: `click::${snapshot.url}::${target.id}`,
         toolName: "clickElement",
@@ -1371,7 +1430,7 @@ async function performClickAction({
         currentUrl: await browser.getCurrentUrl(),
         note: "Blocked navigation outside the starting hostname.",
         target: target.label,
-      } satisfies ToolOutcome
+      } satisfies ToolOutcome;
     }
 
     if (
@@ -1381,7 +1440,7 @@ async function performClickAction({
         maxPages: MAX_DISCOVERED_PAGES,
       })
     ) {
-      await browser.goBack()
+      await browser.goBack();
       return {
         actionKey: `click::${snapshot.url}::${target.id}`,
         toolName: "clickElement",
@@ -1389,10 +1448,10 @@ async function performClickAction({
         currentUrl: await browser.getCurrentUrl(),
         note: `Skipped ${target.label} because it would exceed the page limit.`,
         target: target.label,
-      } satisfies ToolOutcome
+      } satisfies ToolOutcome;
     }
 
-    const after = await browser.inspectCurrentPage()
+    const after = await browser.inspectCurrentPage();
     return {
       actionKey: `click::${snapshot.url}::${target.id}`,
       toolName: "clickElement",
@@ -1400,7 +1459,7 @@ async function performClickAction({
       currentUrl: after.url,
       note: `Clicked ${target.label}.`,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   } catch (error) {
     return {
       actionKey: `click::${snapshot.url}::${target.id}`,
@@ -1409,7 +1468,7 @@ async function performClickAction({
       currentUrl: snapshot.url,
       note: `Failed to click ${target.label}: ${error instanceof Error ? error.message : "Unknown error"}.`,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 }
 
@@ -1419,13 +1478,13 @@ async function performFillAction({
   targetId,
   value,
 }: {
-  browser: LocalChromeBrowser
-  submitOnEnter: boolean
-  targetId: number
-  value: string
+  browser: LocalChromeBrowser;
+  submitOnEnter: boolean;
+  targetId: number;
+  value: string;
 }) {
-  const snapshot = await browser.inspectCurrentPage()
-  const target = snapshot.interactives.find((item) => item.id === targetId)
+  const snapshot = await browser.inspectCurrentPage();
+  const target = snapshot.interactives.find((item) => item.id === targetId);
 
   if (!target) {
     return {
@@ -1434,7 +1493,7 @@ async function performFillAction({
       changed: false,
       currentUrl: snapshot.url,
       note: `Input ${targetId} is no longer available.`,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 
   if (!isSafeInput(target)) {
@@ -1445,13 +1504,13 @@ async function performFillAction({
       currentUrl: snapshot.url,
       note: `Skipped unsafe field ${target.label}.`,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 
   try {
-    await browser.fill(target.uid, value)
+    await browser.fill(target.uid, value);
     if (submitOnEnter && isSearchLikeInput(target)) {
-      await browser.pressKey("Enter")
+      await browser.pressKey("Enter");
     }
 
     return {
@@ -1459,9 +1518,11 @@ async function performFillAction({
       toolName: "fillInput",
       changed: true,
       currentUrl: await browser.getCurrentUrl(),
-      note: submitOnEnter ? `Filled and submitted ${target.label}.` : `Filled ${target.label}.`,
+      note: submitOnEnter
+        ? `Filled and submitted ${target.label}.`
+        : `Filled ${target.label}.`,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   } catch (error) {
     return {
       actionKey: `fill::${snapshot.url}::${target.id}`,
@@ -1470,7 +1531,7 @@ async function performFillAction({
       currentUrl: snapshot.url,
       note: `Failed to fill ${target.label}: ${error instanceof Error ? error.message : "Unknown error"}.`,
       target: target.label,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 }
 
@@ -1480,10 +1541,10 @@ async function performNavigationAction({
   targetLabel,
   visitedPages,
 }: {
-  browser: LocalChromeBrowser
-  resolvedUrl: string
-  targetLabel: string
-  visitedPages: Set<string>
+  browser: LocalChromeBrowser;
+  resolvedUrl: string;
+  targetLabel: string;
+  visitedPages: Set<string>;
 }) {
   if (
     wouldExceedPageLimit({
@@ -1499,13 +1560,13 @@ async function performNavigationAction({
       currentUrl: await browser.getCurrentUrl(),
       note: `Blocked navigation to ${resolvedUrl} because it would exceed the page limit.`,
       target: targetLabel,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 
-  const beforeUrl = await browser.getCurrentUrl()
+  const beforeUrl = await browser.getCurrentUrl();
   try {
-    await browser.navigate(resolvedUrl)
-    const currentUrl = await browser.getCurrentUrl()
+    await browser.navigate(resolvedUrl);
+    const currentUrl = await browser.getCurrentUrl();
     return {
       actionKey: `navigate::${resolvedUrl}`,
       toolName: "navigateToUrl",
@@ -1513,7 +1574,7 @@ async function performNavigationAction({
       currentUrl,
       note: `Navigated to ${resolvedUrl}.`,
       target: targetLabel,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   } catch (error) {
     return {
       actionKey: `navigate::${resolvedUrl}`,
@@ -1522,7 +1583,7 @@ async function performNavigationAction({
       currentUrl: beforeUrl,
       note: `Failed to navigate to ${resolvedUrl}: ${error instanceof Error ? error.message : "Unknown error"}.`,
       target: targetLabel,
-    } satisfies ToolOutcome
+    } satisfies ToolOutcome;
   }
 }
 
@@ -1534,15 +1595,15 @@ async function saveScreenshot({
   stepIndex,
   title,
 }: {
-  api: LocalHelperApi
-  browser: LocalChromeBrowser
-  runId: string
-  sessionId: string
-  stepIndex: number
-  title: string
+  api: LocalHelperApi;
+  browser: LocalChromeBrowser;
+  runId: string;
+  sessionId: string;
+  stepIndex: number;
+  title: string;
 }) {
-  const screenshot = await browser.takeScreenshot()
-  const pageUrl = await browser.getCurrentUrl()
+  const screenshot = await browser.takeScreenshot();
+  const pageUrl = await browser.getCurrentUrl();
   const artifact = await api.artifact({
     runId,
     type: "screenshot",
@@ -1550,7 +1611,7 @@ async function saveScreenshot({
     base64: Buffer.from(screenshot).toString("base64"),
     pageUrl,
     title,
-  })
+  });
 
   await api.event({
     runId,
@@ -1562,9 +1623,9 @@ async function saveScreenshot({
     title,
     body: `Screenshot captured for ${pageUrl}.`,
     pageUrl,
-  })
+  });
 
-  return artifact.artifactId
+  return artifact.artifactId;
 }
 
 async function throwIfStopRequested({
@@ -1573,18 +1634,21 @@ async function throwIfStopRequested({
   pageUrl,
   runId,
 }: {
-  api: LocalHelperApi
-  currentStep: string
-  pageUrl?: string
-  runId: string
+  api: LocalHelperApi;
+  currentStep: string;
+  pageUrl?: string;
+  runId: string;
 }) {
-  const state = await api.state({ runId })
+  const state = await api.state({ runId });
 
   if (!state?.stopRequestedAt) {
-    return
+    return;
   }
 
-  throw new RunCancelledError(currentStep, pageUrl ?? state.currentUrl ?? undefined)
+  throw new RunCancelledError(
+    currentStep,
+    pageUrl ?? state.currentUrl ?? undefined,
+  );
 }
 
 function createImmediateRunStopWatcher({
@@ -1592,48 +1656,48 @@ function createImmediateRunStopWatcher({
   onStop,
   runId,
 }: {
-  api: LocalHelperApi
-  onStop: () => Promise<void>
-  runId: string
+  api: LocalHelperApi;
+  onStop: () => Promise<void>;
+  runId: string;
 }) {
-  let timer: ReturnType<typeof setInterval> | null = null
-  let stopTriggered = false
-  let stopInFlight = false
-  let latestCurrentUrl: string | undefined
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let stopTriggered = false;
+  let stopInFlight = false;
+  let latestCurrentUrl: string | undefined;
 
   const poll = async () => {
     if (stopInFlight) {
-      return
+      return;
     }
 
-    const state = await api.state({ runId }).catch(() => null)
+    const state = await api.state({ runId }).catch(() => null);
 
     if (!state?.stopRequestedAt) {
-      return
+      return;
     }
 
-    stopTriggered = true
-    stopInFlight = true
-    latestCurrentUrl = state.currentUrl ?? undefined
-    await onStop().catch(() => undefined)
-  }
+    stopTriggered = true;
+    stopInFlight = true;
+    latestCurrentUrl = state.currentUrl ?? undefined;
+    await onStop().catch(() => undefined);
+  };
 
   timer = setInterval(() => {
-    void poll()
-  }, STOP_POLL_INTERVAL_MS)
+    void poll();
+  }, STOP_POLL_INTERVAL_MS);
 
-  void poll()
+  void poll();
 
   return {
     currentUrl: () => latestCurrentUrl,
     stop: () => {
       if (timer) {
-        clearInterval(timer)
-        timer = null
+        clearInterval(timer);
+        timer = null;
       }
     },
     wasTriggered: () => stopTriggered,
-  }
+  };
 }
 
 function buildAgentPrompt({
@@ -1645,13 +1709,13 @@ function buildAgentPrompt({
   visitedPages,
   recentActions,
 }: {
-  instructions?: string
-  mode: RunMode
-  remainingMs: number
-  snapshot: PageSnapshot
-  stepIndex: number
-  visitedPages: string[]
-  recentActions: string[]
+  instructions?: string;
+  mode: RunMode;
+  remainingMs: number;
+  snapshot: PageSnapshot;
+  stepIndex: number;
+  visitedPages: string[];
+  recentActions: string[];
 }) {
   const baseRules = [
     "You are a balanced autonomous QA engineer exploring a public website.",
@@ -1663,7 +1727,7 @@ function buildAgentPrompt({
     "- Call at most one tool for the next best action.",
     "- You do not need to capture screenshots on every step because the system already captures them after meaningful changes.",
     "- Use conservative values if you fill a field, such as 'test search', 'Shard QA', or 'qa@example.com'.",
-  ]
+  ];
 
   const modeRules =
     mode === "task" && instructions
@@ -1678,7 +1742,7 @@ function buildAgentPrompt({
           "- Explore like a strong QA engineer: prefer fresh reversible interactions on the current page before leaving it.",
           "- Prioritize tabs, accordions, drawers, filters, sort controls, pagination, search fields, safe forms, modals, add-to-cart, then same-host navigation.",
           "- Continue exploring when the current page looks healthy and fresh reversible actions remain.",
-        ]
+        ];
 
   return [
     ...baseRules,
@@ -1692,24 +1756,28 @@ function buildAgentPrompt({
     `Recent actions: ${recentActions.length ? recentActions.join(" | ") : "none"}`,
     `Visible text excerpt: ${snapshot.textExcerpt}`,
     `Current interactives: ${snapshot.interactives.map((item) => `${item.id}. ${item.label} [${item.tagName}${item.type ? `:${item.type}` : ""}]`).join("; ")}`,
-  ].join("\n")
+  ].join("\n");
 }
 
 function parseGoalOutcome(summary: string) {
-  const trimmed = summary.trim()
+  const trimmed = summary.trim();
 
   if (trimmed.startsWith("TASK_COMPLETE:")) {
     return {
       status: "completed",
-      summary: trimmed.replace("TASK_COMPLETE:", "").trim() || "The requested task was completed safely.",
-    } satisfies GoalOutcome
+      summary:
+        trimmed.replace("TASK_COMPLETE:", "").trim() ||
+        "The requested task was completed safely.",
+    } satisfies GoalOutcome;
   }
 
   if (trimmed.startsWith("TASK_BLOCKED:")) {
     return {
       status: "blocked",
-      summary: trimmed.replace("TASK_BLOCKED:", "").trim() || "The task could not be completed safely.",
-    } satisfies GoalOutcome
+      summary:
+        trimmed.replace("TASK_BLOCKED:", "").trim() ||
+        "The task could not be completed safely.",
+    } satisfies GoalOutcome;
   }
 
   if (trimmed.startsWith("TASK_PARTIAL:")) {
@@ -1718,10 +1786,10 @@ function parseGoalOutcome(summary: string) {
       summary:
         trimmed.replace("TASK_PARTIAL:", "").trim() ||
         "The task made meaningful progress but was not fully completed.",
-    } satisfies GoalOutcome
+    } satisfies GoalOutcome;
   }
 
-  return null
+  return null;
 }
 
 function inferTaskOutcome({
@@ -1730,8 +1798,8 @@ function inferTaskOutcome({
   stopReason,
   visitedPageCount,
 }: {
-  actionCount: number
-  instructions?: string
+  actionCount: number;
+  instructions?: string;
   stopReason:
     | "goal"
     | "max_pages"
@@ -1739,65 +1807,67 @@ function inferTaskOutcome({
     | "no_ops"
     | "planner_unavailable"
     | "repeat_actions"
-    | "time_budget"
-  visitedPageCount: number
+    | "time_budget";
+  visitedPageCount: number;
 }) {
-  const taskLabel = instructions ? `Task: ${instructions}` : "The requested task"
+  const taskLabel = instructions
+    ? `Task: ${instructions}`
+    : "The requested task";
 
   if (actionCount === 0 || stopReason === "planner_unavailable") {
     return {
       status: "blocked",
       summary: `${taskLabel}. The agent could not make reliable progress before the run ended.`,
-    } satisfies GoalOutcome
+    } satisfies GoalOutcome;
   }
 
   if (stopReason === "time_budget" || stopReason === "max_steps") {
     return {
       status: "partially_completed",
       summary: `${taskLabel}. The agent explored ${visitedPageCount} page${visitedPageCount === 1 ? "" : "s"} and executed ${actionCount} action${actionCount === 1 ? "" : "s"} before the time budget ended.`,
-    } satisfies GoalOutcome
+    } satisfies GoalOutcome;
   }
 
   if (stopReason === "no_ops" || stopReason === "repeat_actions") {
     return {
       status: "blocked",
       summary: `${taskLabel}. The visible UI no longer exposed fresh safe actions that advanced the task.`,
-    } satisfies GoalOutcome
+    } satisfies GoalOutcome;
   }
 
   return {
     status: "partially_completed",
     summary: `${taskLabel}. The agent made progress but could not confirm full completion before wrapping up.`,
-  } satisfies GoalOutcome
+  } satisfies GoalOutcome;
 }
 
 function formatToolOutcomeTitle(outcome: ToolOutcome) {
   switch (outcome.toolName) {
     case "clickElement":
-      return `Clicked ${outcome.target ?? "element"}`
+      return `Clicked ${outcome.target ?? "element"}`;
     case "fillInput":
-      return `Filled ${outcome.target ?? "input"}`
+      return `Filled ${outcome.target ?? "input"}`;
     case "navigateToUrl":
-      return "Navigated to page"
+      return "Navigated to page";
     case "captureScreenshot":
-      return "Captured screenshot"
+      return "Captured screenshot";
     default:
-      return "Agent action completed"
+      return "Agent action completed";
   }
 }
 
 function isToolOutcome(value: unknown): value is ToolOutcome {
   if (!value || typeof value !== "object") {
-    return false
+    return false;
   }
 
-  const candidate = value as Partial<ToolOutcome>
+  const candidate = value as Partial<ToolOutcome>;
   return (
     typeof candidate.toolName === "string" &&
     typeof candidate.currentUrl === "string" &&
     typeof candidate.changed === "boolean" &&
     typeof candidate.note === "string"
-  )
+  );
 }
 
 function isInteractiveTool(toolName: ToolOutcome["toolName"]) {
@@ -1805,20 +1875,20 @@ function isInteractiveTool(toolName: ToolOutcome["toolName"]) {
     toolName === "clickElement" ||
     toolName === "fillInput" ||
     toolName === "navigateToUrl"
-  )
+  );
 }
 
 function isSafeInput(target: InteractiveElement) {
   if (target.tagName === "textarea") {
-    return true
+    return true;
   }
 
   if (target.tagName !== "input") {
-    return target.role === "combobox"
+    return target.role === "combobox";
   }
 
-  const label = target.label.toLowerCase()
-  const type = target.type?.toLowerCase() ?? "text"
+  const label = target.label.toLowerCase();
+  const type = target.type?.toLowerCase() ?? "text";
 
   if (
     label.includes("password") ||
@@ -1828,15 +1898,15 @@ function isSafeInput(target: InteractiveElement) {
     label.includes("sign in") ||
     label.includes("checkout")
   ) {
-    return false
+    return false;
   }
 
-  return ["text", "search", "email", "url", "tel"].includes(type)
+  return ["text", "search", "email", "url", "tel"].includes(type);
 }
 
 function isSearchLikeInput(target: InteractiveElement) {
-  const haystack = target.label.toLowerCase()
-  const type = target.type?.toLowerCase() ?? "text"
+  const haystack = target.label.toLowerCase();
+  const type = target.type?.toLowerCase() ?? "text";
 
   return (
     type === "search" ||
@@ -1844,11 +1914,11 @@ function isSearchLikeInput(target: InteractiveElement) {
     haystack.includes("find") ||
     haystack.includes("filter") ||
     haystack.includes("query")
-  )
+  );
 }
 
 function getClickSafetyDecision(target: InteractiveElement) {
-  const haystack = `${target.label} ${target.href ?? ""}`.toLowerCase()
+  const haystack = `${target.label} ${target.href ?? ""}`.toLowerCase();
   const blockedKeywords = [
     "delete",
     "remove",
@@ -1865,311 +1935,334 @@ function getClickSafetyDecision(target: InteractiveElement) {
     "place order",
     "submit payment",
     "pay now",
-  ]
+  ];
 
   if (blockedKeywords.some((keyword) => haystack.includes(keyword))) {
     return {
       allowed: false,
       reason: `Skipped ${target.label} because it looks destructive or irreversible.`,
-    }
+    };
   }
 
-  if (haystack.includes("buy now") || (haystack.includes("confirm") && haystack.includes("order"))) {
+  if (
+    haystack.includes("buy now") ||
+    (haystack.includes("confirm") && haystack.includes("order"))
+  ) {
     return {
       allowed: false,
       reason: `Skipped ${target.label} because it appears to finalize a purchase.`,
-    }
+    };
   }
 
   return {
     allowed: true,
     reason: "",
-  }
+  };
 }
 
 function selectAuditUrls({
   pageCandidates,
   startUrl,
 }: {
-  pageCandidates: Map<string, PageCandidate>
-  startUrl: string
+  pageCandidates: Map<string, PageCandidate>;
+  startUrl: string;
 }) {
   const otherUrls = [...pageCandidates.values()]
     .filter((candidate) => candidate.url !== startUrl)
     .sort((left, right) => {
       if (right.findingCount !== left.findingCount) {
-        return right.findingCount - left.findingCount
+        return right.findingCount - left.findingCount;
       }
       if (right.interactionCount !== left.interactionCount) {
-        return right.interactionCount - left.interactionCount
+        return right.interactionCount - left.interactionCount;
       }
-      return left.firstSeenAt - right.firstSeenAt
+      return left.firstSeenAt - right.firstSeenAt;
     })
     .slice(0, MAX_DISCOVERED_PAGES - 1)
-    .map((candidate) => candidate.url)
+    .map((candidate) => candidate.url);
 
-  return [startUrl, ...otherUrls]
+  return [startUrl, ...otherUrls];
 }
 
 class RunCancelledError extends Error {
-  readonly currentUrl?: string
+  readonly currentUrl?: string;
 
-  constructor(
-    message: string,
-    currentUrl?: string,
-  ) {
-    super(message)
-    this.currentUrl = currentUrl
+  constructor(message: string, currentUrl?: string) {
+    super(message);
+    this.currentUrl = currentUrl;
   }
 }
 
 class LocalHelperApi {
-  private readonly appBaseUrl: string
-  private readonly helperSecret: string
+  private readonly appBaseUrl: string;
+  private readonly helperSecret: string;
 
-  constructor(
-    appBaseUrl: string,
-    helperSecret: string,
-  ) {
-    this.appBaseUrl = appBaseUrl
-    this.helperSecret = helperSecret
+  constructor(appBaseUrl: string, helperSecret: string) {
+    this.appBaseUrl = appBaseUrl;
+    this.helperSecret = helperSecret;
   }
 
   async register(payload: {
-    helperId: string
-    machineLabel: string
-    version?: string
-    status: LocalHelperStatus
-    currentClaimedRunId?: string
+    helperId: string;
+    machineLabel: string;
+    version?: string;
+    status: LocalHelperStatus;
+    currentClaimedRunId?: string;
   }) {
-    return await this.post("register", payload)
+    return await this.post("register", payload);
   }
 
   async claim(payload: { helperId: string }) {
-    return await this.post("claim", payload) as {
-      ok: boolean
-      run: RunRecord | null
-      reason?: string
-    }
+    return (await this.post("claim", payload)) as {
+      ok: boolean;
+      run: RunRecord | null;
+      reason?: string;
+    };
   }
 
   async state(payload: { runId: string }) {
-    const response = await this.post("state", payload) as {
-      ok: boolean
+    const response = (await this.post("state", payload)) as {
+      ok: boolean;
       state: {
-        currentUrl: string | null
-        manualInterventionRequiredAt: number | null
-        resumeRequestedAt: number | null
-        stopRequestedAt: number | null
-      } | null
-    }
+        currentUrl: string | null;
+        manualInterventionRequiredAt: number | null;
+        resumeRequestedAt: number | null;
+        stopRequestedAt: number | null;
+      } | null;
+    };
 
-    return response.state
+    return response.state;
   }
 
   async credential(payload: { helperId: string; runId: string }) {
-    const response = await this.post("credential", payload) as {
+    const response = (await this.post("credential", payload)) as {
       credential: {
-        login: string
-        origin: string
-        password: string
-      } | null
-      ok: boolean
-    }
+        login: string;
+        origin: string;
+        password: string;
+      } | null;
+      ok: boolean;
+    };
 
-    return response.credential
+    return response.credential;
   }
 
   async progress(payload: {
-    runId: string
-    status?: RunStatus
-    queueState?: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
-    currentStep?: string
-    currentUrl?: string | null
-    errorMessage?: string | null
-    goalStatus?: RunGoalStatus | null
-    goalSummary?: string | null
-    finishedAt?: number
-    finalScore?: number
+    runId: string;
+    status?: RunStatus;
+    queueState?:
+      | "pending"
+      | "picked_up"
+      | "waiting_for_worker"
+      | "worker_unreachable";
+    currentStep?: string;
+    currentUrl?: string | null;
+    errorMessage?: string | null;
+    goalStatus?: RunGoalStatus | null;
+    goalSummary?: string | null;
+    finishedAt?: number;
+    finalScore?: number;
   }) {
-    return await this.post("progress", payload)
+    return await this.post("progress", payload);
   }
 
   async session(payload: {
-    runId: string
-    sessionId?: string
-    provider: BrowserProvider
-    externalSessionId: string
-    status: SessionStatus
-    debugUrl?: string
-    replayUrl?: string
-    finishedAt?: number | null
+    runId: string;
+    sessionId?: string;
+    provider: BrowserProvider;
+    externalSessionId: string;
+    status: SessionStatus;
+    debugUrl?: string;
+    replayUrl?: string;
+    finishedAt?: number | null;
   }) {
-    return await this.post("session", payload) as SessionRecord
+    return (await this.post("session", payload)) as SessionRecord;
   }
 
   async event(payload: {
-    runId: string
-    kind: "agent" | "artifact" | "audit" | "finding" | "navigation" | "session" | "status" | "system"
-    title: string
-    body?: string
-    status?: RunStatus
-    stepIndex?: number
-    pageUrl?: string
-    sessionId?: string
-    artifactId?: string
+    runId: string;
+    kind:
+      | "agent"
+      | "artifact"
+      | "audit"
+      | "finding"
+      | "navigation"
+      | "session"
+      | "status"
+      | "system";
+    title: string;
+    body?: string;
+    status?: RunStatus;
+    stepIndex?: number;
+    pageUrl?: string;
+    sessionId?: string;
+    artifactId?: string;
   }) {
-    return await this.post("event", payload)
+    return await this.post("event", payload);
   }
 
   async finding(payload: {
-    runId: string
-    source: "browser" | "perf"
-    title: string
-    description: string
-    severity: "critical" | "high" | "low" | "medium"
-    confidence: number
-    impact: number
-    score: number
-    stepIndex?: number
-    pageOrFlow?: string
-    artifactId?: string
-    suggestedFix?: string
+    runId: string;
+    source: "browser" | "perf";
+    title: string;
+    description: string;
+    severity: "critical" | "high" | "low" | "medium";
+    confidence: number;
+    impact: number;
+    score: number;
+    stepIndex?: number;
+    pageOrFlow?: string;
+    artifactId?: string;
+    suggestedFix?: string;
   }) {
-    return await this.post("finding", payload)
+    return await this.post("finding", payload);
   }
 
   async artifact(payload: {
-    runId: string
-    type: "html-report" | "replay" | "screenshot" | "trace"
-    contentType: string
-    base64: string
-    pageUrl?: string
-    title?: string
+    runId: string;
+    type: "html-report" | "replay" | "screenshot" | "trace";
+    contentType: string;
+    base64: string;
+    pageUrl?: string;
+    title?: string;
   }) {
-    return await this.post("artifact", payload) as { artifactId: string }
+    return (await this.post("artifact", payload)) as { artifactId: string };
   }
 
   async performanceAudit(payload: {
-    runId: string
-    pageUrl: string
-    performanceScore: number
-    accessibilityScore: number
-    bestPracticesScore: number
-    seoScore: number
-    reportArtifactId?: string
+    runId: string;
+    pageUrl: string;
+    performanceScore: number;
+    accessibilityScore: number;
+    bestPracticesScore: number;
+    seoScore: number;
+    reportArtifactId?: string;
   }) {
-    return await this.post("performance-audit", payload)
+    return await this.post("performance-audit", payload);
   }
 
   async finalize(payload: {
-    helperId: string
-    runId: string
-    status: "cancelled" | "completed" | "failed"
-    currentStep?: string
-    currentUrl?: string | null
-    errorMessage?: string
-    goalStatus?: GoalOutcome["status"]
-    goalSummary?: string
-    finishedAt?: number
-    finalScore?: number
-    sessionId?: string
-    sessionStatus?: SessionStatus
+    helperId: string;
+    runId: string;
+    status: "cancelled" | "completed" | "failed";
+    currentStep?: string;
+    currentUrl?: string | null;
+    errorMessage?: string;
+    goalStatus?: GoalOutcome["status"];
+    goalSummary?: string;
+    finishedAt?: number;
+    finalScore?: number;
+    sessionId?: string;
+    sessionStatus?: SessionStatus;
   }) {
     const mappedGoalStatus =
       payload.goalStatus === "partially_completed"
         ? "partially_completed"
-        : payload.goalStatus
+        : payload.goalStatus;
 
     return await this.post("finalize", {
       ...payload,
       goalStatus: mappedGoalStatus,
-    })
+    });
   }
 
   private async post(action: string, payload: unknown) {
-    const response = await fetch(`${this.appBaseUrl}/api/local-helper/${action}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-local-helper-secret": this.helperSecret,
+    const response = await fetch(
+      `${this.appBaseUrl}/api/local-helper/${action}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-local-helper-secret": this.helperSecret,
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload),
-    })
+    );
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "")
-      throw new Error(`Local helper API ${action} failed (${response.status}): ${body}`)
+      const body = await response.text().catch(() => "");
+      throw new Error(
+        `Local helper API ${action} failed (${response.status}): ${body}`,
+      );
     }
 
-    return await response.json()
+    return await response.json();
   }
 }
 
 class LocalChromeBrowser {
-  private readonly browserUrl = process.env.LOCAL_CHROME_BROWSER_URL?.trim() || null
-  private readonly profileDir = join(tmpdir(), `shard-local-helper-profile-${randomUUID()}`)
-  private browser: Browser | null = null
-  private context: BrowserContext | null = null
-  private page: Page | null = null
-  private connectionLabelValue = "a local Chrome window launched by Shard"
-  private ownsBrowser = false
-  private runtimeCaptureStarted = false
+  private readonly browserUrl =
+    process.env.LOCAL_CHROME_BROWSER_URL?.trim() || null;
+  private readonly profileDir = join(
+    tmpdir(),
+    `shard-local-helper-profile-${randomUUID()}`,
+  );
+  private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
+  private page: Page | null = null;
+  private connectionLabelValue = "a local Chrome window launched by Shard";
+  private ownsBrowser = false;
+  private runtimeCaptureStarted = false;
 
   async connect() {
     if (this.browserUrl) {
-      await assertReachableChromeDebugEndpoint(this.browserUrl)
+      await assertReachableChromeDebugEndpoint(this.browserUrl);
 
       this.browser = await chromium.connectOverCDP(this.browserUrl, {
         timeout: SESSION_TIMEOUT_MS,
-      })
-      this.context = this.browser.contexts()[0] ?? null
-      this.connectionLabelValue = this.browserUrl
-      this.ownsBrowser = false
+      });
+      this.context = this.browser.contexts()[0] ?? null;
+      this.connectionLabelValue = this.browserUrl;
+      this.ownsBrowser = false;
 
       if (!this.context) {
         throw new Error(
           "The provided LOCAL_CHROME_BROWSER_URL is reachable, but Chrome did not expose a default browser context. Open a normal tab in that Chrome instance first, or unset LOCAL_CHROME_BROWSER_URL so Shard can launch Chrome directly.",
-        )
+        );
       }
     } else {
-      this.context = await launchLocalChromeContext(this.profileDir)
-      this.connectionLabelValue = "the Chrome window launched by Shard"
-      this.ownsBrowser = true
+      this.context = await launchLocalChromeContext(this.profileDir);
+      this.connectionLabelValue = "the Chrome window launched by Shard";
+      this.ownsBrowser = true;
     }
 
-    const page = await this.requirePage()
-    await page.bringToFront().catch(() => undefined)
+    const page = await this.requirePage();
+    await page.bringToFront().catch(() => undefined);
   }
 
   async close() {
     if (this.ownsBrowser) {
-      await this.context?.close().catch(() => undefined)
+      await this.context?.close().catch(() => undefined);
     } else {
-      await this.browser?.close().catch(() => undefined)
+      await this.browser?.close().catch(() => undefined);
     }
 
-    this.browser = null
-    this.context = null
-    this.page = null
-    await rm(this.profileDir, { recursive: true, force: true }).catch(() => undefined)
+    this.browser = null;
+    this.context = null;
+    this.page = null;
+    await rm(this.profileDir, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
 
   connectionLabel() {
-    return this.connectionLabelValue
+    return this.connectionLabelValue;
   }
 
-  async startRuntimeCapture(startUrl: string, bufferedFindings: BufferedFinding[]) {
+  async startRuntimeCapture(
+    startUrl: string,
+    bufferedFindings: BufferedFinding[],
+  ) {
     if (this.runtimeCaptureStarted) {
-      return
+      return;
     }
 
     attachBrowserSignalCapture({
       bufferedFindings,
       page: await this.requirePage(),
       startUrl,
-    })
-    this.runtimeCaptureStarted = true
+    });
+    this.runtimeCaptureStarted = true;
   }
 
   async collectRuntimeFindings(
@@ -2178,82 +2271,84 @@ class LocalChromeBrowser {
   ) {}
 
   async open(url: string) {
-    await safeGoto(await this.requirePage(), url)
+    await safeGoto(await this.requirePage(), url);
   }
 
   async getCurrentUrl() {
-    return (await this.requirePage()).url()
+    return (await this.requirePage()).url();
   }
 
   async inspectCurrentPage(): Promise<PageSnapshot> {
-    return await inspectLocalChromePage(await this.requirePage())
+    return await inspectLocalChromePage(await this.requirePage());
   }
 
   async click(uid: string) {
-    const page = await this.requirePage()
-    const locator = page.locator(uid).first()
-    await highlightActionTarget({ locator, page })
-    await locator.click({ timeout: 5_000 })
-    await settlePage(page)
+    const page = await this.requirePage();
+    const locator = page.locator(uid).first();
+    await highlightActionTarget({ locator, page });
+    await locator.click({ timeout: 5_000 });
+    await settlePage(page);
   }
 
   async fill(uid: string, value: string) {
-    const page = await this.requirePage()
-    const locator = page.locator(uid).first()
-    await highlightActionTarget({ locator, page })
-    await locator.fill(value, { timeout: 5_000 })
-    await settlePage(page)
+    const page = await this.requirePage();
+    const locator = page.locator(uid).first();
+    await highlightActionTarget({ locator, page });
+    await locator.fill(value, { timeout: 5_000 });
+    await settlePage(page);
   }
 
   async pressKey(key: string) {
-    const page = await this.requirePage()
-    await page.keyboard.press(key).catch(() => undefined)
-    await settlePage(page)
+    const page = await this.requirePage();
+    await page.keyboard.press(key).catch(() => undefined);
+    await settlePage(page);
   }
 
   async navigate(url: string) {
-    await safeGoto(await this.requirePage(), url)
+    await safeGoto(await this.requirePage(), url);
   }
 
   async goBack() {
-    const page = await this.requirePage()
-    await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined)
-    await settlePage(page)
+    const page = await this.requirePage();
+    await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => undefined);
+    await settlePage(page);
   }
 
   async takeScreenshot() {
     return new Uint8Array(
-      await (await this.requirePage()).screenshot({
+      await (
+        await this.requirePage()
+      ).screenshot({
         fullPage: true,
         type: "png",
       }),
-    )
+    );
   }
 
   async useStoredLogin(credential: {
-    login: string
-    origin: string
-    password: string
+    login: string;
+    origin: string;
+    password: string;
   }) {
-    return await applyStoredLoginToPage(await this.requirePage(), credential)
+    return await applyStoredLoginToPage(await this.requirePage(), credential);
   }
 
   private async requirePage() {
     if (!this.context) {
-      throw new Error("Local Chrome context is not ready yet.")
+      throw new Error("Local Chrome context is not ready yet.");
     }
 
     if (this.page && !this.page.isClosed()) {
-      return this.page
+      return this.page;
     }
 
-    this.page = this.context.pages().find((page) => !page.isClosed()) ?? null
+    this.page = this.context.pages().find((page) => !page.isClosed()) ?? null;
 
     if (!this.page) {
-      this.page = await this.context.newPage()
+      this.page = await this.context.newPage();
     }
 
-    return this.page
+    return this.page;
   }
 }
 
@@ -2265,11 +2360,11 @@ async function launchLocalChromeContext(userDataDir: string) {
       args: ["--start-maximized"],
       ignoreHTTPSErrors: true,
       viewport: null,
-    })
+    });
   } catch (error) {
-    const chromePath = Launcher.getFirstInstallation()
+    const chromePath = Launcher.getFirstInstallation();
     if (!chromePath) {
-      throw error
+      throw error;
     }
 
     return await chromium.launchPersistentContext(userDataDir, {
@@ -2278,19 +2373,19 @@ async function launchLocalChromeContext(userDataDir: string) {
       args: ["--start-maximized"],
       ignoreHTTPSErrors: true,
       viewport: null,
-    })
+    });
   }
 }
 
 async function assertReachableChromeDebugEndpoint(browserUrl: string) {
-  let parsedUrl: URL
+  let parsedUrl: URL;
 
   try {
-    parsedUrl = new URL(browserUrl)
+    parsedUrl = new URL(browserUrl);
   } catch {
     throw new Error(
       "LOCAL_CHROME_BROWSER_URL must be a valid Chrome debugging endpoint such as http://127.0.0.1:9222 or ws://127.0.0.1:9222/devtools/browser/<id>.",
-    )
+    );
   }
 
   if (
@@ -2301,51 +2396,56 @@ async function assertReachableChromeDebugEndpoint(browserUrl: string) {
   ) {
     throw new Error(
       "LOCAL_CHROME_BROWSER_URL must use http, https, ws, or wss so Shard can connect to Chrome.",
-    )
+    );
   }
 
   if (parsedUrl.protocol === "ws:" || parsedUrl.protocol === "wss:") {
-    return
+    return;
   }
 
-  const versionUrl = new URL("/json/version", parsedUrl)
-  let response: Response
+  const versionUrl = new URL("/json/version", parsedUrl);
+  let response: Response;
 
   try {
     response = await fetch(versionUrl, {
       method: "GET",
-    })
+    });
   } catch (error) {
     throw new Error(
       `Could not reach ${versionUrl.toString()}. Start Chrome with --remote-debugging-port=9222, then retry, or unset LOCAL_CHROME_BROWSER_URL so Shard launches Chrome directly. Cause: ${toErrorMessage(error)}`,
-    )
+    );
   }
 
   if (!response.ok) {
     throw new Error(
       `Chrome debugging endpoint ${versionUrl.toString()} returned HTTP ${response.status}. Start Chrome with --remote-debugging-port=9222, then retry, or unset LOCAL_CHROME_BROWSER_URL so Shard launches Chrome directly.`,
-    )
+    );
   }
 
-  let payload: unknown
+  let payload: unknown;
 
   try {
-    payload = await response.json()
+    payload = await response.json();
   } catch (error) {
     throw new Error(
       `Chrome debugging endpoint ${versionUrl.toString()} did not return valid JSON. Cause: ${toErrorMessage(error)}`,
-    )
+    );
   }
 
   const webSocketDebuggerUrl =
-    typeof payload === "object" && payload !== null && "webSocketDebuggerUrl" in payload
+    typeof payload === "object" &&
+    payload !== null &&
+    "webSocketDebuggerUrl" in payload
       ? payload.webSocketDebuggerUrl
-      : null
+      : null;
 
-  if (typeof webSocketDebuggerUrl !== "string" || webSocketDebuggerUrl.length === 0) {
+  if (
+    typeof webSocketDebuggerUrl !== "string" ||
+    webSocketDebuggerUrl.length === 0
+  ) {
     throw new Error(
       `Chrome debugging endpoint ${versionUrl.toString()} did not expose a browser webSocketDebuggerUrl. Start Chrome with --remote-debugging-port=9222 and make sure you are pointing at the Chrome debugger, not your app server.`,
-    )
+    );
   }
 }
 
@@ -2353,12 +2453,12 @@ async function highlightActionTarget({
   locator,
   page,
 }: {
-  locator: Locator
-  page: Page
+  locator: Locator;
+  page: Page;
 }) {
-  await locator.scrollIntoViewIfNeeded().catch(() => undefined)
-  await locator.highlight().catch(() => undefined)
-  await page.waitForTimeout(ACTION_HIGHLIGHT_DELAY_MS).catch(() => undefined)
+  await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+  await locator.highlight().catch(() => undefined);
+  await page.waitForTimeout(ACTION_HIGHLIGHT_DELAY_MS).catch(() => undefined);
 }
 
 async function inspectLocalChromePage(page: Page): Promise<PageSnapshot> {
@@ -2366,73 +2466,80 @@ async function inspectLocalChromePage(page: Page): Promise<PageSnapshot> {
     const text = (document.body?.innerText ?? "")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 1200)
+      .slice(0, 1200);
 
     const nodes = Array.from(
       document.querySelectorAll<HTMLElement>(
         'a[href], button, input, textarea, select, [role="button"], [role="link"]',
       ),
-    )
+    );
 
     const visibleNodes = nodes.filter((node) => {
-      const style = window.getComputedStyle(node)
-      const rect = node.getBoundingClientRect()
+      const style = window.getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
       return (
         style.visibility !== "hidden" &&
         style.display !== "none" &&
         rect.width > 0 &&
         rect.height > 0
-      )
-    })
+      );
+    });
 
     const escapeValue = (value: string) =>
-      value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+      value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
     const buildSelector = (element: HTMLElement) => {
-      const id = element.getAttribute("id")
+      const id = element.getAttribute("id");
       if (id) {
-        return `#${window.CSS?.escape ? window.CSS.escape(id) : escapeValue(id)}`
+        return `#${window.CSS?.escape ? window.CSS.escape(id) : escapeValue(id)}`;
       }
 
-      const dataTestId = element.getAttribute("data-testid")
+      const dataTestId = element.getAttribute("data-testid");
       if (dataTestId) {
-        return `[data-testid="${escapeValue(dataTestId)}"]`
+        return `[data-testid="${escapeValue(dataTestId)}"]`;
       }
 
-      const name = element.getAttribute("name")
+      const name = element.getAttribute("name");
       if (name) {
-        return `${element.tagName.toLowerCase()}[name="${escapeValue(name)}"]`
+        return `${element.tagName.toLowerCase()}[name="${escapeValue(name)}"]`;
       }
 
-      const ariaLabel = element.getAttribute("aria-label")
+      const ariaLabel = element.getAttribute("aria-label");
       if (ariaLabel) {
-        return `${element.tagName.toLowerCase()}[aria-label="${escapeValue(ariaLabel)}"]`
+        return `${element.tagName.toLowerCase()}[aria-label="${escapeValue(ariaLabel)}"]`;
       }
 
-      const placeholder = element.getAttribute("placeholder")
+      const placeholder = element.getAttribute("placeholder");
       if (placeholder) {
-        return `${element.tagName.toLowerCase()}[placeholder="${escapeValue(placeholder)}"]`
+        return `${element.tagName.toLowerCase()}[placeholder="${escapeValue(placeholder)}"]`;
       }
 
-      if (element instanceof HTMLAnchorElement && element.getAttribute("href")) {
-        return `a[href="${escapeValue(element.getAttribute("href") ?? "")}"]`
+      if (
+        element instanceof HTMLAnchorElement &&
+        element.getAttribute("href")
+      ) {
+        return `a[href="${escapeValue(element.getAttribute("href") ?? "")}"]`;
       }
 
-      const path: string[] = []
-      let current: Element | null = element
+      const path: string[] = [];
+      let current: Element | null = element;
 
-      while (current && current.nodeType === Node.ELEMENT_NODE && path.length < 5) {
-        const tagName = current.tagName.toLowerCase()
-        const siblings = Array.from(current.parentElement?.children ?? []).filter(
-          (sibling) => sibling.tagName === current?.tagName,
-        )
-        const index = siblings.indexOf(current) + 1
-        path.unshift(`${tagName}:nth-of-type(${Math.max(index, 1)})`)
-        current = current.parentElement
+      while (
+        current &&
+        current.nodeType === Node.ELEMENT_NODE &&
+        path.length < 5
+      ) {
+        const tagName = current.tagName.toLowerCase();
+        const siblings = Array.from(
+          current.parentElement?.children ?? [],
+        ).filter((sibling) => sibling.tagName === current?.tagName);
+        const index = siblings.indexOf(current) + 1;
+        path.unshift(`${tagName}:nth-of-type(${Math.max(index, 1)})`);
+        current = current.parentElement;
       }
 
-      return path.join(" > ")
-    }
+      return path.join(" > ");
+    };
 
     const interactives = visibleNodes.slice(0, 25).map((element, index) => {
       const label =
@@ -2442,7 +2549,7 @@ async function inspectLocalChromePage(page: Page): Promise<PageSnapshot> {
         element.innerText ||
         element.textContent ||
         element.getAttribute("href") ||
-        `${element.tagName.toLowerCase()} ${index + 1}`
+        `${element.tagName.toLowerCase()} ${index + 1}`;
 
       return {
         id: index + 1,
@@ -2452,19 +2559,19 @@ async function inspectLocalChromePage(page: Page): Promise<PageSnapshot> {
         tagName: element.tagName.toLowerCase(),
         type: element.getAttribute("type") ?? undefined,
         href: element.getAttribute("href") ?? undefined,
-      }
-    })
+      };
+    });
 
     const formsSummary = `${document.forms.length} forms, ${
       document.querySelectorAll("input, textarea, select").length
-    } form fields`
+    } form fields`;
 
     const signature = JSON.stringify({
       url: location.href,
       title: document.title,
       text: text.slice(0, 300),
       interactives: interactives.map((item) => item.label),
-    })
+    });
 
     return {
       url: location.href,
@@ -2473,8 +2580,8 @@ async function inspectLocalChromePage(page: Page): Promise<PageSnapshot> {
       formsSummary,
       interactives,
       signature,
-    }
-  })
+    };
+  });
 }
 
 function attachBrowserSignalCapture({
@@ -2482,26 +2589,30 @@ function attachBrowserSignalCapture({
   page,
   startUrl,
 }: {
-  bufferedFindings: BufferedFinding[]
-  page: Page
-  startUrl: string
+  bufferedFindings: BufferedFinding[];
+  page: Page;
+  startUrl: string;
 }) {
   page.on("console", (message) => {
     if (message.type() !== "error" && message.type() !== "warning") {
-      return
+      return;
     }
 
     bufferedFindings.push({
       source: "browser",
       signature: `console::${message.type()}::${page.url()}::${message.text()}`,
-      title: message.type() === "error" ? "Browser console error" : "Browser console warning",
+      title:
+        message.type() === "error"
+          ? "Browser console error"
+          : "Browser console warning",
       description: message.text(),
       severity: message.type() === "error" ? "high" : "medium",
       confidence: 0.9,
       pageOrFlow: page.url(),
-      suggestedFix: "Inspect the console output and fix the underlying frontend runtime issue.",
-    })
-  })
+      suggestedFix:
+        "Inspect the console output and fix the underlying frontend runtime issue.",
+    });
+  });
 
   page.on("pageerror", (error) => {
     bufferedFindings.push({
@@ -2512,19 +2623,24 @@ function attachBrowserSignalCapture({
       severity: "high",
       confidence: 0.95,
       pageOrFlow: page.url(),
-      suggestedFix: "Inspect the stack trace and resolve the runtime error before the affected flow ships.",
-    })
-  })
+      suggestedFix:
+        "Inspect the stack trace and resolve the runtime error before the affected flow ships.",
+    });
+  });
 
   page.on("requestfailed", (request) => {
-    const failureUrl = request.url()
+    const failureUrl = request.url();
     if (!isSameHostname(startUrl, failureUrl)) {
-      return
+      return;
     }
 
-    const resourceType = request.resourceType()
-    if (resourceType !== "document" && resourceType !== "fetch" && resourceType !== "xhr") {
-      return
+    const resourceType = request.resourceType();
+    if (
+      resourceType !== "document" &&
+      resourceType !== "fetch" &&
+      resourceType !== "xhr"
+    ) {
+      return;
     }
 
     bufferedFindings.push({
@@ -2535,22 +2651,25 @@ function attachBrowserSignalCapture({
       severity: resourceType === "document" ? "high" : "medium",
       confidence: 0.9,
       pageOrFlow: page.url(),
-      suggestedFix: "Check the failed request path, server response, and frontend call site.",
-    })
-  })
+      suggestedFix:
+        "Check the failed request path, server response, and frontend call site.",
+    });
+  });
 
   page.on("response", (response) => {
-    const responseUrl = response.url()
+    const responseUrl = response.url();
     if (!isSameHostname(startUrl, responseUrl)) {
-      return
+      return;
     }
 
-    const resourceType = response.request().resourceType()
+    const resourceType = response.request().resourceType();
     if (
       response.status() < 400 ||
-      (resourceType !== "document" && resourceType !== "fetch" && resourceType !== "xhr")
+      (resourceType !== "document" &&
+        resourceType !== "fetch" &&
+        resourceType !== "xhr")
     ) {
-      return
+      return;
     }
 
     bufferedFindings.push({
@@ -2561,65 +2680,70 @@ function attachBrowserSignalCapture({
       severity: resourceType === "document" ? "high" : "medium",
       confidence: 0.9,
       pageOrFlow: page.url(),
-      suggestedFix: "Inspect the failing route or API handler and verify the frontend request path.",
-    })
-  })
+      suggestedFix:
+        "Inspect the failing route or API handler and verify the frontend request path.",
+    });
+  });
 }
 
 async function settlePage(page: Page) {
-  await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined)
-  await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined)
-  await page.waitForTimeout(500).catch(() => undefined)
+  await page
+    .waitForLoadState("domcontentloaded", { timeout: 5_000 })
+    .catch(() => undefined);
+  await page
+    .waitForLoadState("networkidle", { timeout: 5_000 })
+    .catch(() => undefined);
+  await page.waitForTimeout(500).catch(() => undefined);
 }
 
 async function safeGoto(page: Page, url: string) {
   await page.goto(url, {
     waitUntil: "domcontentloaded",
     timeout: 30_000,
-  })
-  await settlePage(page)
+  });
+  await settlePage(page);
 }
 
 function toErrorMessage(error: unknown) {
   if (error instanceof Error) {
-    return error.message
+    return error.message;
   }
 
-  return String(error)
+  return String(error);
 }
 
 function requiredEnv(name: string) {
-  const value = process.env[name]
+  const value = process.env[name];
   if (!value) {
-    throw new Error(`${name} must be set before starting the local helper.`)
+    throw new Error(`${name} must be set before starting the local helper.`);
   }
 
-  return value
+  return value;
 }
 
 async function sleep(ms: number) {
-  await new Promise((resolve) => setTimeout(resolve, ms))
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function windowlessInterval(callback: () => Promise<void>, intervalMs: number) {
   let timer = setInterval(() => {
-    void callback().catch(() => undefined)
-  }, intervalMs)
+    void callback().catch(() => undefined);
+  }, intervalMs);
 
   return {
     stop: async () => {
-      clearInterval(timer)
+      clearInterval(timer);
     },
     restart: () => {
-      clearInterval(timer)
+      clearInterval(timer);
       timer = setInterval(() => {
-        void callback().catch(() => undefined)
-      }, intervalMs)
+        void callback().catch(() => undefined);
+      }, intervalMs);
     },
-  }
+  };
 }
 
 void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

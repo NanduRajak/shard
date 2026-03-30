@@ -267,32 +267,8 @@ function BackgroundOrchestratorDetailPage() {
       : overallRiskLabel === "Medium"
         ? "text-amber-400"
         : "text-rose-400";
-  const metricsStrip = (
-    <div className="grid gap-4 md:grid-cols-5">
-      <MetricCard
-        label="Elapsed Time"
-        value={formatSessionDuration(detail.durationMs)}
-      />
-      <MetricCard
-        label="Lanes Deployed"
-        value={`${detail.orchestrator.agentCount}`}
-      />
-      <MetricCard
-        label="Agents Running"
-        value={`${detail.counts.running}`}
-      />
-      <MetricCard
-        label="Agents Completed"
-        value={`${detail.counts.completed}`}
-      />
-      <MetricCard
-        label="Auth Profile"
-        value={detail.credential?.login ?? "No stored login"}
-      />
-    </div>
-  );
   const tabSwitcher = (
-    <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground w-fit shadow-sm relative">
+    <div className="relative flex h-9 w-fit items-center rounded-xl border border-border/70 bg-background p-[3px] text-muted-foreground shadow-sm">
       <button
         onClick={() => setActiveTab("report")}
         disabled={!isReportReady}
@@ -301,12 +277,12 @@ function BackgroundOrchestratorDetailPage() {
             ? undefined
             : "QA report unlocks after every background agent finishes."
         }
-        className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "report" ? "text-foreground" : "hover:text-foreground"}`}
+        className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-lg px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "report" ? "text-foreground" : "hover:text-foreground"}`}
       >
         {activeTab === "report" && (
           <motion.div
             layoutId="activeTabIndicator"
-            className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
+            className="absolute inset-0 z-[-1] rounded-lg bg-muted/80 shadow-sm"
             transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
           />
         )}
@@ -314,12 +290,12 @@ function BackgroundOrchestratorDetailPage() {
       </button>
       <button
         onClick={() => setActiveTab("timeline")}
-        className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "timeline" ? "text-foreground" : "hover:text-foreground"}`}
+        className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-lg px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "timeline" ? "text-foreground" : "hover:text-foreground"}`}
       >
         {activeTab === "timeline" && (
           <motion.div
             layoutId="activeTabIndicator"
-            className="absolute inset-0 z-[-1] rounded-md bg-muted/80 shadow-sm"
+            className="absolute inset-0 z-[-1] rounded-lg bg-muted/80 shadow-sm"
             transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
           />
         )}
@@ -332,14 +308,14 @@ function BackgroundOrchestratorDetailPage() {
     <div className="mx-auto grid max-w-8xl gap-4">
       {/* Top Main Hero Stats Card */}
       <Card className="border border-border/70 bg-card/80">
-        <CardHeader className="gap-4 border-b border-border/70">
+        <CardHeader className="gap-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
                   size="icon"
-                  className="size-7 rounded-sm text-foreground/80 hover:bg-background/80 transition-colors bg-background/50 border-border/70 mr-0.5"
+                  className="size-7 rounded-lg text-foreground/80 transition-colors bg-background/50 border-border/70 hover:bg-background/80 mr-0.5"
                   onClick={() => navigate({ to: "/background-agents" })}
                 >
                   <IconArrowLeft className="size-4" />
@@ -355,6 +331,10 @@ function BackgroundOrchestratorDetailPage() {
               <CardDescription className="max-w-3xl break-all font-mono text-sm/6 text-muted-foreground/90">
                 {detail.orchestrator.url}
               </CardDescription>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <IconClockHour4 className="size-4 text-emerald-300" />
+                <span>Time taken {formatSessionDuration(detail.durationMs)}</span>
+              </div>
             </div>
 
             <div className="flex min-w-52 flex-col items-end gap-3 sm:min-w-64">
@@ -427,33 +407,16 @@ function BackgroundOrchestratorDetailPage() {
               </div>
             </div>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {tabSwitcher}
+            {!isReportReady ? (
+              <p className="text-xs text-muted-foreground">
+                QA report unlocks when all agent lanes finish. Live timelines and
+                artifacts are available now.
+              </p>
+            ) : null}
+          </div>
         </CardHeader>
-
-        {activeTab === "report" && isReportReady && (
-          <CardContent className="grid gap-4 pt-4">
-            {metricsStrip}
-            {tabSwitcher}
-            {!isReportReady ? (
-              <p className="text-xs text-muted-foreground">
-                QA report unlocks when all agent lanes finish. Live timelines and
-                artifacts are available now.
-              </p>
-            ) : null}
-          </CardContent>
-        )}
-
-        {activeTab === "timeline" && (
-          <CardContent className="grid gap-4 pt-4">
-            {metricsStrip}
-            {tabSwitcher}
-            {!isReportReady ? (
-              <p className="text-xs text-muted-foreground">
-                QA report unlocks when all agent lanes finish. Live timelines and
-                artifacts are available now.
-              </p>
-            ) : null}
-          </CardContent>
-        )}
       </Card>
 
       {/* MERGED QA REPORT TAB */}
