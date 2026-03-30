@@ -357,7 +357,7 @@ function DashboardPage() {
   if (!runs || !orchestrators || !reviewBotState) {
     return (
       <div className="grid gap-6 pb-12 animate-in fade-in duration-500">
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i} className="border-border/50 bg-card/40 shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -372,28 +372,38 @@ function DashboardPage() {
           ))}
         </div>
 
-        <div className="grid gap-6 md:grid-cols-12">
-          <Card className="flex flex-col border-border/50 bg-card/40 shadow-sm md:col-span-7">
-            <CardHeader className="items-center pb-0 border-b border-border/30 pt-4">
-              <Skeleton className="h-6 w-[200px] mb-2" />
-              <Skeleton className="h-4 w-[150px] mb-4" />
-            </CardHeader>
-          </Card>
+        <div className="grid gap-6 lg:grid-cols-12">
+          <div className="grid gap-6 lg:col-span-7 xl:col-span-8 2xl:col-span-7 min-w-0">
+            <Card className="flex flex-col border-border/50 bg-card/40 shadow-sm min-h-[448px] min-w-0">
+              <CardHeader className="items-center pb-0 border-b border-border/30 pt-4">
+                <Skeleton className="h-6 w-[200px] mb-2" />
+                <Skeleton className="h-4 w-[150px] mb-4" />
+              </CardHeader>
+            </Card>
 
-          <div className="grid gap-6 md:col-span-5">
-            <Card className="border-border/50 bg-card/40 shadow-sm min-h-[190px]">
+            <div className="flex flex-col xl:flex-row items-stretch gap-6 min-w-0">
+              <Card className="flex flex-col w-full xl:w-[320px] border-border/50 bg-card/40 shadow-sm min-h-[220px] min-w-0">
+                <CardHeader className="border-b border-border/30 pb-4">
+                  <Skeleton className="h-5 w-[140px]" />
+                </CardHeader>
+              </Card>
+
+              <Card className="flex flex-col min-w-0 xl:min-w-[320px] flex-1 border-border/50 bg-card/40 shadow-sm min-h-[220px]">
+                <CardHeader className="border-b border-border/30 pb-4">
+                  <Skeleton className="h-5 w-[170px]" />
+                </CardHeader>
+              </Card>
+            </div>
+          </div>
+
+          <div className="grid gap-6 lg:col-span-5 xl:col-span-4 2xl:col-span-5 h-fit min-w-0">
+            <Card className="border-border/50 bg-card/40 shadow-sm min-h-[300px] min-w-0">
               <CardHeader className="border-b border-border/30 pb-4">
                 <Skeleton className="h-5 w-[140px]" />
               </CardHeader>
             </Card>
 
-            <Card className="border-border/50 bg-card/40 shadow-sm min-h-[190px]">
-              <CardHeader className="border-b border-border/30 pb-4">
-                <Skeleton className="h-5 w-[170px]" />
-              </CardHeader>
-            </Card>
-
-            <Card className="border-border/50 bg-card/40 shadow-sm min-h-[190px]">
+            <Card className="border-border/50 bg-card/40 shadow-sm min-h-[300px] min-w-0">
               <CardHeader className="border-b border-border/30 pb-4">
                 <Skeleton className="h-5 w-[160px]" />
               </CardHeader>
@@ -462,7 +472,7 @@ function DashboardPage() {
 
   return (
     <div className="grid gap-6 pb-12">
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           title="Total QA Runs"
           value={stats.total}
@@ -489,9 +499,9 @@ function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-6 md:grid-cols-12">
-        <div className="grid gap-6 md:col-span-7">
-          <Card className="flex flex-col overflow-hidden border-border/50 bg-card/40 pt-0 shadow-sm transition-all hover:bg-card/50">
+      <div className="grid gap-6 lg:grid-cols-12">
+        <div className="grid gap-6 lg:col-span-7 xl:col-span-8 2xl:col-span-7 min-w-0">
+          <Card className="flex flex-col overflow-hidden border-border/50 bg-card/40 pt-0 shadow-sm transition-all hover:bg-card/50 min-w-0">
             <CardHeader className="border-b border-border/30 px-5 py-4">
               <CardTitle className="text-lg font-semibold tracking-tight">
                 QA Run Pulse
@@ -500,12 +510,12 @@ function DashboardPage() {
                 Recent findings across the latest eight runs.
               </CardDescription>
             </CardHeader>
-            <CardContent className="px-5 py-4">
+            <CardContent className="px-5 py-4 min-w-0">
               {recentRunPulseData.length > 0 ? (
-                <div className="flex flex-col gap-5">
+                <div className="flex flex-col gap-5 min-w-0">
                   <ChartContainer
                     config={pulseChartConfig}
-                    className="h-[280px] w-full"
+                    className="h-[280px] w-full min-w-0"
                   >
                     <BarChart
                       data={recentRunPulseData}
@@ -557,7 +567,7 @@ function DashboardPage() {
                           />
                         }
                       />
-                      <Bar dataKey="findings" radius={8}>
+                      <Bar dataKey="findings" radius={8} maxBarSize={48}>
                         {recentRunPulseData.map((entry) => (
                           <Cell
                             key={`${entry.fullLabel}-${entry.urlHost}`}
@@ -587,15 +597,15 @@ function DashboardPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
+                <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground w-full">
                   No QA runs have been recorded yet.
                 </div>
               )}
             </CardContent>
           </Card>
 
-          <div className="flex flex-wrap items-start gap-6">
-            <Card className="w-fit border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
+          <div className="flex flex-col xl:flex-row items-stretch gap-6 min-w-0">
+            <Card className="flex flex-col w-full xl:w-fit border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50 min-w-0">
               <CardHeader className="border-b border-border/30 pb-4">
                 <CardTitle className="text-md font-semibold tracking-tight">
                   Run Outcomes
@@ -604,12 +614,12 @@ function DashboardPage() {
                   How the latest dashboard runs finished.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="pt-4">
+              <CardContent className="pt-4 min-w-0">
                 {runOutcomeChartData.length > 0 ? (
-                  <div className="grid items-center gap-6 sm:grid-cols-[156px_1fr]">
+                  <div className="grid items-center gap-6 sm:grid-cols-[156px_1fr] min-w-0">
                     <ChartContainer
                       config={outcomeChartConfig}
-                      className="mx-auto h-[156px] w-full max-w-[156px]"
+                      className="mx-auto h-[156px] w-full max-w-[156px] min-w-0"
                     >
                       <PieChart>
                         <ChartTooltip
@@ -651,7 +661,7 @@ function DashboardPage() {
               </CardContent>
             </Card>
 
-            <Card className="min-w-[320px] flex-1 border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
+            <Card className="flex flex-col min-w-0 xl:min-w-[320px] flex-1 border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
               <CardHeader className="border-b border-border/30 pb-4">
                 <CardTitle className="flex items-center gap-2 text-md font-semibold tracking-tight">
                   <IconBrandGithub className="size-4 text-muted-foreground" />
@@ -661,9 +671,9 @@ function DashboardPage() {
                   Repository monitoring and live PR watch coverage.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="pt-4">
+              <CardContent className="pt-4 min-w-0">
                 {githubBotSummary.connected && githubBotSummary.hasData ? (
-                  <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-4 min-w-0">
                     <div className="flex items-end justify-between">
                       <div className="flex flex-col gap-1">
                         <div className="text-2xl font-semibold text-foreground">
@@ -679,7 +689,7 @@ function DashboardPage() {
                     </div>
                     <ChartContainer
                       config={githubBotChartConfig}
-                      className="h-[156px] w-full"
+                      className="h-[156px] w-full min-w-0"
                     >
                       <BarChart
                         data={githubBotChartData}
@@ -701,7 +711,7 @@ function DashboardPage() {
                             <ChartTooltipContent hideLabel nameKey="label" />
                           }
                         />
-                        <Bar dataKey="value" radius={6}>
+                        <Bar dataKey="value" radius={6} maxBarSize={24}>
                           {githubBotChartData.map((entry) => (
                             <Cell key={entry.key} fill={entry.fill} />
                           ))}
@@ -723,8 +733,8 @@ function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid gap-6 md:col-span-5">
-          <Card className="border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
+        <div className="grid gap-6 lg:col-span-5 xl:col-span-4 2xl:col-span-5 min-w-0">
+          <Card className="border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50 min-w-0">
             <CardHeader className="border-b border-border/30 pb-4">
               <CardTitle className="text-md font-semibold tracking-tight">
                 Workflow Mix
@@ -733,12 +743,12 @@ function DashboardPage() {
                 Where recent activity is coming from.
               </CardDescription>
             </CardHeader>
-            <CardContent className="pt-4">
+            <CardContent className="pt-4 min-w-0">
               {workflowMixData.length > 0 ? (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-4 min-w-0">
                   <ChartContainer
                     config={workflowChartConfig}
-                    className="h-[168px] w-full"
+                    className="h-[168px] w-full min-w-0"
                   >
                     <BarChart
                       data={workflowMixData}
@@ -760,7 +770,7 @@ function DashboardPage() {
                           <ChartTooltipContent hideLabel nameKey="label" />
                         }
                       />
-                      <Bar dataKey="count" radius={6}>
+                      <Bar dataKey="count" radius={6} maxBarSize={24}>
                         {workflowMixData.map((entry) => (
                           <Cell key={entry.key} fill={entry.fill} />
                         ))}
@@ -786,7 +796,7 @@ function DashboardPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
+          <Card className="border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50 min-w-0">
             <CardHeader className="border-b border-border/30 pb-4">
               <CardTitle className="text-md font-semibold tracking-tight flex items-center gap-2">
                 <IconServerCog className="size-4 text-muted-foreground" />
@@ -796,9 +806,9 @@ function DashboardPage() {
                 Live background-agent capacity at a glance.
               </CardDescription>
             </CardHeader>
-            <CardContent className="pt-4">
+            <CardContent className="pt-4 min-w-0">
               {agentsChartData.length > 0 ? (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-4 min-w-0">
                   <div className="flex items-end justify-between">
                     <div className="flex flex-col gap-1">
                       <div className="text-2xl font-semibold text-foreground">
@@ -816,7 +826,7 @@ function DashboardPage() {
                   </div>
                   <ChartContainer
                     config={agentChartConfig}
-                    className="h-[160px] w-full"
+                    className="h-[160px] w-full min-w-0"
                   >
                     <BarChart
                       data={agentsChartData}
@@ -836,7 +846,7 @@ function DashboardPage() {
                         cursor={false}
                         content={<ChartTooltipContent hideLabel />}
                       />
-                      <Bar dataKey="count" radius={6}>
+                      <Bar dataKey="count" radius={6} maxBarSize={24}>
                         {agentsChartData.map((entry) => (
                           <Cell
                             key={`agent-bar-${entry.key}`}
