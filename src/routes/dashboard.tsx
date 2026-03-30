@@ -979,7 +979,7 @@ function DashboardPage() {
                       </Link>
                     ) : (
                       <Link
-                        to="/history/$runId"
+                        to="/report/$runId"
                         params={{ runId: run._id }}
                         className={buttonVariants({
                           variant: "outline",

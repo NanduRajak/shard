@@ -215,7 +215,7 @@ function SnapshotState({ browserProvider, runId, screenshot, hideLinks }: any) {
             <p className="truncate text-xs text-muted-foreground">{screenshot.pageUrl ?? "No page URL recorded"}</p>
           </div>
           {!hideLinks && (
-            <Link to="/history/$runId" params={{ runId }} className={buttonVariants({ variant: "outline", className: "rounded-2xl" })}>
+            <Link to="/report/$runId" params={{ runId }} className={buttonVariants({ variant: "outline", className: "rounded-2xl" })}>
               Open archived report <IconExternalLink className="size-4" />
             </Link>
           )}
@@ -229,7 +229,7 @@ function SnapshotState({ browserProvider, runId, screenshot, hideLinks }: any) {
       title="Run finished"
       body={browserProvider === "local_chrome" ? "The session has ended and no screenshot was stored for the final state." : browserProvider === "playwright" ? "The background session has ended and no screenshot was stored for the final state." : "The session has ended and no screenshot was stored for the final state."}
       action={!hideLinks && (
-        <Link to="/history/$runId" params={{ runId }} className={buttonVariants({ variant: "outline", className: "mt-4 rounded-2xl" })}>
+        <Link to="/report/$runId" params={{ runId }} className={buttonVariants({ variant: "outline", className: "mt-4 rounded-2xl" })}>
           Open archived report <IconExternalLink className="size-4" />
         </Link>
       )}

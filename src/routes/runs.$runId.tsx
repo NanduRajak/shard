@@ -217,7 +217,7 @@ function RunPage() {
                 
                 <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground shadow-sm w-fit mt-auto">
                   <Link
-                    to="/history/$runId"
+                    to="/report/$runId"
                     params={{ runId: typedRunId }}
                     className="inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-muted/80 data-[state=active]:text-foreground data-[state=active]:shadow-sm"
                     activeProps={{ "data-state": "active" }}
@@ -533,7 +533,7 @@ function SnapshotState({
             </p>
           </div>
           <Link
-            to="/history/$runId"
+            to="/report/$runId"
             params={{ runId }}
             className={buttonVariants({
               variant: "outline",
@@ -561,7 +561,7 @@ function SnapshotState({
         }
         action={
           <Link
-          to="/history/$runId"
+          to="/report/$runId"
           params={{ runId }}
           className={buttonVariants({
             variant: "outline",

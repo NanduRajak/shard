@@ -16,6 +16,7 @@ import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as BackgroundAgentsRouteImport } from './routes/background-agents'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
+import { Route as ReportRunIdRouteImport } from './routes/report.$runId'
 import { Route as HistoryRunIdRouteImport } from './routes/history_.$runId'
 import { Route as BackgroundAgentsOrchestratorIdRouteImport } from './routes/background-agents.$orchestratorId'
 import { Route as ApiInngestRouteImport } from './routes/api.inngest'
@@ -61,6 +62,11 @@ const IndexRoute = IndexRouteImport.update({
 const RunsRunIdRoute = RunsRunIdRouteImport.update({
   id: '/runs/$runId',
   path: '/runs/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReportRunIdRoute = ReportRunIdRouteImport.update({
+  id: '/report/$runId',
+  path: '/report/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HistoryRunIdRoute = HistoryRunIdRouteImport.update({
@@ -131,6 +137,7 @@ export interface FileRoutesByFullPath {
   '/api/inngest': typeof ApiInngestRoute
   '/background-agents/$orchestratorId': typeof BackgroundAgentsOrchestratorIdRoute
   '/history/$runId': typeof HistoryRunIdRoute
+  '/report/$runId': typeof ReportRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/connect': typeof ApiGithubConnectRoute
@@ -151,6 +158,7 @@ export interface FileRoutesByTo {
   '/api/inngest': typeof ApiInngestRoute
   '/background-agents/$orchestratorId': typeof BackgroundAgentsOrchestratorIdRoute
   '/history/$runId': typeof HistoryRunIdRoute
+  '/report/$runId': typeof ReportRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/connect': typeof ApiGithubConnectRoute
@@ -172,6 +180,7 @@ export interface FileRoutesById {
   '/api/inngest': typeof ApiInngestRoute
   '/background-agents/$orchestratorId': typeof BackgroundAgentsOrchestratorIdRoute
   '/history_/$runId': typeof HistoryRunIdRoute
+  '/report/$runId': typeof ReportRunIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/connect': typeof ApiGithubConnectRoute
@@ -194,6 +203,7 @@ export interface FileRouteTypes {
     | '/api/inngest'
     | '/background-agents/$orchestratorId'
     | '/history/$runId'
+    | '/report/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
     | '/api/github/connect'
@@ -214,6 +224,7 @@ export interface FileRouteTypes {
     | '/api/inngest'
     | '/background-agents/$orchestratorId'
     | '/history/$runId'
+    | '/report/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
     | '/api/github/connect'
@@ -234,6 +245,7 @@ export interface FileRouteTypes {
     | '/api/inngest'
     | '/background-agents/$orchestratorId'
     | '/history_/$runId'
+    | '/report/$runId'
     | '/runs/$runId'
     | '/api/github/callback'
     | '/api/github/connect'
@@ -254,6 +266,7 @@ export interface RootRouteChildren {
   ReviewBotRoute: typeof ReviewBotRoute
   ApiInngestRoute: typeof ApiInngestRoute
   HistoryRunIdRoute: typeof HistoryRunIdRoute
+  ReportRunIdRoute: typeof ReportRunIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
   ApiGithubCallbackRoute: typeof ApiGithubCallbackRoute
   ApiGithubConnectRoute: typeof ApiGithubConnectRoute
@@ -313,6 +326,13 @@ declare module '@tanstack/react-router' {
       path: '/runs/$runId'
       fullPath: '/runs/$runId'
       preLoaderRoute: typeof RunsRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/report/$runId': {
+      id: '/report/$runId'
+      path: '/report/$runId'
+      fullPath: '/report/$runId'
+      preLoaderRoute: typeof ReportRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/history_/$runId': {
@@ -426,6 +446,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReviewBotRoute: ReviewBotRoute,
   ApiInngestRoute: ApiInngestRoute,
   HistoryRunIdRoute: HistoryRunIdRoute,
+  ReportRunIdRoute: ReportRunIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
   ApiGithubCallbackRoute: ApiGithubCallbackRoute,
   ApiGithubConnectRoute: ApiGithubConnectRoute,

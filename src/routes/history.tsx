@@ -234,7 +234,7 @@ function HistoryPage() {
                 run.status === "starting" ||
                 run.status === "running"
                   ? "/runs/$runId"
-                  : "/history/$runId";
+                  : "/report/$runId";
 
               return (
                 <motion.div
@@ -599,26 +599,6 @@ function formatAuditScore(value: number | null) {
   }
 
   return Math.round(value * 100).toString();
-}
-
-function statusDotClassName(
-  status:
-    | "cancelled"
-    | "completed"
-    | "failed"
-    | "queued"
-    | "running"
-    | "starting",
-) {
-  if (status === "completed")
-    return "h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.5)]";
-  if (status === "failed")
-    return "h-2.5 w-2.5 rounded-full bg-red-400 shadow-[0_0_12px_rgba(248,113,113,0.45)]";
-  if (status === "running" || status === "starting")
-    return "h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.5)]";
-  if (status === "cancelled")
-    return "h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.45)]";
-  return "h-2.5 w-2.5 rounded-full bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.45)]";
 }
 
 function buildPaginationItems(currentPage: number, totalPages: number) {
