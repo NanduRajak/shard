@@ -1,23 +1,31 @@
 # Shard
 
-Shard is an autonomous web QA app with a built-in GitHub review bot. It can run live browser sessions, launch background QA agents, store reusable site credentials, and turn runs into reports that are easier to review and share.
+Shard is an autonomous web QA app with a built-in GitHub review bot. It helps you run browser-based QA, launch background audits, save reusable credentials, review archived reports, and inspect pull requests in one place.
 
-## What It Does
+## Features
 
-Shard currently supports these use cases:
+- **Exploratory and task-based QA automation** — run the agent against any URL with or without instructions
+- **Dual browser modes** — Steel hosted sessions with live replay, or local Chrome via the helper process
+- **Background agent orchestration** — spin up multiple agents in parallel across five predefined coverage lanes for broader site sweeps
+- **Live run monitoring** — real-time agent transcript, step timeline, browser session embed, report, and cancellation
+- **Archived reports** — findings by severity, browser signals, screenshots, session replay, and per-page Lighthouse scores
+- **Credential management** — encrypted site credentials with per-site defaults and auto-matching at run time
+- **Dashboard** — run trends, outcome distribution, findings over time, and orchestrator status
+- **GitHub review bot** — tracks PRs, runs automated reviews, and posts inline code feedback via GitHub App
 
-- Exploratory QA by pasting a URL
-- Task-driven QA by pasting a URL with instructions
-- Live cloud browser sessions through Steel
-- Live local browser sessions through the local helper and your own Chrome install
-- Multi-agent background QA automation for a single site
-- Saved login profiles matched to site origin
-- Live run timelines with streamed status, findings, and artifacts
-- Archived reports with findings, coverage, screenshots, traces, replay links, and Lighthouse data
-- Dashboard views for recent runs and Lighthouse deltas
-- GitHub PR reviews with repo tracking, pull request selection, reruns, and review summaries
+## Use Cases
 
-## Quick Start
+- Smoke test a deployed app by giving the agent a URL
+- Verify a specific flow such as sign in, checkout, onboarding, or CRUD
+- Run broader background sweeps across a site with multiple agents in parallel
+- Reuse saved credentials for authenticated test flows
+- Review completed runs with screenshots, findings, and performance data
+- Monitor QA trends over time from the dashboard
+- Review pull requests inside the app before shipping changes
+
+## Spin Up
+
+Quick start:
 
 ```bash
 pnpm install
@@ -33,35 +41,41 @@ pnpm local-helper
 
 The app runs on `http://localhost:3000`.
 
-Full setup, environment variables, and service wiring live in [SETUP.md](./SETUP.md).
+For full setup instructions, environment variables, and troubleshooting, see [SETUP.md](./SETUP.md).
 
-## Typical Workflow
+## Prerequisites
 
-1. Start the app and Inngest worker.
-2. Open `http://localhost:3000`.
-3. Paste a URL for exploratory QA, or a URL plus instructions for task-driven QA.
-4. Review the live run at `/runs/:runId` and archived results in `/history`.
-5. Use `/credentials`, `/background-agents`, `/dashboard`, and `/review-bot` as needed.
+- Node.js 22 or newer
+- `pnpm` 10 or newer
+- A working Convex deployment
+- An OpenAI API key
+- A Steel API key
+- Google Chrome for local browser runs
+- Docker if you want to run the Inngest dev service with Docker Compose
 
-Example prompts:
+## Installation And Environment
 
-```text
-https://shop.example.com
-```
+1. Install dependencies with `pnpm install`
+2. Add your environment variables in `.env` and `.env.local`
+3. Start the app with `pnpm dev`
+4. Start the background worker with Docker Compose or the Inngest dev command from [SETUP.md](./SETUP.md)
+5. Start `pnpm local-helper` if you want local Chrome runs
 
-```text
-https://shop.example.com add Sony headphones to cart and verify the cart flow
-```
+Main environment values you will need:
 
-## Architecture Overview
+- `VITE_CONVEX_URL`
+- `CREDENTIAL_ENCRYPTION_KEY`
+- `OPENAI_API_KEY`
+- `STEEL_API_KEY`
+- `APP_BASE_URL`
+- `LOCAL_HELPER_SECRET` for local Chrome mode
+- GitHub app and OAuth keys if you want the review bot
 
-- `src/routes`: TanStack Start routes for the app UI and API entry points
-- `src/lib`: shared QA, reporting, scoring, and workflow logic
-- `convex/`: persistent data layer for runs, findings, credentials, artifacts, and review state
-- `inngest/`: background jobs for QA runs and PR review workflows
-- `scripts/local-helper.ts`: local Chrome bridge for on-machine browser runs
+## Screenshots
 
-At a high level, the app uses React and TanStack Start for the UI, Convex for state and storage, Inngest for async orchestration, and Playwright or Steel for browser execution.
+[screenshot]
+
+[screenshot]
 
 ## Stack
 
@@ -71,50 +85,26 @@ At a high level, the app uses React and TanStack Start for the UI, Convex for st
 - Inngest
 - Playwright
 - Steel
-- AI SDK
 - OpenAI SDK
 - Lighthouse
 - Octokit and Probot
-
-## Screenshots
-
--SCREENSHOTS HERE
 
 ## Notes
 
 ### Challenges
 
-- Keeping cloud runs, local Chrome runs, and background agents aligned behind one QA flow
-- Capturing useful artifacts without overwhelming the report surface
-- Supporting stored credentials without exposing them directly to the model
-- Making PR review state, reruns, and repository tracking feel consistent with the QA side of the app
+- Fine-tuning the agent prompt so it follows instructions reliably and performs useful testing took a good amount of trial and error.
+- Keeping live Steel sessions, local Chrome sessions, and headless background agents aligned under the same QA engine
+- Handling login workflows safely by matching stored credentials at runtime rather than leaking secrets into prompts
 
 ### Assumptions
 
 - A working Convex deployment is available
-- OpenAI and Steel credentials are available for the environments where the app runs
-- Site credentials are created inside the app when a target flow needs authentication
+- OpenAI and Steel credentials are available
+- Site credentials are added inside the app when authenticated flows need to be tested
 
-### Current Limitations
+### Limitations
 
 - Full functionality depends on external services such as Convex, Inngest, Steel, and OpenAI
 - Local Chrome runs require the helper process and a compatible Chrome install on the same machine
-- The GitHub review bot only works after the full GitHub App and OAuth configuration is in place
-- No demo credentials or screenshots are bundled with the repo
-
-## Verification
-
-Useful commands:
-
-```bash
-pnpm test
-pnpm lint
-pnpm typecheck
-pnpm build
-```
-
-Pre-submission checklist:
-
-- Keep commits focused and readable
-- Run the validation commands above
-- Get a teammate review before submission
+- The GitHub review bot needs full GitHub App and OAuth setup before it becomes usable
