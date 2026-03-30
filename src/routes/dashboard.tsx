@@ -11,12 +11,13 @@ import {
   IconCircleDotted,
   IconLayoutDashboard,
   IconServerCog,
-  IconTrendingUp,
   IconWorldWww,
 } from "@tabler/icons-react"
 import { useMemo } from "react"
 import {
-  LabelList,
+  Bar,
+  BarChart,
+  CartesianGrid,
   PolarAngleAxis,
   RadialBar,
   RadialBarChart,
@@ -24,6 +25,8 @@ import {
   Cell,
   Pie,
   PieChart,
+  XAxis,
+  YAxis,
 } from "recharts"
 import { api } from "../../convex/_generated/api"
 import { getReviewBotState } from "@/lib/review-bot"
@@ -33,7 +36,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -107,13 +109,13 @@ function DashboardPage() {
     }))
   }, [runs])
 
-  // 3. Agent Workload (Pie Chart)
+  // 3. Agent Workload (aggregated agent status counts)
   const agentsChartData = useMemo(() => {
     if (!orchestrators) return []
-    const completed = orchestrators.filter((r) => r.status === "completed").length
-    const queued = orchestrators.filter((r) => r.status === "queued").length
-    const running = orchestrators.filter((r) => r.status === "running").length
-    const failed = orchestrators.filter((r) => r.status === "failed").length
+    const completed = orchestrators.reduce((total, item) => total + item.counts.completed, 0)
+    const queued = orchestrators.reduce((total, item) => total + item.counts.queued, 0)
+    const running = orchestrators.reduce((total, item) => total + item.counts.running, 0)
+    const failed = orchestrators.reduce((total, item) => total + item.counts.failed, 0)
     
     // If all are zero, return a ghost segment or empty
     if (completed === 0 && queued === 0 && running === 0 && failed === 0) return []
@@ -125,6 +127,11 @@ function DashboardPage() {
       { status: "Failed", count: failed, fill: "#ef4444" },       // Red 500
     ]
   }, [orchestrators])
+
+  const totalAgentCount = useMemo(
+    () => agentsChartData.reduce((total, entry) => total + entry.count, 0),
+    [agentsChartData],
+  )
 
   // 4. Review Bot Storage (Re-structured)
   const reviewBotChartData = useMemo(() => {
@@ -177,28 +184,30 @@ function DashboardPage() {
         </div>
 
         {/* SECTION 2: TRENDS & INTELLIGENCE PANELS SKELETON */}
-        <div className="grid gap-6 md:grid-cols-12 lg:grid-rows-2">
+        <div className="grid gap-6 md:grid-cols-12">
           {/* Main Panel Skeleton */}
-          <Card className="flex flex-col md:col-span-8 lg:row-span-2 border-border/50 bg-card/40 shadow-sm min-h-[400px]">
+          <Card className="flex flex-col border-border/50 bg-card/40 shadow-sm md:col-span-8">
             <CardHeader className="items-center pb-0 border-b border-border/30 pt-4">
               <Skeleton className="h-6 w-[200px] mb-2" />
               <Skeleton className="h-4 w-[150px] mb-4" />
             </CardHeader>
           </Card>
 
-          {/* Side Panel 1 Skeleton */}
-          <Card className="md:col-span-4 border-border/50 bg-card/40 shadow-sm min-h-[190px]">
-             <CardHeader className="border-b border-border/30 pb-4">
-              <Skeleton className="h-5 w-[140px]" />
-            </CardHeader>
-          </Card>
+          <div className="grid gap-6 md:col-span-4">
+            {/* Side Panel 1 Skeleton */}
+            <Card className="border-border/50 bg-card/40 shadow-sm min-h-[190px]">
+               <CardHeader className="border-b border-border/30 pb-4">
+                <Skeleton className="h-5 w-[140px]" />
+              </CardHeader>
+            </Card>
 
-          {/* Side Panel 2 Skeleton */}
-          <Card className="md:col-span-4 border-border/50 bg-card/40 shadow-sm min-h-[190px]">
-            <CardHeader className="border-b border-border/30 pb-4">
-              <Skeleton className="h-5 w-[170px]" />
-            </CardHeader>
-          </Card>
+            {/* Side Panel 2 Skeleton */}
+            <Card className="border-border/50 bg-card/40 shadow-sm min-h-[190px]">
+              <CardHeader className="border-b border-border/30 pb-4">
+                <Skeleton className="h-5 w-[170px]" />
+              </CardHeader>
+            </Card>
+          </div>
         </div>
 
         {/* SECTION 3: RECENT RUNS DIAGNOSTICS LOG SKELETON */}
@@ -288,18 +297,18 @@ function DashboardPage() {
       </div>
 
       {/* SECTION 2: TRENDS & INTELLIGENCE PANELS */}
-      <div className="grid gap-6 md:grid-cols-12 lg:grid-rows-2">
+      <div className="grid gap-6 md:grid-cols-12">
         
         {/* Main Panel: Lighthouse Testing Radial Chart */}
-        <Card className="flex flex-col md:col-span-8 lg:row-span-2 border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
-          <CardHeader className="items-center pb-0 border-b border-border/30 pt-4">
+        <Card className="flex flex-col overflow-hidden border-border/50 bg-card/40 pt-0 shadow-sm transition-all hover:bg-card/50 md:col-span-8">
+          <CardHeader className="border-b border-border/30 px-5 py-4">
             <CardTitle className="text-lg font-semibold tracking-tight">Lighthouse Intelligence</CardTitle>
-            <CardDescription className="mb-4">Most Recent Run Audit</CardDescription>
+            <CardDescription>Most Recent Run Audit</CardDescription>
           </CardHeader>
-          <CardContent className="flex-1 pb-0 pt-6">
+          <CardContent className="relative px-5 py-4">
             <ChartContainer
               config={lighthouseConfig}
-              className="mx-auto aspect-square max-h-[300px]"
+              className="mx-auto aspect-square max-h-[280px] pb-10"
             >
               {lighthouseData.length > 0 ? (
                 <RadialBarChart
@@ -327,16 +336,6 @@ function DashboardPage() {
                     {lighthouseData.map((entry) => (
                       <Cell key={`${entry.category}-value`} fill={entry.fill} />
                     ))}
-                    <LabelList
-                      position="insideStart"
-                      dataKey="category"
-                      className="fill-white"
-                      fontSize={12}
-                      fontWeight={700}
-                      stroke="rgba(12, 12, 12, 0.72)"
-                      strokeWidth={2}
-                      paintOrder="stroke"
-                    />
                   </RadialBar>
                 </RadialBarChart>
               ) : (
@@ -345,74 +344,103 @@ function DashboardPage() {
                 </div>
               )}
             </ChartContainer>
-          </CardContent>
-          {lighthouseData.length > 0 && (
-            <CardFooter className="flex-col gap-2 text-sm pt-6 pb-6">
-              <div className="flex items-center gap-2 leading-none font-medium text-emerald-500">
-                Trending optimal across latest metrics <IconTrendingUp className="h-4 w-4" />
+            {lighthouseData.length > 0 ? (
+              <div className="absolute right-5 bottom-4 flex flex-wrap justify-end gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
+                {lighthouseData.map((entry) => (
+                  <div key={`${entry.category}-legend`} className="flex items-center gap-1.5">
+                    <span
+                      className="size-2 rounded-full"
+                      style={{ backgroundColor: entry.fill }}
+                    />
+                    <span>{entry.category}</span>
+                  </div>
+                ))}
               </div>
-              <div className="leading-none text-muted-foreground">
-                Showing system vitals for the most recent completed QA diagnostic
-              </div>
-            </CardFooter>
-          )}
-        </Card>
-
-        {/* Side Panel: Agent Workload */}
-        <Card className="md:col-span-4 border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
-          <CardHeader className="border-b border-border/30 pb-4">
-            <CardTitle className="text-md font-semibold tracking-tight flex items-center gap-2">
-              <IconServerCog className="size-4 text-muted-foreground" />
-              Agent Workload
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 flex flex-col justify-center">
-            {agentsChartData.length > 0 ? (
-              <ChartContainer config={agentsChartConfig} className="h-[140px] w-full">
-                <PieChart>
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                  <Pie data={agentsChartData} cx="50%" cy="50%" innerRadius={40} outerRadius={60} paddingAngle={2} stroke="none" dataKey="count" nameKey="status">
-                    {agentsChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ChartContainer>
-            ) : (
-               <div className="flex h-[140px] items-center justify-center text-sm text-muted-foreground">
-                 No background agents active
-               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
 
-        {/* Side Panel: PR Review Integration */}
-        <Card className="md:col-span-4 border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
-          <CardHeader className="border-b border-border/30 pb-4">
-            <CardTitle className="text-md font-semibold tracking-tight flex items-center gap-2">
-               <IconBrandGithub className="size-4 text-muted-foreground" />
-               Review Bot Telemetry
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 flex flex-col justify-center">
-            {reviewBotChartData.length > 0 && reviewBotChartData[0].value > 0 || reviewBotChartData[1].value > 0 ? (
-              <ChartContainer config={botConfig} className="h-[140px] w-full">
-                <PieChart>
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                  <Pie data={reviewBotChartData} cx="50%" cy="50%" innerRadius={40} outerRadius={60} paddingAngle={2} stroke="none" dataKey="value" nameKey="name">
-                    {reviewBotChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ChartContainer>
-            ) : (
-                <div className="flex h-[140px] items-center justify-center text-sm text-muted-foreground">
-                  No GitHub repositories synced
+        <div className="grid gap-6 md:col-span-4">
+          {/* Side Panel: Agent Workload */}
+          <Card className="border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
+            <CardHeader className="border-b border-border/30 pb-4">
+              <CardTitle className="text-md font-semibold tracking-tight flex items-center gap-2">
+                <IconServerCog className="size-4 text-muted-foreground" />
+                Agent Workload
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {agentsChartData.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <div className="text-2xl font-semibold text-foreground">{totalAgentCount}</div>
+                      <div className="text-xs text-muted-foreground">Total agent runs tracked</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {agentsChartData.find((entry) => entry.status === "Running")?.count ?? 0} active now
+                    </div>
+                  </div>
+                  <ChartContainer config={agentsChartConfig} className="h-[160px] w-full">
+                    <BarChart
+                      data={agentsChartData}
+                      layout="vertical"
+                      margin={{ top: 4, right: 8, left: 8, bottom: 4 }}
+                    >
+                      <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+                      <XAxis type="number" hide />
+                      <YAxis
+                        type="category"
+                        dataKey="status"
+                        axisLine={false}
+                        tickLine={false}
+                        width={64}
+                      />
+                      <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                      <Bar dataKey="count" radius={6}>
+                        {agentsChartData.map((entry, index) => (
+                          <Cell key={`agent-bar-${index}`} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ChartContainer>
                 </div>
-            )}
-          </CardContent>
-        </Card>
+              ) : (
+                 <div className="flex h-[160px] items-center justify-center text-sm text-muted-foreground">
+                   No background agents active
+                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Side Panel: PR Review Integration */}
+          <Card className="border-border/50 bg-card/40 shadow-sm transition-all hover:bg-card/50">
+            <CardHeader className="border-b border-border/30 pb-4">
+              <CardTitle className="text-md font-semibold tracking-tight flex items-center gap-2">
+                 <IconBrandGithub className="size-4 text-muted-foreground" />
+                 Review Bot Telemetry
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 flex flex-col justify-center">
+              {reviewBotChartData.length > 0 && reviewBotChartData[0].value > 0 || reviewBotChartData[1].value > 0 ? (
+                <ChartContainer config={botConfig} className="h-[140px] w-full">
+                  <PieChart>
+                    <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                    <Pie data={reviewBotChartData} cx="50%" cy="50%" innerRadius={40} outerRadius={60} paddingAngle={2} stroke="none" dataKey="value" nameKey="name">
+                      {reviewBotChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ChartContainer>
+              ) : (
+                  <div className="flex h-[140px] items-center justify-center text-sm text-muted-foreground">
+                    No GitHub repositories synced
+                  </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
       </div>
 

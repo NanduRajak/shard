@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { convexQuery } from "@convex-dev/react-query"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { useEffect, useLayoutEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import type { Id } from "../../convex/_generated/dataModel"
 import { api } from "../../convex/_generated/api"
 import { VercelV0Chat } from "@/components/ui/v0-ai-chat"
@@ -41,9 +41,7 @@ function App() {
     queryFn: async () => await getRunModeCapabilities(),
   })
   const { data: credentials } = useQuery(convexQuery(api.credentials.listCredentials, {}))
-  const [browserProvider, setBrowserProvider] = useState<BrowserProvider | null>(
-    () => (typeof window !== "undefined" ? getStoredHomeBrowserProvider() : null),
-  )
+  const [browserProvider, setBrowserProvider] = useState<BrowserProvider>("steel")
   const [prompt, setPrompt] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [selectedCredentialId, setSelectedCredentialId] = useState<Id<"credentials"> | null>(null)
@@ -54,7 +52,7 @@ function App() {
     mutationFn: makeCredentialDefault,
   })
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const provider = getStoredHomeBrowserProvider()
     setBrowserProvider(provider)
   }, [])
