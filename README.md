@@ -73,9 +73,44 @@ Main environment values you will need:
 
 ## Screenshots
 
-[screenshot]
-
-[screenshot]
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="./public/dmeo/homepage.jpeg" alt="Home screen for starting a QA run with URL input, browser mode selection, and optional credentials." />
+      <br />
+      <sub>Home: start a QA run with a URL, browser mode, and optional saved credentials.</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <img src="./public/dmeo/Dashboardpage.jpeg" alt="Dashboard view showing total runs, defect findings, failed executions, system health, and recent activity charts." />
+      <br />
+      <sub>Dashboard: track run volume, findings, failures, and overall system health.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="./public/dmeo/BackgroundAgents.png" alt="Background Agents screen for launching parallel autonomous audits with URL, prompt, credentials, and agent count." />
+      <br />
+      <sub>Background Agents: launch parallel audits for broader site coverage.</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <img src="./public/dmeo/reviewBotpage%20.png" alt="Review Bot page for selecting repositories, tracking pull requests, and monitoring automated review status." />
+      <br />
+      <sub>Review Bot: connect repositories and monitor tracked pull requests.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="./public/dmeo/QAReport.jpeg" alt="Archived QA report with findings summary, quality summary, screenshots, artifacts, and browser signals." />
+      <br />
+      <sub>QA Report: inspect findings, screenshots, artifacts, and browser signals.</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <img src="./public/dmeo/historypage.jpeg" alt="History page listing route coverage and Lighthouse reports with performance, accessibility, best practices, and SEO scores." />
+      <br />
+      <sub>History: review route coverage and per-page Lighthouse results.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Stack
 
