@@ -41,7 +41,7 @@ import { cancelCrawl } from "@/lib/firecrawl-client"
 
 const MAX_PAGE_FINDINGS = 2
 const ACTION_HIGHLIGHT_DELAY_MS = 350
-const DEFAULT_MODEL = serverEnv.OPENAI_MODEL ?? "gpt-4o-mini"
+const DEFAULT_MODEL = serverEnv.OPENAI_MODEL ?? "gpt-5.4-mini"
 const INTERACTIVE_QA_CONFIG = {
   agentTimeBudgetMs: 8 * 60 * 1000,
   maxAgentSteps: 36,
