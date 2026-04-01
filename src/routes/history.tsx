@@ -234,7 +234,7 @@ function HistoryPage() {
                 run.status === "starting" ||
                 run.status === "running"
                   ? "/runs/$runId"
-                  : "/report/$runId";
+                  : "/history/$runId";
 
               return (
                 <motion.div

@@ -1,3 +1,6 @@
+import type { Document } from "@mendable/firecrawl-js"
+import Firecrawl from "@mendable/firecrawl-js"
+
 export type FirecrawlCrawlOptions = {
   url: string
   limit?: number
@@ -22,123 +25,75 @@ export type FirecrawlPageResult = {
   }
 }
 
-export type FirecrawlCrawlStatus = {
-  status: "scraping" | "completed" | "failed"
-  total: number
-  completed: number
-  data: FirecrawlPageResult[]
-  next?: string
+async function getClient(): Promise<Firecrawl> {
+  const { serverEnv } = await import("~/server-env")
+  return new Firecrawl({
+    apiKey: serverEnv.FIRECRAWL_API_KEY ?? "",
+    apiUrl: serverEnv.FIRECRAWL_API_URL ?? "http://localhost:3002",
+  })
 }
 
-async function getFirecrawlBaseUrl(): Promise<string> {
-  const { serverEnv } = await import("~/server-env")
-  return serverEnv.FIRECRAWL_API_URL ?? "http://localhost:3002"
-}
-
-async function getFirecrawlHeaders() {
-  const { serverEnv } = await import("~/server-env")
-
+function mapDocumentToPageResult(doc: Document): FirecrawlPageResult {
   return {
-    "Content-Type": "application/json",
-    ...(serverEnv.FIRECRAWL_API_KEY
-      ? { Authorization: `Bearer ${serverEnv.FIRECRAWL_API_KEY}` }
-      : {}),
+    url: doc.metadata?.sourceURL ?? doc.metadata?.url ?? "",
+    markdown: doc.markdown,
+    html: doc.html,
+    metadata: {
+      title: doc.metadata?.title,
+      description: doc.metadata?.description,
+      statusCode: doc.metadata?.statusCode,
+      sourceURL: doc.metadata?.sourceURL,
+      links: doc.links,
+    },
   }
 }
 
 export async function startCrawl(
   options: FirecrawlCrawlOptions,
 ): Promise<{ id: string }> {
-  const baseUrl = await getFirecrawlBaseUrl()
-  const headers = await getFirecrawlHeaders()
+  const client = await getClient()
+  const { url, ...params } = options
 
-  const response = await fetch(`${baseUrl}/v1/crawl`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(options),
-  })
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "")
-    throw new Error(
-      `Firecrawl startCrawl failed (${response.status}): ${text}`,
-    )
-  }
-
-  const data = (await response.json()) as { id: string }
-  return data
+  const response = await client.startCrawl(url, params)
+  return { id: response.id }
 }
 
-export async function getCrawlStatus(
-  jobId: string,
-): Promise<FirecrawlCrawlStatus> {
-  const baseUrl = await getFirecrawlBaseUrl()
-  const headers = await getFirecrawlHeaders()
-
-  const response = await fetch(`${baseUrl}/v1/crawl/${jobId}`, { headers })
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "")
-    throw new Error(
-      `Firecrawl getCrawlStatus failed (${response.status}): ${text}`,
-    )
-  }
-
-  return (await response.json()) as FirecrawlCrawlStatus
+export async function getCrawlStatus(jobId: string) {
+  const client = await getClient()
+  return client.getCrawlStatus(jobId)
 }
 
-async function fetchJson(url: string): Promise<FirecrawlCrawlStatus> {
-  const headers = await getFirecrawlHeaders()
-  const response = await fetch(url, { headers })
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "")
-    throw new Error(
-      `Firecrawl pagination fetch failed (${response.status}): ${text}`,
-    )
-  }
-
-  return (await response.json()) as FirecrawlCrawlStatus
+export async function cancelCrawl(jobId: string): Promise<void> {
+  const client = await getClient()
+  await client.cancelCrawl(jobId)
 }
 
 export async function pollCrawlUntilDone(
   jobId: string,
   onBatch: (pages: FirecrawlPageResult[]) => Promise<void>,
 ): Promise<void> {
+  const client = await getClient()
   let seenCount = 0
 
   while (true) {
-    // Collect all pages from this poll (including paginated results)
-    const allPages: FirecrawlPageResult[] = []
-    let currentStatus: FirecrawlCrawlStatus
+    const status = await client.getCrawlStatus(jobId, { autoPaginate: true })
 
-    // Fetch main status + follow pagination
-    currentStatus = await getCrawlStatus(jobId)
-    allPages.push(...currentStatus.data)
+    const allPages = (status.data ?? []).map(mapDocumentToPageResult)
 
-    let nextUrl = currentStatus.next
-    while (nextUrl) {
-      const nextPage = await fetchJson(nextUrl)
-      allPages.push(...nextPage.data)
-      nextUrl = nextPage.next
-    }
-
-    // Deliver only new pages
     if (allPages.length > seenCount) {
       const newPages = allPages.slice(seenCount)
       await onBatch(newPages)
       seenCount = allPages.length
     }
 
-    if (currentStatus.status === "completed") {
+    if (status.status === "completed") {
       return
     }
 
-    if (currentStatus.status === "failed") {
+    if (status.status === "failed") {
       throw new Error("Firecrawl crawl job failed")
     }
 
-    // Wait before next poll
     await new Promise((resolve) => setTimeout(resolve, 5000))
   }
 }

@@ -150,6 +150,7 @@ export type CrawledPageData = {
 
 export type CrawlData = {
   crawlJobId: string;
+  firecrawlJobId?: string;
   forms: CrawledPageData[];
   pages: CrawledPageData[];
 };

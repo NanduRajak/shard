@@ -37,6 +37,7 @@ import {
   type CrawledPageData,
 } from "@/lib/qa-engine"
 import { findBestStartUrl } from "@/lib/crawl-processing"
+import { cancelCrawl } from "@/lib/firecrawl-client"
 
 const MAX_PAGE_FINDINGS = 2
 const ACTION_HIGHLIGHT_DELAY_MS = 350
@@ -272,6 +273,7 @@ export async function runQaWorkflow({
   let failureStage = "Queued"
   const runAbortController = new AbortController()
   let stopWatcher: ReturnType<typeof createImmediateRunStopWatcher> | null = null
+  let firecrawlJobId: string | undefined
 
   try {
       await convex.mutation(api.runtime.resetRunState, {
@@ -493,6 +495,7 @@ export async function runQaWorkflow({
       })
       // Look up crawl data if available
       const crawlData = await loadCrawlData({ convex, run, runId })
+      firecrawlJobId = crawlData?.firecrawlJobId
       const smartStartUrl =
         mode === "task" && instructions && crawlData
           ? findBestStartUrl({ crawledPages: crawlData.pages, taskInstructions: instructions })
@@ -710,6 +713,10 @@ export async function runQaWorkflow({
           pageUrl: url,
           sessionId: sessionDocId,
         }).catch(() => undefined)
+      }
+
+      if (firecrawlJobId) {
+        await cancelCrawl(firecrawlJobId).catch(() => undefined)
       }
 
       if (sessionDocId) {
@@ -991,6 +998,7 @@ async function loadCrawlData({
 
     return {
       crawlJobId: crawlJob._id,
+      firecrawlJobId: crawlJob.firecrawlJobId,
       pages: pages.map(mapPage),
       forms: forms.map(mapPage),
     }

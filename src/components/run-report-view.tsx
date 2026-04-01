@@ -34,6 +34,7 @@ import { CrawlStatusBadge } from "./crawl-status-badge"
 import { SiteMapView } from "./site-map-view"
 import { FormInventoryView } from "./form-inventory-view"
 import { RunTimelineView } from "./run-timeline-view"
+import { SummaryReportContent } from "./summary-report-content"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants, Button } from "@/components/ui/button"
 import {
@@ -66,7 +67,7 @@ const itemVariants: Variants = {
 }
 
 export function RunReportView({ report }: { report: any }) {
-  const [activeTab, setActiveTab] = useState<"report" | "timeline">("report")
+  const [activeTab, setActiveTab] = useState<"report" | "timeline" | "summary">("report")
   const [showAllLighthouseReports, setShowAllLighthouseReports] = useState(false)
   const [selectedScreenshot, setSelectedScreenshot] = useState<any | null>(null)
   const [selectedSignal, setSelectedSignal] = useState<"console" | "network" | "pageerror" | null>(null)
@@ -203,7 +204,7 @@ export function RunReportView({ report }: { report: any }) {
     >
       <motion.div variants={itemVariants} className="xl:col-span-2">
         <Card className="border border-border/70 bg-card/80">
-          <CardHeader className={hasReportIntroContent && activeTab === "report" ? "gap-3 border-b border-border/70" : "gap-3"}>
+          <CardHeader className={hasReportIntroContent && activeTab === "report" ? "gap-3 border-b border-border/70" : activeTab === "summary" ? "gap-3 border-b border-border/70" : "gap-3"}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -269,6 +270,19 @@ export function RunReportView({ report }: { report: any }) {
                 )}
                 Timeline
               </button>
+              <button
+                onClick={() => setActiveTab("summary")}
+                className={`relative z-10 inline-flex h-full items-center justify-center whitespace-nowrap rounded-lg px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-50 ${activeTab === "summary" ? "text-foreground" : "hover:text-foreground"}`}
+              >
+                {activeTab === "summary" && (
+                  <motion.div
+                    layoutId="activeTabIndicator"
+                    className="absolute inset-0 z-[-1] rounded-lg bg-muted/80 shadow-sm"
+                    transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
+                  />
+                )}
+                Summary
+              </button>
             </div>
           </CardHeader>
           
@@ -300,7 +314,13 @@ export function RunReportView({ report }: { report: any }) {
         </Card>
       </motion.div>
 
-      {activeTab === "report" ? (
+      {activeTab === "summary" ? (
+        <motion.div variants={itemVariants} className="xl:col-span-2">
+          <Card className="border border-border/70 bg-card/80">
+            <SummaryReportContent report={report} />
+          </Card>
+        </motion.div>
+      ) : activeTab === "report" ? (
         <Fragment>
           <motion.div variants={itemVariants} className="flex h-full">
             <Card className="border border-border/70 bg-card/80 w-full">
