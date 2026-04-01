@@ -5,15 +5,6 @@ import {
   IconArrowRight,
   IconTimeline,
   IconTrash,
-  IconX,
-  IconCheck,
-  IconHourglassEmpty,
-  IconPlayerPlay,
-  IconBrandChrome,
-  IconServer,
-  IconListCheck,
-  IconClock,
-  IconSubtask,
 } from "@tabler/icons-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, type ReactNode } from "react";
@@ -58,6 +49,7 @@ import {
 import { deleteRun } from "@/lib/delete-run";
 import { describeBrowserProvider } from "@/lib/run-report";
 import { env } from "~/env";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/history")({
   component: HistoryPage,
@@ -68,17 +60,17 @@ const containerVariants: Variants = {
   show: {
     opacity: 1,
     transition: {
-      staggerChildren: 0.05,
+      staggerChildren: 0.04,
     },
   },
 };
 
 const itemVariants: Variants = {
-  hidden: { opacity: 0, y: 15 },
+  hidden: { opacity: 0, y: 8 },
   show: {
     opacity: 1,
     y: 0,
-    transition: { type: "spring", stiffness: 300, damping: 24 },
+    transition: { type: "spring", stiffness: 340, damping: 26 },
   },
 };
 
@@ -120,36 +112,31 @@ function HistoryPage() {
 
   if (isPending) {
     return (
-      <div className="grid gap-4">
-        <div className="space-y-1 px-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Run history</h1>
-          <p className="text-sm text-muted-foreground">
-            Every terminal run stays explorable, including cancelled sessions
-            with partial artifacts.
-          </p>
+      <div className="grid gap-5">
+        <div className="flex items-start justify-between px-0.5">
+          <div className="space-y-1">
+            <Skeleton className="h-6 w-36 bg-border/40" />
+            <Skeleton className="h-4 w-80 bg-border/30" />
+          </div>
+          <Skeleton className="h-6 w-14 rounded-full bg-border/30" />
         </div>
-        <div className="overflow-hidden rounded-[1.5rem] border border-border/60 bg-card/80">
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card/80">
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="border-b border-border/50 px-4 py-4 last:border-b-0 sm:px-5"
+              className="border-b border-border/40 px-6 py-4 last:border-b-0"
             >
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                <div className="space-y-3 xl:min-w-0 xl:flex-1">
-                  <Skeleton className="h-6 w-3/4 bg-border/40" />
-                  <div className="flex flex-wrap gap-2">
-                    <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
-                    <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
-                    <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
-                  </div>
+              <div className="flex items-center gap-4">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-4 w-64 bg-border/40" />
+                  <Skeleton className="h-3 w-96 bg-border/25" />
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[320px]">
-                  {Array.from({ length: 4 }).map((_, j) => (
-                    <Skeleton
-                      key={j}
-                      className="h-14 w-full rounded-2xl bg-border/20"
-                    />
-                  ))}
+                <div className="hidden sm:flex">
+                  <Skeleton className="h-10 w-52 rounded-lg bg-border/20" />
+                </div>
+                <div className="flex gap-1.5">
+                  <Skeleton className="h-8 w-8 rounded-md bg-border/25" />
+                  <Skeleton className="h-8 w-20 rounded-md bg-border/25" />
                 </div>
               </div>
             </div>
@@ -205,17 +192,28 @@ function HistoryPage() {
   const paginationItems = buildPaginationItems(currentPage, totalPages);
 
   return (
-    <div className="grid gap-4">
-      <div className="space-y-1 px-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Run history</h1>
-        <p className="text-sm text-muted-foreground">
-          Every terminal run stays explorable, including cancelled sessions with
-          partial artifacts.
-        </p>
+    <div className="grid gap-5">
+      {/* Page header */}
+      <div className="flex items-start justify-between px-0.5">
+        <div className="space-y-0.5">
+          <h1 className="text-xl font-semibold tracking-tight">Run history</h1>
+          <p className="text-sm text-muted-foreground">
+            Every terminal run stays explorable, including cancelled sessions
+            with partial artifacts.
+          </p>
+        </div>
+        <Badge
+          variant="secondary"
+          className="mt-0.5 rounded-full px-2.5 py-0.5 text-xs tabular-nums font-medium"
+        >
+          {runs.length}
+        </Badge>
       </div>
-      <div className="overflow-hidden rounded-[1.5rem] border border-border/60 bg-card/80">
+
+      {/* Run list */}
+      <div className="overflow-hidden rounded-xl border border-border/60 bg-card/80">
         <motion.div
-          className="divide-y divide-border/50"
+          className="divide-y divide-border/40"
           variants={containerVariants}
           initial="hidden"
           animate="show"
@@ -229,12 +227,11 @@ function HistoryPage() {
               session,
             }) => {
               const hasInstruction = !!run.goalSummary;
-              const targetUrl =
+              const isActive =
                 run.status === "queued" ||
                 run.status === "starting" ||
-                run.status === "running"
-                  ? "/runs/$runId"
-                  : "/history/$runId";
+                run.status === "running";
+              const targetUrl = isActive ? "/runs/$runId" : "/history/$runId";
 
               return (
                 <motion.div
@@ -243,133 +240,205 @@ function HistoryPage() {
                   onClick={() =>
                     navigate({ to: targetUrl, params: { runId: run._id } })
                   }
-                  className="group cursor-pointer px-4 py-4 transition-colors duration-200 hover:bg-muted/20 sm:px-5"
+                  className="group cursor-pointer p-6 transition-colors hover:bg-white/[0.025]"
                 >
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                    <div className="min-w-0 space-y-3 xl:flex-1">
-                      <div className="flex items-center gap-3">
-                        <h3 className="truncate text-lg font-semibold tracking-tight text-foreground">
-                          {hasInstruction ? run.goalSummary : run.url}
-                        </h3>
+                  <div className="flex items-center gap-4 xl:gap-6">
+                    {/* Thumbnail */}
+                    <RunThumbnail
+                      url={run.url}
+                      screenshotUrl={latestScreenshot?.url}
+                    />
+
+                    {/* Left: main info */}
+                    <div className="min-w-0 flex-1 space-y-2.5">
+                      {/* URL / title */}
+                      <div className="flex min-w-0 items-baseline gap-2.5">
+                        {hasInstruction ? (
+                          <span className="truncate text-[13px] font-medium text-foreground leading-snug">
+                            {run.goalSummary}
+                          </span>
+                        ) : (
+                          <PrettyUrl url={run.url} />
+                        )}
+                        {hasInstruction && (
+                          <PrettyUrl url={run.url} className="hidden lg:flex" muted />
+                        )}
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        {hasInstruction && (
-                          <Badge
-                            variant="outline"
-                            className="max-w-full truncate rounded-md border-border/50 bg-background/70 px-3 py-1 font-normal text-muted-foreground"
-                          >
-                            {run.url}
-                          </Badge>
-                        )}
-                        <StatusBadge status={run.status} />
-                        <MetaBadge
-                          icon={<IconClock className="size-3.5" stroke={2.2} />}
-                        >
+                      {/* Inline meta row */}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs leading-none">
+                        {/* Status dot — primary state */}
+                        <StatusDot status={run.status} />
+
+                        {/* Time — plain muted text, no badge */}
+                        <span className="text-muted-foreground/60">
                           {formatDistanceToNow(run.startedAt, {
                             addSuffix: true,
                           })}
-                        </MetaBadge>
-                        <MetaBadge
-                          icon={
-                            <IconBrandChrome className="size-3.5" stroke={2} />
-                          }
-                        >
-                          {describeBrowserProvider(run.browserProvider)}
-                        </MetaBadge>
-                        <MetaBadge
-                          icon={<IconSubtask className="size-3.5" stroke={2} />}
-                        >
-                          {run.mode}
-                        </MetaBadge>
+                        </span>
+
+                        {/* Categorical tags — pill badges */}
+                        <MetaTag>{describeBrowserProvider(run.browserProvider)}</MetaTag>
+                        <MetaTag>{run.mode}</MetaTag>
+
                         {run.executionMode === "background" && (
-                          <Badge
-                            className="rounded-md border border-indigo-500/25 bg-indigo-500/10 px-3 py-1 text-indigo-300"
-                            variant="outline"
-                          >
-                            <IconServer className="size-3.5" stroke={2} />
+                          <MetaTag className="border-indigo-500/25 bg-indigo-500/10 text-indigo-400">
                             Background
-                          </Badge>
+                          </MetaTag>
                         )}
+
                         {run.goalStatus &&
                           run.goalStatus !== "not_requested" && (
-                            <Badge
-                              variant="outline"
-                              className="rounded-md border-border/50 bg-background/70 px-3 py-1 capitalize text-muted-foreground"
-                            >
-                              <IconListCheck className="size-3.5" stroke={2} />
+                            <MetaTag className="capitalize">
                               {run.goalStatus.replaceAll("_", " ")}
-                            </Badge>
+                            </MetaTag>
                           )}
-                        {!session?.replayUrl &&
-                        !latestScreenshot &&
-                        !latestReportArtifact ? null : (
-                          <Badge
-                            variant="outline"
-                            className="rounded-md border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-emerald-300"
-                          >
+
+                        {(session?.replayUrl ||
+                          latestScreenshot ||
+                          latestReportArtifact) && (
+                          <MetaTag className="border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
                             Artifacts ready
-                          </Badge>
+                          </MetaTag>
                         )}
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-3 xl:items-end">
-                      <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 rounded-md text-red-400 hover:bg-destructive/10 hover:text-red-300"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteTarget({
-                              id: run._id,
-                              label: run.url,
-                            });
-                          }}
+                    {/* Right: score grid */}
+                    <div className="hidden shrink-0 overflow-hidden rounded-lg border border-border/50 sm:flex">
+                      {[
+                        {
+                          label: "PERF",
+                          value: currentAuditTrend.performance.current,
+                          tone: "text-blue-400",
+                        },
+                        {
+                          label: "A11Y",
+                          value: currentAuditTrend.accessibility.current,
+                          tone: "text-emerald-400",
+                        },
+                        {
+                          label: "BP",
+                          value: currentAuditTrend.bestPractices.current,
+                          tone: "text-amber-400",
+                        },
+                        {
+                          label: "SEO",
+                          value: currentAuditTrend.seo.current,
+                          tone: "text-violet-400",
+                        },
+                      ].map((metric, i) => (
+                        <div
+                          key={metric.label}
+                          className={cn(
+                            "px-4 py-2.5 text-center",
+                            i < 3 && "border-r border-border/50",
+                          )}
                         >
-                          <IconTrash className="size-4" />
-                          <span className="sr-only">Delete action</span>
-                        </Button>
-                        <Button
-                          variant="outline"
-                          className="rounded-md border-border/60 bg-background/70 px-4"
-                        >
-                          {run.status === "queued" ||
-                          run.status === "starting" ||
-                          run.status === "running"
-                            ? "Monitor"
-                            : "Report"}
-                          <IconArrowRight className="size-4" />
-                        </Button>
-                      </div>
-
-                      <div className="grid grid-cols-2 overflow-hidden rounded-md border border-white/14 bg-transparent sm:grid-cols-4 xl:min-w-[360px]">
-                        <ScoreCell
-                          label="Perf"
-                          value={currentAuditTrend.performance.current}
-                          toneClassName="text-blue-400"
-                          className="border-b border-white/16 sm:border-b-0 sm:border-r"
-                        />
-                        <ScoreCell
-                          label="A11y"
-                          value={currentAuditTrend.accessibility.current}
-                          toneClassName="text-emerald-400"
-                          className="border-b border-white/16 sm:border-b-0 sm:border-r"
-                        />
-                        <ScoreCell
-                          label="BP"
-                          value={currentAuditTrend.bestPractices.current}
-                          toneClassName="text-amber-400"
-                          className="sm:border-r sm:border-white/16"
-                        />
-                        <ScoreCell
-                          label="SEO"
-                          value={currentAuditTrend.seo.current}
-                          toneClassName="text-violet-400"
-                        />
-                      </div>
+                          <p
+                            className={cn(
+                              "text-[9px] font-semibold uppercase tracking-[0.18em]",
+                              metric.tone,
+                            )}
+                          >
+                            {metric.label}
+                          </p>
+                          <p
+                            className={cn(
+                              "mt-1 text-sm font-semibold tabular-nums leading-none",
+                              metric.tone,
+                            )}
+                          >
+                            {formatAuditScore(metric.value)}
+                          </p>
+                        </div>
+                      ))}
                     </div>
+
+                    {/* Action buttons */}
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 rounded-md text-muted-foreground/40 hover:bg-destructive/10 hover:text-red-400 group-hover:text-muted-foreground/60"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteTarget({
+                            id: run._id,
+                            label: run.url,
+                          });
+                        }}
+                      >
+                        <IconTrash className="size-3.5" />
+                        <span className="sr-only">Delete run</span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 rounded-md border-border/50 bg-background/60 px-3 text-xs font-medium hover:border-border hover:bg-background"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void navigate({
+                            to: targetUrl,
+                            params: { runId: run._id },
+                          });
+                        }}
+                      >
+                        {isActive ? "Monitor" : "Report"}
+                        <IconArrowRight className="ml-0.5 size-3" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Mobile score row */}
+                  <div className="mt-3 flex overflow-hidden rounded-lg border border-border/50 sm:hidden">
+                    {[
+                      {
+                        label: "PERF",
+                        value: currentAuditTrend.performance.current,
+                        tone: "text-blue-400",
+                      },
+                      {
+                        label: "A11Y",
+                        value: currentAuditTrend.accessibility.current,
+                        tone: "text-emerald-400",
+                      },
+                      {
+                        label: "BP",
+                        value: currentAuditTrend.bestPractices.current,
+                        tone: "text-amber-400",
+                      },
+                      {
+                        label: "SEO",
+                        value: currentAuditTrend.seo.current,
+                        tone: "text-violet-400",
+                      },
+                    ].map((metric, i) => (
+                      <div
+                        key={metric.label}
+                        className={cn(
+                          "flex-1 px-3 py-2.5 text-center",
+                          i < 3 && "border-r border-border/50",
+                        )}
+                      >
+                        <p
+                          className={cn(
+                            "text-[9px] font-semibold uppercase tracking-[0.18em]",
+                            metric.tone,
+                          )}
+                        >
+                          {metric.label}
+                        </p>
+                        <p
+                          className={cn(
+                            "mt-1 text-sm font-semibold tabular-nums leading-none",
+                            metric.tone,
+                          )}
+                        >
+                          {formatAuditScore(metric.value)}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 </motion.div>
               );
@@ -464,66 +533,125 @@ function HistoryPage() {
   );
 }
 
-function ScoreCell({
-  label,
-  value,
-  className,
-  toneClassName,
+function RunThumbnail({
+  url,
+  screenshotUrl,
 }: {
-  label: string;
-  value: number | null;
-  className?: string;
-  toneClassName?: string;
+  url: string;
+  screenshotUrl?: string | null;
 }) {
+  const [screenshotError, setScreenshotError] = useState(false);
+  const [faviconError, setFaviconError] = useState(false);
+
+  let domain = url;
+  try {
+    domain = new URL(url).hostname;
+  } catch {}
+
+  const showScreenshot = screenshotUrl && !screenshotError;
+
   return (
-    <div
-      className={["px-3 py-2.5 text-center", className]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      <p
-        className={[
-          "text-[10px] font-semibold uppercase tracking-[0.22em]",
-          toneClassName ?? "text-muted-foreground/70",
-        ]
-          .filter(Boolean)
-          .join(" ")}
-      >
-        {label}
-      </p>
-      <p
-        className={[
-          "mt-1 text-2xl font-semibold tracking-tight",
-          toneClassName ?? "text-foreground",
-        ]
-          .filter(Boolean)
-          .join(" ")}
-      >
-        {formatAuditScore(value)}
-      </p>
+    <div className="relative hidden h-[52px] w-[78px] shrink-0 overflow-hidden rounded-md border border-border/50 bg-muted/20 sm:block">
+      {showScreenshot ? (
+        <img
+          src={screenshotUrl}
+          alt=""
+          draggable={false}
+          className="h-full w-full object-cover object-top"
+          onError={() => setScreenshotError(true)}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          {!faviconError ? (
+            <img
+              src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+              alt=""
+              draggable={false}
+              className="size-5 opacity-40"
+              onError={() => setFaviconError(true)}
+            />
+          ) : (
+            <span className="text-[11px] font-medium text-muted-foreground/30 select-none">
+              {domain.charAt(0).toUpperCase()}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function MetaBadge({
-  children,
-  icon,
+function PrettyUrl({
+  url,
+  className,
+  muted,
 }: {
-  children: ReactNode;
-  icon?: ReactNode;
+  url: string;
+  className?: string;
+  muted?: boolean;
 }) {
+  let domain = url;
+  let path = "";
+
+  try {
+    const parsed = new URL(url);
+    domain = parsed.hostname;
+    path = parsed.pathname === "/" ? "/" : parsed.pathname;
+  } catch {
+    // not a valid URL, render as-is
+  }
+
+  if (muted) {
+    return (
+      <span
+        className={cn(
+          "flex min-w-0 items-baseline font-mono text-xs leading-snug",
+          className,
+        )}
+      >
+        <span className="shrink-0 text-muted-foreground/40">{domain}</span>
+        {path && (
+          <span className="truncate text-muted-foreground/30">{path}</span>
+        )}
+      </span>
+    );
+  }
+
   return (
-    <Badge
-      variant="outline"
-      className="rounded-md border-border/50 bg-background/70 px-3 py-1 font-normal text-muted-foreground"
+    <span
+      className={cn(
+        "flex min-w-0 items-baseline font-mono text-sm leading-snug",
+        className,
+      )}
     >
-      {icon}
-      {children}
-    </Badge>
+      <span className="shrink-0 font-medium text-foreground">{domain}</span>
+      {path && (
+        <span className="truncate text-muted-foreground/50">{path}</span>
+      )}
+    </span>
   );
 }
 
-function StatusBadge({
+function MetaTag({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium border border-border/50 bg-muted/40 text-muted-foreground",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function StatusDot({
   status,
 }: {
   status:
@@ -534,62 +662,53 @@ function StatusBadge({
     | "running"
     | "starting";
 }) {
-  if (status === "failed") {
-    return (
-      <Badge
-        variant="destructive"
-        className="items-center gap-1 rounded-md border-0 bg-red-500/15 px-3 py-1 text-red-400 shadow-none hover:bg-red-500/25"
-      >
-        <IconX className="size-3.5" stroke={2.5} />
-        FAILED
-      </Badge>
-    );
-  }
+  const config: Record<
+    string,
+    { color: string; dotColor: string; label: string; pulse?: boolean }
+  > = {
+    running: {
+      color: "text-sky-400",
+      dotColor: "bg-sky-400",
+      label: "Running",
+      pulse: true,
+    },
+    starting: {
+      color: "text-sky-400",
+      dotColor: "bg-sky-400",
+      label: "Starting",
+      pulse: true,
+    },
+    completed: {
+      color: "text-teal-400",
+      dotColor: "bg-teal-400",
+      label: "Completed",
+    },
+    failed: {
+      color: "text-red-400",
+      dotColor: "bg-red-400",
+      label: "Failed",
+    },
+    cancelled: {
+      color: "text-amber-400",
+      dotColor: "bg-amber-400",
+      label: "Cancelled",
+    },
+    queued: {
+      color: "text-yellow-400",
+      dotColor: "bg-yellow-400",
+      label: "Queued",
+    },
+  };
 
-  if (status === "completed") {
-    return (
-      <Badge
-        className="items-center gap-1 rounded-md border-0 bg-teal-500/15 px-3 py-1 text-teal-300 shadow-none hover:bg-teal-500/25"
-        variant="secondary"
-      >
-        <IconCheck className="size-3.5" stroke={2.5} />
-        COMPLETED
-      </Badge>
-    );
-  }
-
-  if (status === "running" || status === "starting") {
-    return (
-      <Badge
-        className="items-center gap-1 rounded-md border-0 bg-sky-500/15 px-3 py-1 text-sky-300 shadow-none hover:bg-sky-500/25"
-        variant="secondary"
-      >
-        <IconPlayerPlay className="size-3.5 animate-pulse" stroke={2.5} />
-        RUNNING
-      </Badge>
-    );
-  }
-
-  if (status === "cancelled") {
-    return (
-      <Badge
-        className="items-center gap-1 rounded-md border-0 bg-amber-500/15 px-3 py-1 text-amber-400 shadow-none hover:bg-amber-500/25"
-        variant="secondary"
-      >
-        <IconX className="size-3.5" stroke={2.5} />
-        CANCELLED
-      </Badge>
-    );
-  }
+  const { color, dotColor, label, pulse } = config[status] ?? config.queued;
 
   return (
-    <Badge
-      className="items-center gap-1 rounded-md border-0 bg-yellow-500/15 px-3 py-1 text-yellow-400 shadow-none uppercase hover:bg-yellow-500/25"
-      variant="secondary"
-    >
-      <IconHourglassEmpty className="size-3.5" stroke={2.5} />
-      PENDING
-    </Badge>
+    <span className={cn("inline-flex items-center gap-1.5 font-medium", color)}>
+      <span
+        className={cn("inline-block size-1.5 rounded-full", dotColor, pulse && "animate-pulse")}
+      />
+      {label}
+    </span>
   );
 }
 

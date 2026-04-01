@@ -377,6 +377,7 @@ async function runLocalQaWorkflow({
 
     const sessionResult = await runQaSession({
       browser: createLocalQaBrowser(browser),
+      chromePath: Launcher.getFirstInstallation() ?? chromium.executablePath(),
       config: {
         agentTimeBudgetMs: AGENT_TIME_BUDGET_MS,
         maxAgentSteps: MAX_AGENT_STEPS,

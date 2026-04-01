@@ -276,6 +276,7 @@ export class QaRunCancelledError extends Error {
 export async function runQaSession({
   agentOrdinal,
   browser,
+  chromePath,
   config,
   crawlData,
   getStoredCredential,
@@ -288,6 +289,7 @@ export async function runQaSession({
 }: {
   agentOrdinal?: number;
   browser: QaBrowserAdapter;
+  chromePath?: string;
   config: QaRuntimeConfig;
   crawlData?: CrawlData;
   getStoredCredential?: () => Promise<StoredCredential | null>;
@@ -338,6 +340,18 @@ export async function runQaSession({
     currentStep: "QA run stopped during exploration",
   });
 
+  performanceAuditCount = await runLighthouseAuditStage({
+    chromePath,
+    crawlData,
+    findingSignatures,
+    maxAuditUrls: config.maxDiscoveredPages,
+    pageCandidates,
+    runtime,
+    savedFindings,
+    startUrl,
+    stepIndexOffset: 1,
+  });
+
   const agentLoopResult = await runAgentLoop({
     agentOrdinal,
     browser,
@@ -363,29 +377,7 @@ export async function runQaSession({
     pageUrl: await browser.getCurrentUrl(),
     runtime,
     savedFindings,
-    stepIndex: config.maxAgentSteps,
-    currentStep: "QA run stopped before Lighthouse",
-  });
-
-  performanceAuditCount = await runLighthouseAuditStage({
-    crawlData,
-    findingSignatures,
-    maxAuditUrls: config.maxDiscoveredPages,
-    pageCandidates,
-    runtime,
-    savedFindings,
-    startUrl,
-    stepIndexOffset: config.maxAgentSteps,
-  });
-
-  screenshotCount += await throwIfStopRequested({
-    bufferedFindings,
-    findingSignatures,
-    pageCandidates,
-    pageUrl: await browser.getCurrentUrl(),
-    runtime,
-    savedFindings,
-    stepIndex: config.maxAgentSteps + performanceAuditCount,
+    stepIndex: 1 + performanceAuditCount + config.maxAgentSteps,
     currentStep: "QA run stopped before final scoring",
   });
 
@@ -1596,6 +1588,7 @@ async function performNavigationAction({
 }
 
 async function runLighthouseAuditStage({
+  chromePath,
   crawlData,
   findingSignatures,
   maxAuditUrls,
@@ -1605,6 +1598,7 @@ async function runLighthouseAuditStage({
   startUrl,
   stepIndexOffset,
 }: {
+  chromePath?: string;
   crawlData?: CrawlData;
   findingSignatures: Set<string>;
   maxAuditUrls: number;
@@ -1628,6 +1622,7 @@ async function runLighthouseAuditStage({
     : baseUrls;
 
   const chrome = await launch({
+    chromePath,
     chromeFlags: ["--headless=new", "--no-sandbox", "--disable-gpu"],
   });
 

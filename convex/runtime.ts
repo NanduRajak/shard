@@ -1204,8 +1204,12 @@ export const listRuns = query({
             runStartedAt: run.startedAt,
             session,
           }),
-          latestScreenshot:
-            artifacts.find((artifact) => artifact.type === "screenshot") ?? null,
+          latestScreenshot: await (async () => {
+            const artifact = artifacts.find((a) => a.type === "screenshot") ?? null
+            if (!artifact) return null
+            const url = artifact.storageId ? await ctx.storage.getUrl(artifact.storageId) : null
+            return { ...artifact, url }
+          })(),
           latestReportArtifact:
             artifacts.find((artifact) => artifact.type === "html-report") ??
             artifacts.find((artifact) => artifact.type === "trace") ??

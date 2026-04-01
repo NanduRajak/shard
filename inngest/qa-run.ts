@@ -504,6 +504,7 @@ export async function runQaWorkflow({
       const sessionResult = await runQaSession({
         agentOrdinal: run?.agentOrdinal,
         browser: createPlaywrightQaBrowser(page),
+        chromePath: Launcher.getFirstInstallation() ?? chromium.executablePath(),
         config: {
           agentTimeBudgetMs: qaConfig.agentTimeBudgetMs,
           maxAgentSteps: qaConfig.maxAgentSteps,
