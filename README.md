@@ -2,6 +2,10 @@
 
 Shard is an autonomous web QA app with a built-in GitHub review bot. It helps you run browser-based QA, launch background audits, save reusable credentials, review archived reports, inspect pull requests, and pre-crawl sites with Firecrawl for broader coverage.
 
+## Demo
+
+If you want a quick overview before diving into the details, watch the product walkthrough on YouTube: [Shard Demo Video](https://youtu.be/uoRHrbB8yu4).
+
 ## Features
 
 - **Exploratory and task-based QA automation** — run the agent against any URL with or without instructions

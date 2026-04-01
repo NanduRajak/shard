@@ -959,6 +959,41 @@ export const createArtifact = mutation({
   },
 })
 
+export const normalizeLegacyArtifactTypes = mutation({
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    batchSize: v.optional(v.number()),
+    targetType: v.optional(artifactType),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = Math.max(1, Math.min(args.batchSize ?? 100, 500))
+    const page = await ctx.db
+      .query("artifacts")
+      .order("asc")
+      .paginate({ cursor: args.cursor ?? null, numItems: batchSize })
+
+    let updated = 0
+    const targetType = args.targetType ?? "html-report"
+
+    for (const artifact of page.page) {
+      if (artifact.type !== "synthetic-data-session") continue
+
+      await ctx.db.patch(artifact._id, {
+        type: targetType,
+      })
+      updated += 1
+    }
+
+    return {
+      continueCursor: page.isDone ? null : page.continueCursor,
+      done: page.isDone,
+      scanned: page.page.length,
+      targetType,
+      updated,
+    }
+  },
+})
+
 export const createFinding = mutation({
   args: {
     runId: v.optional(v.id("runs")),

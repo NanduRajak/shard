@@ -105,6 +105,8 @@ const artifactType = v.union(
   v.literal("trace"),
   v.literal("html-report"),
   v.literal("replay"),
+  // Legacy value kept temporarily so old rows do not block deploys.
+  v.literal("synthetic-data-session"),
 )
 
 const sessionStatus = v.union(
@@ -184,6 +186,11 @@ export default defineSchema({
     goalStatus: v.optional(runGoalStatus),
     goalSummary: v.optional(v.string()),
     stopRequestedAt: v.optional(v.number()),
+    // Legacy fields still present on older runs.
+    memoryContext: v.optional(v.any()),
+    pendingApprovalCount: v.optional(v.number()),
+    runControlState: v.optional(v.string()),
+    syntheticData: v.optional(v.any()),
     startedAt: v.number(),
     updatedAt: v.number(),
     finishedAt: v.optional(v.number()),
