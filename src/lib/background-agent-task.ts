@@ -190,3 +190,67 @@ function getBackgroundAgentLane({
 
   return DEFAULT_COVERAGE_LANES[agentIndex % DEFAULT_COVERAGE_LANES.length]!
 }
+
+type CrawlPageSummary = {
+  url: string
+  pageType?: string
+  forms?: unknown[]
+  internalLinks: string[]
+}
+
+const LANE_AFFINITY: Record<number, string[]> = {
+  0: ["other"],
+  1: ["discovery", "blog"],
+  2: ["form"],
+  3: ["product", "checkout"],
+  4: ["auth", "settings"],
+  5: ["docs", "about", "pricing"],
+}
+
+export function enrichLaneInstructionsFromCrawl({
+  agentIndex,
+  agentCount,
+  baseInstructions,
+  crawledPages,
+}: {
+  agentIndex: number
+  agentCount: number
+  baseInstructions: string
+  crawledPages: CrawlPageSummary[]
+}): string {
+  if (agentCount <= 1 || crawledPages.length === 0) {
+    return baseInstructions
+  }
+
+  const laneIndex = agentIndex % DEFAULT_COVERAGE_LANES.length
+  const affinityTypes = LANE_AFFINITY[laneIndex] ?? []
+
+  const matchingPages = crawledPages.filter((p) => {
+    const pt = p.pageType ?? "other"
+    if (affinityTypes.includes(pt)) return true
+    // Lane 0 also gets root-level paths and pages with many internal links
+    if (laneIndex === 0) {
+      try {
+        const path = new URL(p.url).pathname
+        if (path === "/" || path.split("/").filter(Boolean).length <= 1) return true
+        if (p.internalLinks.length >= 8) return true
+      } catch {
+        return false
+      }
+    }
+    // Lane 2 gets any page with forms
+    if (laneIndex === 2 && p.forms && p.forms.length > 0) return true
+    return false
+  })
+
+  if (matchingPages.length === 0) {
+    return baseInstructions
+  }
+
+  const urls = matchingPages
+    .slice(0, 8)
+    .map((p) => p.url)
+    .join(", ")
+
+  return `${baseInstructions} Start with these known pages from the pre-crawl: ${urls}.`
+}

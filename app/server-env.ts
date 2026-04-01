@@ -5,6 +5,8 @@ export const serverEnv = createEnv({
   server: {
     APP_BASE_URL: z.url().optional(),
     CREDENTIAL_ENCRYPTION_KEY: z.string().min(1),
+    FIRECRAWL_API_KEY: z.string().min(1).optional(),
+    FIRECRAWL_API_URL: z.url().optional(),
     GITHUB_APP_ID: z.string().min(1).optional(),
     GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
     GITHUB_APP_SLUG: z.string().min(1).optional(),

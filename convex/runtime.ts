@@ -1102,7 +1102,6 @@ export const getRunReport = query({
         [
           run.url,
           ...runEvents.map((event) => event.pageUrl),
-          ...findings.map((finding) => finding.pageOrFlow),
         ].filter((value): value is string => Boolean(value)),
       ),
     )

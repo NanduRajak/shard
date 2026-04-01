@@ -32,6 +32,11 @@ export const createRun = createServerFn({ method: "POST" })
     }
 
     const runId = await convex.mutation(api.runs.createRun, payload)
+    const crawlEventData = {
+      runId: runId as string,
+      url: payload.url,
+      origin: new URL(payload.url).hostname,
+    }
 
     try {
       if (payload.browserProvider === "local_chrome") {
@@ -66,6 +71,21 @@ export const createRun = createServerFn({ method: "POST" })
           title: "Waiting for background worker",
           body: "Inngest accepted the run request. Waiting for a worker to start the QA job.",
         })
+      }
+
+      try {
+        if (serverEnv.QA_DIRECT_RUN_FALLBACK === "1") {
+          const { runSiteCrawlWorkflow } = await import("../../inngest/site-crawl")
+          void runSiteCrawlWorkflow(crawlEventData).catch(() => undefined)
+        } else {
+          const { inngest } = await import("../../inngest/client")
+          await inngest.send({
+            name: "app/crawl.requested",
+            data: crawlEventData,
+          })
+        }
+      } catch {
+        // Crawl is optional for standalone runs
       }
     } catch (error) {
       await convex.mutation(api.runtime.updateRun, {

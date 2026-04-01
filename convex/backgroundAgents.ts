@@ -422,7 +422,6 @@ export const getBackgroundOrchestratorReport = query({
           ...agentRuns.flatMap((agentRun) =>
             agentRun.runEvents.map((event: any) => event.pageUrl),
           ),
-          ...mergedFindings.map((finding) => finding.pageOrFlow),
         ].filter((value): value is string => Boolean(value)),
       ),
     )

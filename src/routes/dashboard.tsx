@@ -9,7 +9,10 @@ import {
   IconBug,
   IconChartAreaLine,
   IconCircleDotted,
+  IconForms,
   IconLayoutDashboard,
+  IconLinkOff,
+  IconRadar2,
   IconServerCog,
   IconWorldWww,
 } from "@tabler/icons-react";
@@ -138,6 +141,9 @@ function DashboardPage() {
   });
   const { data: orchestrators } = useQuery(
     convexQuery(api.backgroundAgents.listBackgroundOrchestrators, {}),
+  );
+  const { data: crawlStats } = useQuery(
+    convexQuery(api.crawl.getDashboardCrawlStats, {}),
   );
 
   const stats = useMemo(() => {
@@ -354,7 +360,7 @@ function DashboardPage() {
     [agentsChartData],
   );
 
-  if (!runs || !orchestrators || !reviewBotState) {
+  if (!runs || !orchestrators || !reviewBotState || !crawlStats) {
     return (
       <div className="grid gap-6 pb-12 animate-in fade-in duration-500">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -496,6 +502,33 @@ function DashboardPage() {
           value={stats.avgPerf > 0 ? `${stats.avgPerf}/100` : "Pending"}
           icon={<IconChartAreaLine className="size-5 text-emerald-500" />}
           description="Average baseline performance score"
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard
+          title="Pages Crawled"
+          value={crawlStats.totalPagesCrawled}
+          icon={<IconWorldWww className="size-5 text-cyan-500" />}
+          description={`${crawlStats.completedCrawls} completed crawl${crawlStats.completedCrawls === 1 ? "" : "s"} analyzed`}
+        />
+        <KpiCard
+          title="Average Coverage"
+          value={`${crawlStats.avgCoverage}%`}
+          icon={<IconRadar2 className="size-5 text-blue-500" />}
+          description="Visited pages vs. crawler-discovered pages"
+        />
+        <KpiCard
+          title="Dead Links Found"
+          value={crawlStats.totalDeadLinks}
+          icon={<IconLinkOff className="size-5 text-red-500" />}
+          description="Broken routes surfaced by recent crawls"
+        />
+        <KpiCard
+          title="Forms Discovered"
+          value={crawlStats.totalFormsFound}
+          icon={<IconForms className="size-5 text-amber-500" />}
+          description="Form surfaces available for synthetic testing"
         />
       </div>
 

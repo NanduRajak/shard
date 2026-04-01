@@ -20,10 +20,10 @@ import { useEffect, useRef } from "react"
 import type { ReactNode } from "react"
 import type { Id } from "../../convex/_generated/dataModel"
 import { api } from "../../convex/_generated/api"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button"
 import { AgentPlan } from "@/components/ui/agent-plan"
+import { SteelLiveSessionFrame } from "@/components/steel-live-session-frame"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Card,
@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/empty"
 import { inspectRunStartup } from "@/lib/inspect-run-startup"
 import { requestRunStop } from "@/lib/request-run-stop"
+import { cn } from "@/lib/utils"
 import {
   buildSteelEmbedUrl,
   describeBrowserProvider,
@@ -72,10 +73,22 @@ function RunPage() {
   const { data: report } = useQuery(
     convexQuery(api.runtime.getRunReport, { runId: typedRunId }),
   )
+  const typedOrchestratorId = report?.run.backgroundOrchestratorId as Id<"backgroundOrchestrators"> | undefined
+  const { data: crawlJobByRun } = useQuery(
+    convexQuery(api.crawl.getCrawlJobByRun, { runId: typedRunId }),
+  )
+  const { data: crawlJobByOrchestrator } = useQuery({
+    ...convexQuery(
+      api.crawl.getCrawlJobByOrchestrator,
+      typedOrchestratorId ? { orchestratorId: typedOrchestratorId } : "skip",
+    ),
+    enabled: typedOrchestratorId != null,
+  })
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const stopMutation = useMutation({
     mutationFn: requestRunStop,
   })
+  const crawlJob = crawlJobByOrchestrator ?? crawlJobByRun ?? null
 
   useEffect(() => {
     if (!report || !isActiveRunStatus(report.run.status) || report.run.status !== "queued") {
@@ -166,102 +179,114 @@ function RunPage() {
     >
       <motion.div variants={itemVariants}>
         <Card className="border border-border/70 bg-card/85">
-          <CardHeader className="gap-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="tracking-[0.18em] uppercase">
+          <CardHeader className="gap-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 space-y-3">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  <span className="inline-flex items-center gap-2 text-foreground/90">
+                    <span
+                      className={cn(
+                        "size-2 rounded-full",
+                        run.status === "failed"
+                          ? "bg-destructive"
+                          : run.status === "completed"
+                            ? "bg-emerald-400"
+                            : "bg-emerald-500",
+                      )}
+                    />
                     {runLabel}
-                  </Badge>
-                  <StatusBadge status={run.status} />
-                  <QueueBadge queueState={run.queueState} />
-                  {run.mode === "task" && run.goalStatus ? (
-                    <Badge
-                      variant={
-                        run.goalStatus === "completed"
-                          ? "default"
-                          : run.goalStatus === "blocked"
-                            ? "destructive"
-                            : "secondary"
-                      }
-                    >
-                      Task {run.goalStatus === "partially_completed" ? "partial" : run.goalStatus}
-                    </Badge>
-                  ) : null}
-                  {run.executionMode === "background" ? (
-                    <Badge variant="secondary">Background agent</Badge>
-                  ) : null}
+                  </span>
+                  <span>{describeRunOverview(run.status, run.queueState)}</span>
+                  <span>{formatDistanceToNow(run.updatedAt, { addSuffix: true })}</span>
+                  {run.executionMode === "background" ? <span>Background agent</span> : null}
                 </div>
-                <CardTitle className="text-2xl text-balance">
-                  {isActive ? "Live autonomous QA session" : "Autonomous QA run timeline"}
-                </CardTitle>
-                <CardDescription className="break-all text-sm/6 text-pretty">
-                  {run.url}
-                </CardDescription>
+                <div className="space-y-1.5">
+                  <CardTitle className="text-[clamp(1.65rem,3vw,2.5rem)] leading-none tracking-[-0.04em] text-balance">
+                    {formatRunHost(run.currentUrl ?? run.url)}
+                  </CardTitle>
+                  <CardDescription className="break-all text-sm/6 text-pretty">
+                    {run.currentUrl ?? run.url}
+                  </CardDescription>
+                </div>
               </div>
 
-              <div className="flex flex-col items-end gap-3 mt-1 sm:mt-0 relative z-10 shrink-0">
-                {isActive && (
-                  <Button
-                    variant="destructive"
-                    className="rounded-[0.85rem] h-9 px-4 text-xs tracking-wide uppercase font-semibold border-0 shadow-sm"
-                    disabled={stopMutation.isPending || Boolean(run.stopRequestedAt)}
-                    onClick={() => {
-                      void stopMutation.mutateAsync({ data: { runId: typedRunId } })
-                    }}
-                  >
-                    {stopMutation.isPending || run.stopRequestedAt ? "Stopping..." : "Stop run"}
-                    <IconPlayerStop className="size-3.5 ml-1.5" />
-                  </Button>
-                )}
-                
-                <div className="flex h-9 items-center rounded-lg bg-background border border-border/70 p-[3px] text-muted-foreground shadow-sm w-fit mt-auto">
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                <div className="inline-flex items-center rounded-lg border border-border/70 bg-background/60 p-1 shadow-sm">
                   <Link
                     to="/report/$runId"
                     params={{ runId: typedRunId }}
-                    className="inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-muted/80 data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                    className="inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium text-muted-foreground transition-colors ring-offset-background focus-visible:outline-none focus-visible:ring-2 data-[state=active]:bg-muted data-[state=active]:text-foreground"
                     activeProps={{ "data-state": "active" }}
                     inactiveProps={{ "data-state": "inactive" }}
                   >
-                    QA Report
+                    Report
                   </Link>
                   <Link
                     to="/runs/$runId"
                     params={{ runId: typedRunId }}
-                    className="inline-flex h-full items-center justify-center whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-wider ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-muted/80 data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                    className="inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium text-muted-foreground transition-colors ring-offset-background focus-visible:outline-none focus-visible:ring-2 data-[state=active]:bg-muted data-[state=active]:text-foreground"
                     activeProps={{ "data-state": "active" }}
                     inactiveProps={{ "data-state": "inactive" }}
                   >
                     Timeline
                   </Link>
                 </div>
+                {isActive ? (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-10 rounded-lg px-3 text-xs font-medium shadow-sm"
+                    disabled={stopMutation.isPending || Boolean(run.stopRequestedAt)}
+                    onClick={() => {
+                      void stopMutation.mutateAsync({ data: { runId: typedRunId } })
+                    }}
+                  >
+                    {stopMutation.isPending || run.stopRequestedAt ? "Stopping..." : "Stop"}
+                    <IconPlayerStop className="size-3.5" />
+                  </Button>
+                ) : null}
               </div>
             </div>
 
-          <div className="grid gap-3 rounded-[1.5rem] border border-border/70 bg-background/60 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] md:grid-cols-2 xl:grid-cols-5">
-            <RunMetaRow label="Step" value={run.currentStep ?? "Queued for scan"} />
-            <RunMetaRow label="URL" value={run.currentUrl ?? run.url} />
-            <RunMetaRow
-              label="Browser"
-              value={describeBrowserProvider(run.browserProvider)}
-            />
-            <RunMetaRow label="Session" value={session?.status ?? "Not created yet"} />
-            <RunMetaRow label="Status" value={run.status} />
-            <RunMetaRow
-              label="Updated"
-              value={formatDistanceToNow(run.updatedAt, { addSuffix: true })}
-            />
-          </div>
-          {run.errorMessage ? (
-            <div className="rounded-[1.25rem] border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-              {run.errorMessage}
+            <div className="grid gap-3 rounded-[1.25rem] border border-border/70 bg-background/45 p-3 md:grid-cols-[minmax(0,1.8fr)_repeat(3,minmax(0,1fr))]">
+              <RunMetaInline
+                label="Current step"
+                value={run.currentStep ?? describeRunOverview(run.status, run.queueState)}
+                className="md:pr-3"
+              />
+              <RunMetaInline
+                label="Browser"
+                value={describeBrowserProvider(run.browserProvider)}
+              />
+              <RunMetaInline
+                label="Session"
+                value={session?.status ?? "Starting"}
+              />
+              <RunMetaInline
+                label="Status"
+                value={describeRunOverview(run.status, run.queueState)}
+              />
             </div>
-          ) : null}
-          {run.mode === "task" && run.goalSummary ? (
-            <div className="rounded-[1.25rem] border border-border/70 bg-background/60 px-4 py-3 text-sm text-muted-foreground">
-              {run.goalSummary}
-            </div>
-          ) : null}
+
+            {crawlJob ? (
+              <div className="rounded-[1rem] border border-border/60 bg-background/40 px-3 py-2 text-sm text-muted-foreground">
+                {describeCrawlStatus(crawlJob)}
+              </div>
+            ) : null}
+
+            {run.errorMessage ? (
+              <div className="rounded-[1rem] border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+                {run.errorMessage}
+              </div>
+            ) : null}
+            {run.mode === "task" && run.goalSummary ? (
+              <div className="rounded-[1rem] border border-border/60 bg-background/40 px-3 py-2.5 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {describeGoalLabel(run.goalStatus)}
+                </span>
+                <span className="ml-2">{run.goalSummary}</span>
+              </div>
+            ) : null}
           </CardHeader>
         </Card>
       </motion.div>
@@ -302,13 +327,7 @@ function RunPage() {
           </CardHeader>
           <CardContent className="min-h-0 flex-1 p-4">
             {isActive && executionState === "preview_active" && liveEmbedUrl ? (
-              <iframe
-                title="Steel live session"
-                src={liveEmbedUrl}
-                allow="clipboard-read; clipboard-write"
-                sandbox="allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
-                className="h-full min-h-[26rem] w-full rounded-[1.6rem] border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)] xl:min-h-0"
-              />
+              <SteelLiveSessionFrame src={liveEmbedUrl} />
             ) : !isActive ? (
               <SnapshotState
                 runId={typedRunId}
@@ -335,25 +354,40 @@ function RunPage() {
   )
 }
 
+function formatCrawlProgress(crawlJob: {
+  crawledPages?: number
+  totalPages?: number
+}) {
+  if (crawlJob.crawledPages != null && crawlJob.totalPages != null) {
+    return `${crawlJob.crawledPages}/${crawlJob.totalPages} pages indexed so far.`
+  }
+
+  if (crawlJob.crawledPages != null) {
+    return `${crawlJob.crawledPages} pages indexed so far.`
+  }
+
+  return "Indexing has started and page totals will appear as results stream in."
+}
+
 function RunPageSkeleton() {
   return (
     <div className="flex min-h-[calc(100svh-8.5rem)] flex-col gap-4 animate-pulse">
       <Card className="border border-border/70 bg-card/40">
-        <CardHeader className="gap-4">
+        <CardHeader className="gap-5">
            <div className="flex flex-wrap items-start justify-between gap-4">
-             <div className="space-y-3 w-full max-w-lg">
-               <div className="flex gap-2">
-                 <Skeleton className="h-6 w-24 rounded-md bg-border/40" />
-                 <Skeleton className="h-6 w-20 rounded-md bg-border/40" />
-               </div>
-               <Skeleton className="h-8 w-64 bg-border/40 mt-2" />
-               <Skeleton className="h-5 w-3/4 bg-border/40" />
+             <div className="w-full max-w-xl space-y-3">
+               <Skeleton className="h-4 w-56 bg-border/30" />
+               <Skeleton className="h-10 w-72 bg-border/40" />
+               <Skeleton className="h-5 w-3/4 bg-border/30" />
              </div>
-             <Skeleton className="h-9 w-40 rounded-lg bg-border/30 mt-1 sm:mt-0" />
+             <div className="flex gap-2">
+               <Skeleton className="h-10 w-36 rounded-lg bg-border/30" />
+               <Skeleton className="h-10 w-20 rounded-lg bg-border/30" />
+             </div>
            </div>
-           <div className="grid gap-3 rounded-[1.5rem] border border-border/70 bg-background/30 p-4 md:grid-cols-2 xl:grid-cols-5 mt-2">
-             {Array.from({length: 5}).map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full rounded-[1.2rem] bg-border/30" />
+           <div className="grid gap-3 rounded-[1.25rem] border border-border/70 bg-background/30 p-3 md:grid-cols-[minmax(0,1.8fr)_repeat(3,minmax(0,1fr))]">
+             {Array.from({ length: 4 }).map((_, i) => (
+               <Skeleton key={i} className="h-14 w-full rounded-xl bg-border/30" />
              ))}
            </div>
         </CardHeader>
@@ -625,13 +659,26 @@ function LocalSessionState({
   )
 }
 
-function RunMetaRow({ label, value }: { label: string; value: string }) {
+function RunMetaInline({
+  label,
+  value,
+  className,
+}: {
+  label: string
+  value: string
+  className?: string
+}) {
   return (
-    <div className="min-w-0 rounded-[1.2rem] border border-border/70 bg-background/70 p-4 shadow-[0_16px_40px_-36px_rgba(0,0,0,0.7)]">
+    <div
+      className={cn(
+        "min-w-0 md:border-l md:border-border/60 md:pl-3 md:first:border-l-0 md:first:pl-0",
+        className,
+      )}
+    >
       <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
         {label}
       </p>
-      <p className="mt-1 h-[5.5rem] overflow-hidden break-all text-sm text-foreground [font-variant-numeric:tabular-nums] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:4]">
+      <p className="mt-1 break-words text-sm text-foreground [font-variant-numeric:tabular-nums] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
         {value}
       </p>
     </div>
@@ -663,41 +710,6 @@ function PanelState({
   )
 }
 
-function StatusBadge({
-  status,
-}: {
-  status: "cancelled" | "completed" | "failed" | "queued" | "running" | "starting"
-}) {
-  if (status === "failed") {
-    return <Badge variant="destructive">failed</Badge>
-  }
-
-  if (status === "completed") {
-    return <Badge variant="default">completed</Badge>
-  }
-
-  return <Badge variant="secondary">{status}</Badge>
-}
-
-function QueueBadge({
-  queueState,
-}: {
-  queueState: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable"
-}) {
-  const label =
-    queueState === "pending"
-      ? "pending"
-      : queueState === "picked_up"
-        ? "picked up"
-        : queueState === "waiting_for_worker"
-          ? "waiting"
-          : "worker unreachable"
-
-  return <Badge variant="outline">{label}</Badge>
-}
-
-
-
 function describeRunLabel(status: RunEvent["status"]) {
   if (status === "completed") {
     return "Completed run"
@@ -712,6 +724,88 @@ function describeRunLabel(status: RunEvent["status"]) {
   }
 
   return "Live run"
+}
+
+function describeRunOverview(
+  status: RunEvent["status"],
+  queueState: "pending" | "picked_up" | "waiting_for_worker" | "worker_unreachable",
+) {
+  if (status === "completed") {
+    return "Completed"
+  }
+
+  if (status === "failed") {
+    return "Failed"
+  }
+
+  if (status === "cancelled") {
+    return "Cancelled"
+  }
+
+  if (queueState === "worker_unreachable") {
+    return "Worker unavailable"
+  }
+
+  if (queueState === "waiting_for_worker") {
+    return "Waiting for worker"
+  }
+
+  if (queueState === "picked_up") {
+    return "Picked up"
+  }
+
+  if (status === "starting") {
+    return "Starting"
+  }
+
+  return "Running"
+}
+
+function describeGoalLabel(goalStatus?: string | null) {
+  if (goalStatus === "completed") {
+    return "Task completed."
+  }
+
+  if (goalStatus === "blocked") {
+    return "Task blocked."
+  }
+
+  if (goalStatus === "partially_completed") {
+    return "Task partially completed."
+  }
+
+  return "Task update."
+}
+
+function describeCrawlStatus(crawlJob: {
+  status: "pending" | "crawling" | "completed" | "failed"
+  crawledPages?: number
+  totalPages?: number
+}) {
+  if (crawlJob.status === "crawling") {
+    return `Site crawl in progress. ${formatCrawlProgress(crawlJob)}`
+  }
+
+  if (crawlJob.status === "pending") {
+    return "Site crawl queued. Indexing will begin alongside this QA run."
+  }
+
+  if (crawlJob.status === "completed") {
+    return `Site crawl complete. Indexed ${crawlJob.totalPages ?? 0} pages for smarter coverage and reporting.`
+  }
+
+  return "Site crawl failed. Crawl data is unavailable for this run right now."
+}
+
+function formatRunHost(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "")
+  } catch {
+    return url
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/$/, "")
+  }
 }
 
 type RunEvent = {

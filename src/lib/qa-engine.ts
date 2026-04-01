@@ -3,7 +3,8 @@ import { launch } from "chrome-launcher";
 import { generateObject, generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
 import { scoreLighthouseFinding } from "./lighthouse-audits.ts";
-import { pickQaFallbackAction } from "./qa-fallback.ts";
+import { pickQaFallbackAction, type CrawlSuggestion } from "./qa-fallback.ts";
+import { generateFormData, type FormFieldSpec } from "./synthetic-data.ts";
 import {
   buildActionSignature,
   isSameHostname,
@@ -131,6 +132,28 @@ export type StoredCredential = {
   password: string;
 };
 
+export type CrawledPageData = {
+  url: string;
+  title?: string;
+  description?: string;
+  pageType?: string;
+  statusCode: number;
+  isDeadLink: boolean;
+  internalLinks: string[];
+  forms?: Array<{
+    action?: string;
+    method?: string;
+    fields: FormFieldSpec[];
+  }>;
+  wordCount?: number;
+};
+
+export type CrawlData = {
+  crawlJobId: string;
+  forms: CrawledPageData[];
+  pages: CrawledPageData[];
+};
+
 export type QaBrowserAdapter = {
   captureRuntimeFindings: (
     startUrl: string,
@@ -253,21 +276,25 @@ export async function runQaSession({
   agentOrdinal,
   browser,
   config,
+  crawlData,
   getStoredCredential,
   instructions,
   mode,
   model,
   runtime,
+  smartStartUrl,
   startUrl,
 }: {
   agentOrdinal?: number;
   browser: QaBrowserAdapter;
   config: QaRuntimeConfig;
+  crawlData?: CrawlData;
   getStoredCredential?: () => Promise<StoredCredential | null>;
   instructions?: string;
   mode: QaRunMode;
   model: any;
   runtime: QaRuntimeSink;
+  smartStartUrl?: string;
   startUrl: string;
 }) {
   const bufferedFindings: BufferedFinding[] = [];
@@ -279,6 +306,11 @@ export async function runQaSession({
   let performanceAuditCount = 0;
 
   await browser.startRuntimeCapture?.(startUrl, bufferedFindings);
+
+  if (smartStartUrl && smartStartUrl !== startUrl) {
+    await browser.navigate(smartStartUrl);
+  }
+
   await browser.captureRuntimeFindings(startUrl, bufferedFindings);
 
   screenshotCount += await runSnapshotStage({
@@ -310,6 +342,7 @@ export async function runQaSession({
     browser,
     bufferedFindings,
     config,
+    crawlData,
     findingSignatures,
     getStoredCredential,
     instructions,
@@ -334,6 +367,7 @@ export async function runQaSession({
   });
 
   performanceAuditCount = await runLighthouseAuditStage({
+    crawlData,
     findingSignatures,
     maxAuditUrls: config.maxDiscoveredPages,
     pageCandidates,
@@ -374,6 +408,7 @@ async function runAgentLoop({
   browser,
   bufferedFindings,
   config,
+  crawlData,
   findingSignatures,
   getStoredCredential,
   instructions,
@@ -388,6 +423,7 @@ async function runAgentLoop({
   browser: QaBrowserAdapter;
   bufferedFindings: BufferedFinding[];
   config: QaRuntimeConfig;
+  crawlData?: CrawlData;
   findingSignatures: Set<string>;
   getStoredCredential?: () => Promise<StoredCredential | null>;
   instructions?: string;
@@ -468,6 +504,7 @@ async function runAgentLoop({
         model,
         prompt: buildAgentPrompt({
           agentOrdinal,
+          crawlData,
           hasStoredCredential: Boolean(
             getStoredCredential && browser.useStoredLogin,
           ),
@@ -486,6 +523,7 @@ async function runAgentLoop({
         tools: buildAgentTools({
           browser,
           config,
+          crawlData,
           getStoredCredential,
           runtime,
           startUrl,
@@ -574,6 +612,7 @@ async function runAgentLoop({
         : await executePlannerFallback({
             browser,
             config,
+            crawlData,
             runtime,
             snapshot,
             startUrl,
@@ -956,6 +995,7 @@ async function flushBufferedFindings({
 function buildAgentTools({
   browser,
   config,
+  crawlData,
   getStoredCredential,
   runtime,
   startUrl,
@@ -963,6 +1003,7 @@ function buildAgentTools({
 }: {
   browser: QaBrowserAdapter;
   config: QaRuntimeConfig;
+  crawlData?: CrawlData;
   getStoredCredential?: () => Promise<StoredCredential | null>;
   runtime: QaRuntimeSink;
   startUrl: string;
@@ -1065,6 +1106,74 @@ function buildAgentTools({
         } satisfies ToolOutcome;
       },
     }),
+    ...(crawlData
+      ? {
+          getSiteMap: tool({
+            description:
+              "Get a list of known pages on this website from a pre-crawl. Returns URLs grouped by page type. Use this to plan navigation instead of guessing.",
+            inputSchema: z.object({}),
+            execute: async () => {
+              const startHostname = new URL(startUrl).hostname;
+              const sameHostPages = crawlData.pages.filter((p) => {
+                try {
+                  return new URL(p.url).hostname === startHostname;
+                } catch {
+                  return false;
+                }
+              });
+
+              const byType: Record<string, Array<{ url: string; title?: string }>> = {};
+              for (const page of sameHostPages) {
+                const pt = page.pageType ?? "other";
+                if (!byType[pt]) byType[pt] = [];
+                byType[pt].push({ url: page.url, title: page.title });
+              }
+
+              return {
+                pages: sameHostPages.map((p) => ({
+                  url: p.url,
+                  title: p.title,
+                  pageType: p.pageType ?? "other",
+                })),
+                totalPages: sameHostPages.length,
+                unvisitedCount: sameHostPages.filter((p) => !visitedPages.has(p.url)).length,
+              };
+            },
+          }),
+          getFormData: tool({
+            description:
+              "Get pre-generated test data for a form on the current page. Returns realistic fake values for each field. Use this when filling forms instead of making up values.",
+            inputSchema: z.object({
+              formIndex: z.number().optional(),
+            }),
+            execute: async ({ formIndex }) => {
+              const currentUrl = await browser.getCurrentUrl();
+              const formPage = crawlData.forms.find((p) => p.url === currentUrl);
+
+              if (!formPage?.forms?.length) {
+                return null;
+              }
+
+              const form = formPage.forms[formIndex ?? 0];
+              if (!form) {
+                return null;
+              }
+
+              const values = generateFormData(form.fields);
+              return {
+                formAction: form.action,
+                formMethod: form.method,
+                fields: form.fields.map((f) => ({
+                  name: f.name,
+                  type: f.type,
+                  label: f.label,
+                  value: values[f.name] ?? "",
+                })),
+              };
+            },
+          }),
+        }
+      : {}),
     ...(browser.useStoredLogin && getStoredCredential
       ? {
           useStoredLogin: tool({
@@ -1125,6 +1234,7 @@ function buildAgentTools({
 async function executePlannerFallback({
   browser,
   config,
+  crawlData,
   runtime,
   snapshot,
   startUrl,
@@ -1134,6 +1244,7 @@ async function executePlannerFallback({
 }: {
   browser: QaBrowserAdapter;
   config: QaRuntimeConfig;
+  crawlData?: CrawlData;
   runtime: QaRuntimeSink;
   snapshot: PageSnapshot;
   startUrl: string;
@@ -1141,7 +1252,15 @@ async function executePlannerFallback({
   triedActions: Set<string>;
   visitedPages: Set<string>;
 }) {
+  const crawlSuggestions: CrawlSuggestion[] | undefined = crawlData
+    ? crawlData.pages
+        .filter((p) => !visitedPages.has(p.url))
+        .slice(0, 10)
+        .map((p) => ({ url: p.url, pageType: p.pageType ?? "other", title: p.title }))
+    : undefined;
+
   const fallbackAction = pickQaFallbackAction({
+    crawlSuggestions,
     currentUrl: snapshot.url,
     interactives: snapshot.interactives,
     maxPages: config.maxDiscoveredPages,
@@ -1477,6 +1596,7 @@ async function performNavigationAction({
 }
 
 async function runLighthouseAuditStage({
+  crawlData,
   findingSignatures,
   maxAuditUrls,
   pageCandidates,
@@ -1485,6 +1605,7 @@ async function runLighthouseAuditStage({
   startUrl,
   stepIndexOffset,
 }: {
+  crawlData?: CrawlData;
   findingSignatures: Set<string>;
   maxAuditUrls: number;
   pageCandidates: Map<string, PageCandidate>;
@@ -1493,11 +1614,18 @@ async function runLighthouseAuditStage({
   startUrl: string;
   stepIndexOffset: number;
 }) {
-  const auditUrls = selectAuditUrls({
-    maxAuditUrls,
+  const effectiveMax = crawlData ? Math.min(maxAuditUrls + 7, 25) : maxAuditUrls;
+
+  const baseUrls = selectAuditUrls({
+    maxAuditUrls: effectiveMax,
     pageCandidates,
     startUrl,
   });
+
+  // Merge crawled page URLs if available
+  const auditUrls = crawlData
+    ? expandAuditUrlsFromCrawl(baseUrls, crawlData.pages, effectiveMax)
+    : baseUrls;
 
   const chrome = await launch({
     chromeFlags: ["--headless=new", "--no-sandbox", "--disable-gpu"],
@@ -1736,6 +1864,7 @@ async function throwIfStopRequested({
 
 function buildAgentPrompt({
   agentOrdinal,
+  crawlData,
   hasStoredCredential,
   maxAgentSteps,
   instructions,
@@ -1747,6 +1876,7 @@ function buildAgentPrompt({
   recentActions,
 }: {
   agentOrdinal?: number;
+  crawlData?: CrawlData;
   hasStoredCredential: boolean;
   maxAgentSteps: number;
   instructions?: string;
@@ -1788,9 +1918,34 @@ function buildAgentPrompt({
           "- Continue exploring when the current page looks healthy and fresh reversible actions remain.",
         ];
 
+  const crawlSection: string[] = [];
+  if (crawlData) {
+    const visitedSet = new Set(visitedPages);
+    const unvisitedCount = crawlData.pages.filter((p) => !visitedSet.has(p.url)).length;
+    const byType: Record<string, number> = {};
+    for (const p of crawlData.pages) {
+      const pt = p.pageType ?? "other";
+      byType[pt] = (byType[pt] ?? 0) + 1;
+    }
+    const typeLines = Object.entries(byType)
+      .sort(([, a], [, b]) => b - a)
+      .map(([type, count]) => `  - ${type}: ${count} pages`)
+      .join("\n");
+
+    crawlSection.push(
+      "## Site Map (from pre-crawl)",
+      `This site has been pre-crawled. ${crawlData.pages.length} pages discovered, ${unvisitedCount} not yet visited this run.`,
+      `Page types found:\n${typeLines}`,
+      "Use the getSiteMap tool to see specific URLs.",
+      "Use the getFormData tool before filling any form — it has realistic test values ready.",
+      "Prioritize visiting unvisited pages over re-exploring visited ones.",
+    );
+  }
+
   return [
     ...baseRules,
     ...modeRules,
+    ...crawlSection,
     agentOrdinal
       ? `Agent lane: ${agentOrdinal}. You may share the site with sibling agents, so respect the task's lane ownership and favor fresh routes over repeated coverage.`
       : null,
@@ -2114,6 +2269,40 @@ export function selectAuditUrls({
     .map((candidate) => candidate.url);
 
   return [startUrl, ...otherUrls];
+}
+
+const HIGH_VALUE_PAGE_TYPES = new Set(["product", "checkout", "auth", "form", "settings"]);
+
+function expandAuditUrlsFromCrawl(
+  baseUrls: string[],
+  crawledPages: CrawledPageData[],
+  maxUrls: number,
+): string[] {
+  const urlSet = new Set(baseUrls);
+  const remaining = maxUrls - urlSet.size;
+
+  if (remaining <= 0) {
+    return baseUrls;
+  }
+
+  // Prioritize high-value page types from crawl
+  const highValue = crawledPages.filter(
+    (p) => !urlSet.has(p.url) && HIGH_VALUE_PAGE_TYPES.has(p.pageType ?? "other"),
+  );
+  const lowValue = crawledPages.filter(
+    (p) => !urlSet.has(p.url) && !HIGH_VALUE_PAGE_TYPES.has(p.pageType ?? "other"),
+  );
+
+  const additions: string[] = [];
+  for (const p of [...highValue, ...lowValue]) {
+    if (additions.length >= remaining) break;
+    if (!urlSet.has(p.url)) {
+      additions.push(p.url);
+      urlSet.add(p.url);
+    }
+  }
+
+  return [...baseUrls, ...additions];
 }
 
 async function runRetriedAction<T>(operation: () => Promise<T>) {

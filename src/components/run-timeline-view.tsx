@@ -22,6 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { SteelLiveSessionFrame } from "@/components/steel-live-session-frame"
 import {
   buildSteelEmbedUrl,
   filterTimelineEventsForQaView,
@@ -126,13 +127,7 @@ export function RunTimelineView({ report }: { report: any }) {
         </CardHeader>
         <CardContent className="min-h-0 flex-1 p-4">
           {isActive && executionState === "preview_active" && liveEmbedUrl ? (
-            <iframe
-              title="Steel live session"
-              src={liveEmbedUrl}
-              allow="clipboard-read; clipboard-write"
-              sandbox="allow-downloads allow-forms allow-popups allow-scripts"
-              className="h-full min-h-[26rem] w-full rounded-[1.6rem] border border-border/70 bg-background shadow-[0_24px_60px_-40px_rgba(0,0,0,0.7)] xl:min-h-0"
-            />
+            <SteelLiveSessionFrame src={liveEmbedUrl} />
           ) : !isActive ? (
             <SnapshotState
               runId={typedRunId}

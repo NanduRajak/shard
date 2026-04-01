@@ -13,6 +13,7 @@ import {
   IconExternalLink,
   IconHourglassEmpty,
   IconInfoCircle,
+  IconLinkOff,
   IconLoader3,
   IconMapPin,
   IconPhoto,
@@ -31,6 +32,9 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { CrawlStatusBadge } from "@/components/crawl-status-badge";
+import { SiteMapView } from "@/components/site-map-view";
+import { FormInventoryView } from "@/components/form-inventory-view";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -105,6 +109,33 @@ function BackgroundOrchestratorDetailPage() {
       orchestratorId: typedOrchestratorId,
     }),
   );
+  const { data: crawlJob } = useQuery(
+    convexQuery(api.crawl.getCrawlJobByOrchestrator, {
+      orchestratorId: typedOrchestratorId,
+    }),
+  );
+  const { data: crawledPages } = useQuery({
+    ...convexQuery(
+      api.crawl.listCrawledPages,
+      crawlJob ? { crawlJobId: crawlJob._id } : "skip",
+    ),
+    enabled: crawlJob != null,
+  });
+  const { data: crawlCoverage } = useQuery({
+    ...convexQuery(
+      api.crawl.getCrawlCoverage,
+      crawlJob ? { crawlJobId: crawlJob._id } : "skip",
+    ),
+    enabled: crawlJob != null,
+  });
+  const { data: crawlFormPages } = useQuery({
+    ...convexQuery(
+      api.crawl.listFormsFromCrawl,
+      crawlJob ? { crawlJobId: crawlJob._id } : "skip",
+    ),
+    enabled: crawlJob != null,
+  });
+
   const stopOrchestratorMutation = useMutation({
     mutationFn: requestBackgroundOrchestratorStop,
   });
@@ -226,6 +257,22 @@ function BackgroundOrchestratorDetailPage() {
     [selectedAgent],
   );
 
+  const combinedVisitedUrls = useMemo(() => {
+    const urls = new Set<string>();
+    if (report?.coverageUrls) {
+      for (const url of report.coverageUrls) {
+        urls.add(url);
+      }
+    }
+    return urls;
+  }, [report]);
+
+  const hasCrawlData = crawledPages && crawledPages.length > 0;
+  const crawlCoveragePercent =
+    crawledPages && crawledPages.length > 0
+      ? Math.round((combinedVisitedUrls.size / crawledPages.length) * 100)
+      : 0;
+
   if (detail === null || report === null) {
     return (
       <div className="mx-auto max-w-7xl p-4 md:p-8">
@@ -324,6 +371,7 @@ function BackgroundOrchestratorDetailPage() {
                   Orchestrator
                 </span>
                 <StatusBadge status={detail.status} />
+                <CrawlStatusBadge crawlJob={crawlJob} />
               </div>
               <CardTitle className="text-2xl leading-tight text-foreground max-w-[50rem]">
                 {getBackgroundTaskLabel(detail.orchestrator.instructions)}
@@ -587,6 +635,116 @@ function BackgroundOrchestratorDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {crawlJob && !hasCrawlData ? (
+            <Card className="border border-border/70 bg-card/80">
+              <CardHeader className="gap-3 border-b border-border/70">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <IconWorldWww className="size-4 text-cyan-400" />
+                  Crawl Progress
+                </CardTitle>
+                <CardDescription>
+                  The crawler is preparing site coverage data for this orchestrator.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <div className="rounded-[1.25rem] border border-border/70 bg-background/60 px-4 py-3 text-sm">
+                  {crawlJob.status === "failed" ? (
+                    <div className="flex items-start gap-2 text-red-200">
+                      <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-red-400" />
+                      <div>
+                        <p className="font-medium text-foreground">Crawl failed before coverage data was captured.</p>
+                        <p className="mt-1 text-muted-foreground">
+                          {crawlJob.errorMessage ?? "The crawl did not finish successfully, so the site map is unavailable."}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <IconLoader3 className="mt-0.5 size-4 shrink-0 animate-spin text-blue-400" />
+                      <div>
+                        <p className="font-medium text-foreground">Crawl indexing is still in progress.</p>
+                        <p className="mt-1 text-muted-foreground">
+                          {crawlJob.crawledPages != null && crawlJob.totalPages != null
+                            ? `${crawlJob.crawledPages}/${crawlJob.totalPages} pages have been indexed so far. The site map and form inventory will appear here as soon as crawl data is available.`
+                            : "The site map and form inventory will appear here as pages start streaming in from the crawler."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {hasCrawlData && (
+            <Card className="border border-border/70 bg-card/80">
+              <CardHeader className="gap-3 border-b border-border/70">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <IconWorldWww className="size-4 text-cyan-400" />
+                  Crawl Coverage
+                </CardTitle>
+                <CardDescription>
+                  Pre-crawl site map and coverage analysis from the automated
+                  crawler.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6 pt-4">
+                {crawlCoverage && (
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <MetricCard
+                      label="Pages Crawled"
+                      value={`${crawlCoverage.total}`}
+                      variant="summary"
+                      icon={
+                        <IconWorldWww className="size-4 text-cyan-400" />
+                      }
+                      accentClassName="border-cyan-500/20 bg-cyan-500/[0.05]"
+                      valueClassName="text-cyan-100"
+                    />
+                    <MetricCard
+                      label="Pages Visited"
+                      value={`${combinedVisitedUrls.size}`}
+                      variant="summary"
+                      icon={
+                        <IconRadar2 className="size-4 text-emerald-400" />
+                      }
+                      accentClassName="border-emerald-500/20 bg-emerald-500/[0.05]"
+                      valueClassName="text-emerald-100"
+                    />
+                    <MetricCard
+                      label="Coverage"
+                      value={`${crawlCoveragePercent}%`}
+                      variant="summary"
+                      icon={
+                        <IconRoute className="size-4 text-blue-400" />
+                      }
+                      accentClassName="border-blue-500/20 bg-blue-500/[0.05]"
+                      valueClassName="text-blue-100"
+                    />
+                    <MetricCard
+                      label="Dead Links"
+                      value={`${crawlCoverage.deadLinks}`}
+                      variant="summary"
+                      icon={
+                        <IconLinkOff className="size-4 text-red-400" />
+                      }
+                      accentClassName="border-red-500/20 bg-red-500/[0.05]"
+                      valueClassName="text-red-100"
+                    />
+                  </div>
+                )}
+                <SiteMapView
+                  crawledPages={crawledPages}
+                  visitedUrls={combinedVisitedUrls}
+                  coverage={crawlCoverage ?? undefined}
+                />
+                {crawlFormPages && crawlFormPages.length > 0 && (
+                  <FormInventoryView formPages={crawlFormPages} />
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 

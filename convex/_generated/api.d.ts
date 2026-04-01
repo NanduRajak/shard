@@ -9,6 +9,7 @@
  */
 
 import type * as backgroundAgents from "../backgroundAgents.js";
+import type * as crawl from "../crawl.js";
 import type * as credentials from "../credentials.js";
 import type * as reviewBot from "../reviewBot.js";
 import type * as runs from "../runs.js";
@@ -22,6 +23,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   backgroundAgents: typeof backgroundAgents;
+  crawl: typeof crawl;
   credentials: typeof credentials;
   reviewBot: typeof reviewBot;
   runs: typeof runs;

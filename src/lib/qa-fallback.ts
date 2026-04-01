@@ -62,6 +62,12 @@ export type QaFallbackInteractive = {
   type?: string | null
 }
 
+export type CrawlSuggestion = {
+  url: string
+  pageType: string
+  title?: string
+}
+
 export type QaFallbackAction =
   | {
       kind: "navigate"
@@ -89,6 +95,7 @@ export type QaFallbackAction =
     }
 
 export function pickQaFallbackAction({
+  crawlSuggestions,
   currentUrl,
   interactives,
   maxPages,
@@ -96,6 +103,7 @@ export function pickQaFallbackAction({
   triedActions,
   visitedPages,
 }: {
+  crawlSuggestions?: CrawlSuggestion[]
   currentUrl: string
   interactives: QaFallbackInteractive[]
   maxPages: number
@@ -181,6 +189,33 @@ export function pickQaFallbackAction({
     })
     .filter((candidate) => !tried.has(candidate.signature))
     .sort((left, right) => right.score - left.score)
+
+  // Inject crawl-suggested navigation candidates
+  if (crawlSuggestions && visited.size < maxPages) {
+    for (const suggestion of crawlSuggestions) {
+      if (visited.has(suggestion.url)) continue
+      const sig = `navigate::${suggestion.url}`
+      if (tried.has(sig)) continue
+
+      let score = 50
+      // Boost high-value page types
+      if (["product", "checkout", "auth"].includes(suggestion.pageType)) score += 20
+      if (["form"].includes(suggestion.pageType)) score += 15
+
+      candidates.push({
+        action: {
+          kind: "navigate",
+          reason: "Pre-crawled unvisited page",
+          targetLabel: suggestion.title ?? suggestion.url,
+          url: suggestion.url,
+        },
+        score,
+        signature: sig,
+      })
+    }
+
+    candidates.sort((left, right) => right.score - left.score)
+  }
 
   const nextCandidate = candidates[0]
 

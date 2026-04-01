@@ -39,6 +39,11 @@ export const createBackgroundOrchestrator = createServerFn({ method: "POST" })
         credentialId: payload.credentialId as Id<"credentials"> | undefined,
       },
     )
+    const crawlEventData = {
+      orchestratorId: orchestratorId as string,
+      url: payload.url,
+      origin: new URL(payload.url).hostname,
+    }
 
     if (serverEnv.QA_DIRECT_RUN_FALLBACK === "1") {
       const { runQaWorkflow } = await import("../../inngest/qa-run")
@@ -68,8 +73,25 @@ export const createBackgroundOrchestrator = createServerFn({ method: "POST" })
           })
         }),
       )
+
+      try {
+        const { runSiteCrawlWorkflow } = await import("../../inngest/site-crawl")
+        void runSiteCrawlWorkflow(crawlEventData).catch(() => undefined)
+      } catch {
+        // Crawl failure should not block orchestrator creation
+      }
     } else {
       const { inngest } = await import("../../inngest/client")
+
+      // Dispatch crawl in parallel with agent runs
+      try {
+        await inngest.send({
+          name: "app/crawl.requested",
+          data: crawlEventData,
+        })
+      } catch {
+        // Crawl failure should not block orchestrator creation
+      }
 
       await enqueueBackgroundOrchestratorRuns({
         markQueuedForWorker: async (runId) => {

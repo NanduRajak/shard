@@ -33,7 +33,10 @@ import {
 import {
   QaRunCancelledError,
   runQaSession,
+  type CrawlData,
+  type CrawledPageData,
 } from "@/lib/qa-engine"
+import { findBestStartUrl } from "@/lib/crawl-processing"
 
 const MAX_PAGE_FINDINGS = 2
 const ACTION_HIGHLIGHT_DELAY_MS = 350
@@ -488,6 +491,13 @@ export async function runQaWorkflow({
         pageUrl: page.url(),
         sessionId: sessionDocId,
       })
+      // Look up crawl data if available
+      const crawlData = await loadCrawlData({ convex, run, runId })
+      const smartStartUrl =
+        mode === "task" && instructions && crawlData
+          ? findBestStartUrl({ crawledPages: crawlData.pages, taskInstructions: instructions })
+          : undefined
+
       const sessionResult = await runQaSession({
         agentOrdinal: run?.agentOrdinal,
         browser: createPlaywrightQaBrowser(page),
@@ -496,6 +506,7 @@ export async function runQaWorkflow({
           maxAgentSteps: qaConfig.maxAgentSteps,
           maxDiscoveredPages: qaConfig.maxDiscoveredPages,
         },
+        crawlData: crawlData ?? undefined,
         getStoredCredential: credentialId
           ? async () =>
               await getDecryptedCredentialById({
@@ -512,6 +523,7 @@ export async function runQaWorkflow({
           runId,
           sessionId: sessionDocId,
         }),
+        smartStartUrl: smartStartUrl ?? undefined,
         startUrl: url,
       })
 
@@ -927,6 +939,64 @@ async function computePersistedRunScore(
 ) {
   const report = await convex.query(api.runtime.getRunReport, { runId })
   return report?.scoreSummary.overall ?? 0
+}
+
+async function loadCrawlData({
+  convex,
+  run,
+  runId,
+}: {
+  convex: ReturnType<typeof createConvexServerClient>
+  run: { backgroundOrchestratorId?: Id<"backgroundOrchestrators"> } | null
+  runId: Id<"runs">
+}): Promise<CrawlData | null> {
+  try {
+    const orchestratorId = run?.backgroundOrchestratorId
+
+    const crawlJob = orchestratorId
+      ? await convex.query(api.crawl.getCrawlJobByOrchestrator, { orchestratorId })
+      : await convex.query(api.crawl.getCrawlJobByRun, { runId })
+
+    if (!crawlJob || (crawlJob.status !== "completed" && crawlJob.status !== "crawling")) {
+      return null
+    }
+
+    const [pages, forms] = await Promise.all([
+      convex.query(api.crawl.listCrawledPages, { crawlJobId: crawlJob._id }),
+      convex.query(api.crawl.listFormsFromCrawl, { crawlJobId: crawlJob._id }),
+    ])
+
+    const mapPage = (p: typeof pages[number]): CrawledPageData => ({
+      url: p.url,
+      title: p.title ?? undefined,
+      description: p.description ?? undefined,
+      pageType: p.pageType ?? undefined,
+      statusCode: p.statusCode,
+      isDeadLink: p.isDeadLink,
+      internalLinks: p.internalLinks,
+      forms: p.forms?.map((f) => ({
+        action: f.action ?? undefined,
+        method: f.method ?? undefined,
+        fields: f.fields.map((fld) => ({
+          name: fld.name,
+          type: fld.type,
+          label: fld.label ?? undefined,
+          required: fld.required,
+          placeholder: fld.placeholder ?? undefined,
+          options: fld.options ?? undefined,
+        })),
+      })),
+      wordCount: p.wordCount ?? undefined,
+    })
+
+    return {
+      crawlJobId: crawlJob._id,
+      pages: pages.map(mapPage),
+      forms: forms.map(mapPage),
+    }
+  } catch {
+    return null
+  }
 }
 
 void runAgentLoop

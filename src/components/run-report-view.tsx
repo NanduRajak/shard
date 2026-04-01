@@ -1,6 +1,8 @@
 import { useNavigate } from "@tanstack/react-router"
+import { convexQuery } from "@convex-dev/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { AnimatePresence, motion, type Variants } from "motion/react"
-import { useEffect, useState, Fragment } from "react"
+import { useEffect, useMemo, useState, Fragment } from "react"
 import {
   IconAlertTriangle,
   IconArrowLeft,
@@ -12,6 +14,7 @@ import {
   IconFileAnalytics,
   IconClipboardList,
   IconLink,
+  IconLinkOff,
   IconArchive,
   IconArrowsMaximize,
   IconTerminal2,
@@ -25,6 +28,11 @@ import {
 } from "@tabler/icons-react"
 import { formatDistanceToNow } from "date-fns"
 import type { ReactNode } from "react"
+import type { Id } from "../../convex/_generated/dataModel"
+import { api } from "../../convex/_generated/api"
+import { CrawlStatusBadge } from "./crawl-status-badge"
+import { SiteMapView } from "./site-map-view"
+import { FormInventoryView } from "./form-inventory-view"
 import { RunTimelineView } from "./run-timeline-view"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants, Button } from "@/components/ui/button"
@@ -124,6 +132,50 @@ export function RunReportView({ report }: { report: any }) {
         ? pageErrorFindings
         : []
   const selectedSignalMeta = signalMeta(selectedSignal ?? "pageerror")
+  const typedRunId = run._id as Id<"runs">
+  const typedOrchestratorId = run.backgroundOrchestratorId as Id<"backgroundOrchestrators"> | undefined
+
+  const { data: crawlJobByRun } = useQuery(
+    convexQuery(api.crawl.getCrawlJobByRun, { runId: typedRunId }),
+  )
+  const { data: crawlJobByOrchestrator } = useQuery({
+    ...convexQuery(
+      api.crawl.getCrawlJobByOrchestrator,
+      typedOrchestratorId ? { orchestratorId: typedOrchestratorId } : "skip",
+    ),
+    enabled: typedOrchestratorId != null,
+  })
+  const crawlJob = crawlJobByOrchestrator ?? crawlJobByRun ?? null
+
+  const { data: crawledPages } = useQuery({
+    ...convexQuery(
+      api.crawl.listCrawledPages,
+      crawlJob ? { crawlJobId: crawlJob._id } : "skip",
+    ),
+    enabled: crawlJob != null,
+  })
+  const { data: crawlCoverage } = useQuery({
+    ...convexQuery(
+      api.crawl.getCrawlCoverage,
+      crawlJob ? { crawlJobId: crawlJob._id } : "skip",
+    ),
+    enabled: crawlJob != null,
+  })
+  const { data: crawlFormPages } = useQuery({
+    ...convexQuery(
+      api.crawl.listFormsFromCrawl,
+      crawlJob ? { crawlJobId: crawlJob._id } : "skip",
+    ),
+    enabled: crawlJob != null,
+  })
+
+  const visitedUrlsSet = useMemo(
+    () => new Set(coverageUrls as string[] ?? []),
+    [coverageUrls],
+  )
+
+  const hasCrawlData = crawledPages && crawledPages.length > 0
+
   const hasReportIntroContent = Boolean(run.instructions)
     || Boolean(run.goalStatus && run.goalStatus !== "not_requested")
 
@@ -170,6 +222,7 @@ export function RunReportView({ report }: { report: any }) {
                   {run.executionMode === "background" ? (
                     <Badge variant="secondary">Background agent</Badge>
                   ) : null}
+                  <CrawlStatusBadge crawlJob={crawlJob} />
                 </div>
                 <CardTitle className="text-2xl leading-tight">QA report</CardTitle>
                 <CardDescription className="max-w-3xl break-all text-sm/6">
@@ -550,6 +603,54 @@ export function RunReportView({ report }: { report: any }) {
           </CardContent>
         </Card>
       </motion.div>
+
+      {hasCrawlData && (
+        <motion.div variants={itemVariants} className="xl:col-span-2 flex h-full">
+          <Card className="border border-border/70 bg-card/80 w-full">
+            <CardHeader className="gap-3 border-b border-border/70">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <IconWorldWww className="size-4 text-cyan-300" />
+                Crawl Coverage
+              </CardTitle>
+              <CardDescription>
+                Pre-crawl site map and coverage analysis from the automated crawler.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 pt-4">
+              {crawlCoverage && (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <HighlightMetricCard
+                    label="Pages crawled"
+                    value={crawlCoverage.total.toString()}
+                    icon={<IconWorldWww className="size-4" />}
+                    toneClassName="border-cyan-500/20 bg-cyan-500/8 text-cyan-300"
+                  />
+                  <HighlightMetricCard
+                    label="Pages visited"
+                    value={visitedUrlsSet.size.toString()}
+                    icon={<IconRadar2 className="size-4" />}
+                    toneClassName="border-emerald-500/20 bg-emerald-500/8 text-emerald-300"
+                  />
+                  <HighlightMetricCard
+                    label="Dead links"
+                    value={crawlCoverage.deadLinks.toString()}
+                    icon={<IconLinkOff className="size-4" />}
+                    toneClassName="border-red-500/20 bg-red-500/8 text-red-300"
+                  />
+                </div>
+              )}
+              <SiteMapView
+                crawledPages={crawledPages}
+                visitedUrls={visitedUrlsSet}
+                coverage={crawlCoverage ?? undefined}
+              />
+              {crawlFormPages && crawlFormPages.length > 0 && (
+                <FormInventoryView formPages={crawlFormPages} />
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       <motion.div variants={itemVariants} className="xl:col-span-2 flex h-full">
         <Card className="border border-border/70 bg-card/80 w-full">
@@ -1148,6 +1249,14 @@ function compactUrl(value: string) {
 function findingSnapshotMeta(finding: any) {
   const title = String(finding.title ?? "").toLowerCase()
   const signal = String(finding.browserSignal ?? "").toLowerCase()
+
+  if (title.startsWith("dead link:")) {
+    return {
+      label: "Dead link",
+      icon: <IconLinkOff className="size-4" />,
+      iconClassName: "text-red-400",
+    }
+  }
 
   if (signal === "console" || title.includes("console")) {
     return {

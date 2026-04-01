@@ -132,6 +132,13 @@ const runEventKind = v.union(
   v.literal("system"),
 )
 
+const crawlJobStatus = v.union(
+  v.literal("pending"),
+  v.literal("crawling"),
+  v.literal("completed"),
+  v.literal("failed"),
+)
+
 export default defineSchema({
   githubConnections: defineTable({
     avatarUrl: v.optional(v.string()),
@@ -393,4 +400,53 @@ export default defineSchema({
   })
     .index("by_origin", ["origin"])
     .index("by_origin_login", ["origin", "login"]),
+
+  crawlJobs: defineTable({
+    orchestratorId: v.optional(v.id("backgroundOrchestrators")),
+    runId: v.optional(v.id("runs")),
+    url: v.string(),
+    origin: v.string(),
+    firecrawlJobId: v.string(),
+    status: crawlJobStatus,
+    totalPages: v.optional(v.number()),
+    crawledPages: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  })
+    .index("by_orchestrator", ["orchestratorId"])
+    .index("by_run", ["runId"])
+    .index("by_status", ["status"])
+    .index("by_firecrawl_job_id", ["firecrawlJobId"]),
+
+  crawledPages: defineTable({
+    crawlJobId: v.id("crawlJobs"),
+    url: v.string(),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    markdownContent: v.optional(v.string()),
+    statusCode: v.number(),
+    isDeadLink: v.boolean(),
+    internalLinks: v.array(v.string()),
+    pageType: v.optional(v.string()),
+    forms: v.optional(v.array(v.object({
+      action: v.optional(v.string()),
+      method: v.optional(v.string()),
+      fields: v.array(v.object({
+        name: v.string(),
+        type: v.string(),
+        label: v.optional(v.string()),
+        required: v.boolean(),
+        placeholder: v.optional(v.string()),
+        options: v.optional(v.array(v.string())),
+      })),
+    }))),
+    wordCount: v.optional(v.number()),
+    crawledAt: v.number(),
+  })
+    .index("by_crawl_job", ["crawlJobId"])
+    .index("by_crawl_job_and_url", ["crawlJobId", "url"])
+    .index("by_crawl_job_and_is_dead_link", ["crawlJobId", "isDeadLink"])
+    .index("by_crawl_job_and_page_type", ["crawlJobId", "pageType"]),
 })
