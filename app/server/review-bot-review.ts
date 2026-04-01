@@ -852,8 +852,7 @@ export async function summarizeReviewWithAI(input: {
           role: "user",
         },
       ],
-      model: serverEnv.OPENAI_MODEL ?? "gpt-4.1-mini",
-      temperature: 0.2,
+      model: serverEnv.OPENAI_MODEL ?? "gpt-5.4-mini",
     }),
   })
 

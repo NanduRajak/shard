@@ -519,7 +519,6 @@ async function runAgentLoop({
           recentActions: actionHistory.slice(-4),
         }),
         maxOutputTokens: 300,
-        temperature: 0.2,
         stopWhen: stepCountIs(4),
         tools: buildAgentTools({
           browser,
