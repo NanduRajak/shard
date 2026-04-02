@@ -4,7 +4,7 @@ Shard is an autonomous web QA app with a built-in GitHub review bot. It helps yo
 
 ## Demo
 
-If you want a quick overview before diving into the details, watch the product walkthrough on YouTube: [Shard Demo Video](https://youtu.be/uoRHrbB8yu4).
+If you want a quick overview before diving into the details, watch the product walkthrough on YouTube: [Shard Demo Video](https://youtu.be/IIbgDrtDTMo).
 
 ## Features
 
